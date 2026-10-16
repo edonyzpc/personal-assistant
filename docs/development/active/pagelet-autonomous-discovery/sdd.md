@@ -215,4 +215,4 @@ caller 权限边界；其历史普遍确认要求按现行 scoped successors 理
 第一轮设计无未决 P0/P1/P2；已识别耦合和范围处理见 Tracker，不将设计处理写成代码已修。
 用户 2026-10-16 先认可本轮细化方案与文档化，随后明确授权按 B-175 完成全部开发测试；
 该实施授权及其实际结果记在 Tracker，不将设计批准或单项绿测写成功能验收。
-短点/长按、阅读与 Agent 交接已由 [B-176 SDD](../../proposals/pagelet-reading-loop/sdd.md)独立承接；更多上下文和专用修改流程仍不在两轮范围。当前实施验收以 Tracker 实际证据为准；Git、closeout 和 release 依照 Tracker 记录的后续用户授权分别执行。
+短点/长按、阅读与 Agent 交接已由 [B-176 SDD](../pagelet-reading-loop/sdd.md)独立承接；更多上下文和专用修改流程仍不在两轮范围。当前实施验收以 Tracker 实际证据为准；Git、closeout 和 release 依照 Tracker 记录的后续用户授权分别执行。

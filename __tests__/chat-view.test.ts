@@ -97,6 +97,7 @@ const mockCancelPendingOperations = jest.fn<() => void>();
 const mockUndoOperations = jest.fn<(receiptIds: readonly string[]) => Promise<UndoResult[]>>();
 const mockDisposeChatService = jest.fn<() => void>();
 const mockResetChatContext = jest.fn<() => void>();
+const mockValidatePageletHandoff = jest.fn(async () => true);
 const mockUnmountOperationsDiff = jest.fn();
 jest.mock('react-dom/client', () => {
     const ReactDOMServer = require('react-dom/server') as {
@@ -126,6 +127,7 @@ jest.mock('../src/ai-services/chat-service', () => ({
         registerOperationsContextPersistence: () => {},
         dispose: mockDisposeChatService,
         resetContext: mockResetChatContext,
+        validatePageletHandoff: mockValidatePageletHandoff,
     })),
 }));
 
@@ -995,6 +997,7 @@ function createView(options: {
             registerOperationsContextPersistence: () => {},
             dispose: mockDisposeChatService,
             resetContext: mockResetChatContext,
+            validatePageletHandoff: mockValidatePageletHandoff,
         })),
         openMemorySettings: jest.fn(),
         log: jest.fn(),
@@ -1119,6 +1122,7 @@ describe('LLMView turn lifecycle', () => {
         mockUndoOperations.mockReset();
         mockDisposeChatService.mockReset();
         mockResetChatContext.mockReset();
+        mockValidatePageletHandoff.mockReset().mockResolvedValue(true);
         mockShareCardModalConstructor.mockClear();
         mockShareCardModalOpen.mockClear();
         mockUndoOperations.mockResolvedValue([]);
@@ -5628,6 +5632,8 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls).toHaveLength(1);
         expect(streamCalls[0].options.pageletHandoff).toEqual(context);
         expect(streamCalls[0].prompt).toBe('Discuss this Pagelet insight and help me decide the next step.');
+        streamCalls[0].options.onTurnMetadata?.({ hasMemoryContent: false, allowedMemorySourcePaths: [],
+            acceptedPageletHandoffId: context.id });
         streamCalls[0].onChunk('A source-backed answer.');
         streamCalls[0].resolve();
         await flushPromises();
@@ -5640,6 +5646,33 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls[1].options.pageletHandoff).toBeUndefined();
         streamCalls[1].resolve();
         await flushPromises();
+    });
+
+    it('refuses stale Pagelet preparation without changing the current conversation or draft', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        const context = createPageletHandoffContext();
+        mockValidatePageletHandoff.mockResolvedValueOnce(false);
+        await expect(view.preparePageletHandoff(context)).resolves.toEqual({ status: 'invalid' });
+        expect(mockResetChatContext).not.toHaveBeenCalled();
+        expect(getTextArea(containerEl).value).toBe('');
+        expect(getElementByClass(containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(true);
+        expect(streamCalls).toEqual([]);
+    });
+
+    it.each([undefined, 'another-pagelet'])('retains an attachment after completion without its actual-use receipt (%s)', async receipt => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        await view.preparePageletHandoff(createPageletHandoffContext());
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        if (receipt) streamCalls[0].options.onTurnMetadata?.({ hasMemoryContent: false,
+            allowedMemorySourcePaths: [], acceptedPageletHandoffId: receipt });
+        streamCalls[0].onChunk('Completed response.');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+        expect(getElementByClass(containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(false);
     });
 
     it('fails closed for a draft or active stream and retains Pagelet evidence after provider failure', async () => {
@@ -5971,6 +6004,8 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         streamCalls[0].onChunk('Canonical response.');
         emitCanonical(streamCalls[0], canonicalEvent({ type: 'agent_start' }));
+        streamCalls[0].options.onTurnMetadata?.({ hasMemoryContent: false, allowedMemorySourcePaths: [],
+            acceptedPageletHandoffId: streamCalls[0].options.pageletHandoff?.id });
         emitCanonical(streamCalls[0], canonicalEvent({ type: 'agent_end', status }));
         streamCalls[0].resolve();
         await flushPromises();

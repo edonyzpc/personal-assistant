@@ -13,6 +13,7 @@ export {
 export type {
     PageletDetailContent,
     PageletDetailPayload,
+    PageletDetailReadingPayload,
     TabCard,
     TabSection,
 } from "./types";

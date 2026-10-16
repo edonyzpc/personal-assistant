@@ -17,7 +17,7 @@ SDD: [Implementation Design](./sdd.md)
 - 当前进度：T-01/T-02/T-03 实现、独立代码审查和必要验证完成。统一代码证据覆盖 396 suites：全量运行 395 suites PASS，唯一旧 v2 fixture 修正后该套件 364 tests PASS；未宣称原全量命令 exit 0。F-02 最终真实输入回归 2 suites/52 tests PASS；等价完整 lint 增栈及受影响源码 lint、最终 production build、`make deploy-current`/插件重载通过。
 - 实际证据：最终输入三类样本各一次实际 runtime：单篇 completed；跨笔记 completed 且自然 stage 后继续、两份交付；极简样本 stage 后本地准入拒绝，按真实 error 保留完成正文并显示未完成。全部文本/来源、零调用查看、自动不抢焦点和三份集合导航已实际交互。没有自然观察到 NO_INSIGHT 或超过两份，保留该模型证据边界，由确定性用例覆盖可达性；不据此声称模型质量或全部运行成功。
 - 清理：四份自建合成笔记 before/after SHA-256 完全一致，已精确删除；Pagelet excludedPatterns/background/proactive 设置、原 Agent Debug 视图、debug=false/mobile=false 均已恢复，无活动 run/观测 global。未使用的干净 worktree 归档回执仍未确认，保留原操作，不重放或强删。
-- 无已确认的第一轮实现阻断；O-01 的具体本地准入原因未知，按 SDD 保留观测边界，不猜测修复或重复采样。B-175 源码、测试及受影响契约纳入本次本地 master 提交，提交及签名结果以 Git 回执为准；push/release/closeout 未授权。第二轮 [B-176 Product Spec](../../../product/specs/pagelet-reading-loop-product-spec.md) 与 [SDD](../../proposals/pagelet-reading-loop/sdd.md) 不纳入本轮；保持其他 workstream 原状。
+- 无已确认的第一轮实现阻断；O-01 的具体本地准入原因未知，按 SDD 保留观测边界，不猜测修复或重复采样。B-175 源码、测试及受影响契约纳入本次本地 master 提交，提交及签名结果以 Git 回执为准；push/release/closeout 未授权。第二轮 [B-176 Product Spec](../../../product/specs/pagelet-reading-loop-product-spec.md) 与 [SDD](../pagelet-reading-loop/sdd.md) 不纳入本轮；保持其他 workstream 原状。
 
 ## Work And Development Sequence
 

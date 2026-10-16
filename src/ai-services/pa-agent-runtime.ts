@@ -15,7 +15,9 @@ import { agentDebugError, agentDebugNow, createAgentDebugCall, observeAgentDebug
     beginAgentDebugResponsePhase, finishAgentDebugResponsePhase } from './agent-debug-observation';
 import { getProviderAdmissionError, ProviderInputReprepareRequiredError } from './provider-admission-error';
 import { resolveB125RetrievalOptimizationFlags } from "../retrieval-optimization-platform-policy";
-import type { PageletChatHandoffContext } from "./pagelet-handoff";
+import { createPageletChatHandoffContext, pageletChatHandoffSourceLifetimeIsCurrent, type PageletChatHandoffContext } from "./pagelet-handoff";
+import { capturePageletSourceSnapshot, hashPageletContent } from "../pagelet/agent/anchor-snapshot";
+import { validatePageletInputEvidence } from "../pagelet/agent/pagelet-agent-quality-gate";
 import { stableHash } from "../pa/helpers";
 import { MemorySearchTool } from "./memory-search-tool";
 import { TaskSourceRun, historyInputLineage } from "./task-source-run";
@@ -899,7 +901,7 @@ function isSafeExecuteCodeObservation(
     });
 }
 
-function isSafeSourceFreeToolObservation(
+export function isSafeSourceFreeToolObservation(
     message: Extract<PaAgentMessage, { role: "toolResult" }>,
 ): boolean {
     if (message.toolName === 'create_image') return isSafeImageAcceptedObservation(message) || isSafeImageFailureObservation(message);
@@ -1836,15 +1838,37 @@ export class PaAgentRuntime {
         try {
         commandCapabilities = createPaAgentCommandCapabilityScope(this.toolRegistry);
         const legacyEvents = new AgentEventEmitter(options.onEvent);
+        let admittedPagelet: PageletChatHandoffContext | undefined;
+        let admittedPageletLineage: InputLineage | undefined;
+        if (options.pageletHandoff) {
+            const requested = createPageletChatHandoffContext(options.pageletHandoff);
+            if (!pageletChatHandoffSourceLifetimeIsCurrent(requested)
+                || !requested.bodyHash || await hashPageletContent(requested.body) !== requested.bodyHash
+                || !await validatePageletInputEvidence(requested.inputEvidence, {
+                    anchor: requested.anchor,
+                    isAuthoringPathAllowed: this.host.isPageletSourcePathAllowed?.bind(this.host),
+                    isPathAllowed: path => this.host.isDataBoundaryAllowedPath?.(path) !== false,
+                    readCurrentSourceSnapshot: (path, signal) => capturePageletSourceSnapshot({
+                        host: this.host, path, signal,
+                        isPathAllowed: path => this.host.isDataBoundaryAllowedPath?.(path) !== false,
+                    }),
+                    revalidateVaultObservation: this.host.revalidateVaultObservation?.bind(this.host),
+                    getEvidenceEpoch: this.host.getMemoryEvidenceEpoch?.bind(this.host),
+                    getAuthoringEvidenceEpoch: this.host.getPageletEvidenceEpoch?.bind(this.host),
+                    signal: options.signal,
+                })) throw new Error("Pagelet attachment sources are incomplete or no longer available. Remove the attachment or discover again.");
+            admittedPageletLineage = await sourceRun.admitPageletInputLineage(requested.inputEvidence?.lineage, options.signal);
+            if (!admittedPageletLineage) throw new Error("Pagelet attachment is not allowed by the selected sources. Keep the attachment and change the source selection, or remove it.");
+            admittedPagelet = requested;
+        }
         const readAdmittedInjectedContext = (): PaAgentInjectedContext | undefined => {
             // A web run must not even prepare automatic private background.
             if (runSourceSelection?.scope === 'web') return undefined;
-            const context = this.readInjectedContext(runSourceSelection ? undefined : options.pageletHandoff);
-            if (context?.isSourceCurrent?.() === false) return undefined;
-            if (!runSourceSelection || !context) return context;
-            const lineage = backgroundInputLineage(context, generationInputBackgroundSources(context));
-            return context.isSourceCurrent?.() !== false && sourceRun.admitsLineage(lineage)
-                ? context : undefined;
+            const context = this.readInjectedContext();
+            const background = context?.isSourceCurrent?.() === false ? undefined : !runSourceSelection || !context
+                ? context : sourceRun.admitsLineage(backgroundInputLineage(context, generationInputBackgroundSources(context)))
+                    ? context : undefined;
+            return admittedPagelet ? { ...background, pageletHandoff: admittedPagelet } : background;
         };
         let injectedContext = readAdmittedInjectedContext();
         const governedMemoryTrace = injectedContext?.governedMemoryTrace ?? [];
@@ -2319,6 +2343,10 @@ export class PaAgentRuntime {
             );
             const actualToolSources = projection.sourceToolMessages;
             const actualHistorySources = projection.history.sourceMessages;
+            const projectedPagelet = injectedContext?.pageletHandoff
+                && projection.currentContext.includes(formatInjectedContext({ pageletHandoff: injectedContext.pageletHandoff }))
+                ? injectedContext.pageletHandoff : undefined;
+            if (admittedPagelet && !projectedPagelet) throw new Error("Pagelet attachment was not retained in the request projection.");
             const writingContextAtRequest = currentWritingContext();
             const selectedImageDependencies: InputDependency[] = [];
             let selectedImageLineageUnknown = false;
@@ -2353,11 +2381,13 @@ export class PaAgentRuntime {
                 ...(writingStyle?.context ? [writingStyle.revisionIds.length
                     ? completeInputLineage([{ kind: 'writing-style', revisionIds: [...writingStyle.revisionIds] }])
                     : unknownInputLineage()] : []),
-                ...(injectedContext?.pageletHandoff
-                    ? [unknownInputLineage()] : []),
+                ...(projectedPagelet && admittedPageletLineage
+                    ? [admittedPageletLineage] : []),
             );
             answerLineageByTurn.set(input.turnId, requestLineage);
             sourceRun.acceptGenerationLineage(requestLineage);
+            if (projectedPagelet) legacyEvents.turnMetadata({ hasMemoryContent: false,
+                allowedMemorySourcePaths: [], acceptedPageletHandoffId: projectedPagelet.id });
             const assertAttachmentSourcesCurrent = imageScope?.hasSelectedImages
                 ? imageScope.captureSourceValidity() : undefined;
             answerAttachmentValidityByTurn.set(input.turnId, () => {
@@ -2417,8 +2447,7 @@ export class PaAgentRuntime {
                             ? { state: 'identified', versionId: parent.versionId,
                                 textHash: { algorithm: 'sha256', value: parent.textHash } }
                             : { state: 'none' },
-                        pagelet: generationInputPageletSource(runSourceSelection?.scope === 'web'
-                            ? undefined : options.pageletHandoff),
+                        pagelet: generationInputPageletSource(projectedPagelet),
                     },
                     ...(context ? { context: { ...(context.parent ? { parentVersionId: context.parent.id } : {}),
                         ...(context.scene ? { scene: { ...context.scene } } : {}) } } : {}),
@@ -3297,6 +3326,10 @@ export class PaAgentRuntime {
                         if (writingStyle?.revisionIds.length && !await snapshot.allowsLineage(completeInputLineage([
                             { kind: 'writing-style', revisionIds: [...writingStyle.revisionIds] },
                         ]))) writingStyle = undefined;
+                        if (admittedPagelet && !await snapshot.allowsLineage(admittedPageletLineage)) {
+                            admittedPagelet = undefined;
+                            admittedPageletLineage = undefined;
+                        }
                         injectedContext = readInjectedContext();
                         debug('source_configuration_applied', { turnId: input.turnId });
                     }
@@ -3910,6 +3943,13 @@ function generationInputPageletSource(
     pagelet: PageletChatHandoffContext | undefined,
 ): GenerationInputPageletSource {
     if (!pagelet) return { state: 'none' };
+    if (pagelet.bodyHash && pagelet.inputEvidence?.lineage.completeness === 'complete') return {
+        state: 'identified', id: pagelet.id, pipelineVersion: pagelet.pipelineVersion,
+        bodyHash: { algorithm: 'sha256', value: pagelet.bodyHash },
+        anchor: { ...pagelet.anchor, contentHash: { algorithm: 'sha256', value: pagelet.anchor.contentHash } },
+        sources: pagelet.inputEvidence.sourceSnapshots.map(source => ({ ...source,
+            contentHash: { algorithm: 'sha256', value: source.contentHash } })),
+    };
     // The handoff lacks a hash for its rendered body. Preserve its exact backing
     // revisions while marking reload verification unknown instead of inferring it.
     return {

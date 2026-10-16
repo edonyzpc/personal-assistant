@@ -20,10 +20,12 @@ import type { App } from "obsidian";
 import { confirmUserAction } from "../../confirm";
 
 import type { GeneratedReviewNote, WriteResult } from "../output/types";
-import type { PanelFinding, PanelMemoryRecentChange } from "../panel/types";
+import type { PanelFinding, PanelMemoryRecentChange, PageletReadingPosition } from "../panel/types";
+import type { PageletAgentDeliveryCandidate } from "../agent/delivery-adapter";
 import type {
     PageletDetailDeliveryTarget,
     PageletDetailPayload,
+    PageletDetailReadingPayload,
     TabCard,
     TabEntryReason,
     TabSection,
@@ -41,7 +43,13 @@ import {
 } from "../../pa";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import { clearChildren, el, renderEmptyCard } from "../dom-utils";
-import { renderDiscoveryLayout, renderSummaryPreview } from "../panel/PanelLayouts";
+import {
+    capturePageletReadingPosition,
+    restorePageletReadingPosition,
+    renderPageletReadingControls,
+    renderDiscoveryLayout,
+    renderSummaryPreview,
+} from "../panel/PanelLayouts";
 import type {
     MaintenanceActionUiState,
     MemoryCandidateActionState,
@@ -80,7 +88,7 @@ export interface TabViewOptions {
     onOpenSettings?: () => void;
 }
 
-type TabOpenOptions = Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason" | "deliveryTarget">;
+type TabOpenOptions = Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason" | "deliveryTarget" | "reading">;
 type DetailExtra = NonNullable<PageletDetailPayload["extra"]>;
 
 let tabLabelSequence = 0;
@@ -128,6 +136,17 @@ export class TabView {
     private actionStateGeneration = 0;
     private disposed = false;
     private readonly committedDeliveryTargets = new WeakSet<object>();
+    private reading: PageletDetailReadingPayload | null = null;
+    private selectedReading: PageletAgentDeliveryCandidate | null = null;
+    private readingControlsEl: HTMLElement | null = null;
+    private readingNavigationEl: HTMLElement | null = null;
+    private readingNavigationIdentity = "";
+    private readingUnsubscribe: (() => void) | null = null;
+    private readingAction: AbortController | null = null;
+    private readingHandoffPending = false;
+    private readingValidation: AbortController | null = null;
+    private readingMessage = "";
+    private readingUnavailable = false;
 
     constructor(locale: PageletLocale = "en", options: TabViewOptions = {}) {
         this.locale = locale;
@@ -197,6 +216,7 @@ export class TabView {
     /** Clean up -- remove DOM, detach listeners. */
     destroy(): void {
         this.disposed = true;
+        this.releaseReading();
         this.unloadRenderComponent();
         this.destroySectionRenderers();
         if (this.rootEl) {
@@ -344,8 +364,14 @@ export class TabView {
         options: TabOpenOptions = {},
     ): void {
         if (!this.bodyEl) return;
+        this.releaseReading();
         this.destroySectionRenderers();
         clearChildren(this.bodyEl);
+
+        if (options.reading && !options.restoredFromState) {
+            this.renderReading(options.reading);
+            return;
+        }
 
         if (options.restoredFromState) {
             this.unloadRenderComponent();
@@ -526,6 +552,232 @@ export class TabView {
 
         if (renderedSlots.length === 0) {
             this.renderEmptyState();
+        }
+    }
+
+    private renderReading(reading: PageletDetailReadingPayload): void {
+        this.reading = reading;
+        this.selectedReading = reading.candidates.find(candidate => candidate.id === reading.selectedId) ?? null;
+        this.readingControlsEl = el("div", "pa-pagelet-reading-controls");
+        this.readingNavigationEl = el("div", "pa-pagelet-reading-navigation");
+        this.rootEl?.prepend(this.readingNavigationEl);
+        this.rootEl?.prepend(this.readingControlsEl);
+        this.renderSelectedReading();
+        this.refreshReadingControls();
+        this.readingUnsubscribe = reading.subscribe(() => {
+            if (this.disposed || this.reading !== reading) return;
+            this.refreshReadingControls();
+            void this.validateDisplayedReading();
+        });
+        void this.validateDisplayedReading();
+    }
+
+    private rememberReadingPosition(): void {
+        if (!this.reading || !this.selectedReading || !this.bodyEl || this.readingUnavailable) return;
+        const position = capturePageletReadingPosition(this.bodyEl);
+        this.reading.positions = { ...this.reading.positions, [this.selectedReading.id]: position };
+        this.reading.onPositionChange(this.selectedReading.id, position);
+    }
+
+    private releaseReading(): void {
+        this.rememberReadingPosition();
+        this.readingUnsubscribe?.();
+        this.readingUnsubscribe = null;
+        this.readingAction?.abort();
+        this.readingAction = null;
+        this.readingHandoffPending = false;
+        this.readingValidation?.abort();
+        this.readingValidation = null;
+        this.readingControlsEl?.remove();
+        this.readingControlsEl = null;
+        this.readingNavigationEl?.remove();
+        this.readingNavigationEl = null;
+        this.readingNavigationIdentity = "";
+        this.reading = null;
+        this.selectedReading = null;
+        this.readingMessage = "";
+        this.readingUnavailable = false;
+    }
+
+    private renderSelectedReading(): void {
+        if (!this.bodyEl || !this.reading) return;
+        this.unloadRenderComponent();
+        clearChildren(this.bodyEl);
+        const candidate = this.selectedReading;
+        if (!candidate || this.readingUnavailable) return;
+        const component = new Component();
+        component.load();
+        this.renderComponent = component;
+        const body = this.bodyEl;
+        const position: PageletReadingPosition = this.reading.positions[candidate.id]
+            ?? { scrollTop: 0, sourcesExpanded: [] };
+        let appliedScrollTop = body.scrollTop;
+        const findings: PanelFinding[] = candidate.sourceRefs.map((source, index) => ({
+            title: index === 0 ? candidate.title : source.title ?? source.path,
+            description: index === 0 ? candidate.body : source.path,
+            sourceFile: source.path,
+            ...(index === 0 ? {
+                insightText: candidate.body,
+                actions: [{
+                    label: pageletT("pagelet.panel.agentInsight.discuss", this.locale),
+                    callback: () => { void this.discussReading(candidate); },
+                }],
+            } : {}),
+        }));
+        if (findings.length === 0) {
+            findings.push({
+                title: candidate.title,
+                description: candidate.body,
+                insightText: candidate.body,
+                actions: [{
+                    label: pageletT("pagelet.panel.agentInsight.discuss", this.locale),
+                    callback: () => { void this.discussReading(candidate); },
+                }],
+            });
+        }
+        renderDiscoveryLayout(body, findings, undefined, this.locale, {
+            app: this.options.app,
+            renderComponent: component,
+            sourcePath: this.reading.anchorPath,
+            onConnectionNodeClick: this.options.onConnectionNodeClick,
+            reading: true,
+            onMarkdownRendered: () => {
+                if (this.renderComponent !== component || this.selectedReading !== candidate) return;
+                // Native Markdown rendering may grow the document after the first scroll restoration.
+                if (body.scrollTop === appliedScrollTop) body.scrollTop = position.scrollTop;
+            },
+        });
+        restorePageletReadingPosition(body, position);
+        appliedScrollTop = body.scrollTop;
+    }
+
+    private refreshReadingControls(): void {
+        const reading = this.reading;
+        if (!reading || !this.readingControlsEl || !this.readingNavigationEl) return;
+        const partial = this.selectedReading?.pageletAgent.runIncomplete
+            ? pageletT("pagelet.deepDiscover.partialResults", this.locale) : "";
+        renderPageletReadingControls(this.readingControlsEl, {
+            anchorPath: reading.anchorPath,
+            label: [this.readingMessage, reading.getActivityLabel(), partial].filter(Boolean).join(" "),
+        });
+        const latest = reading.getLatestCandidates();
+        const navigationIdentity = JSON.stringify([
+            reading.candidates.map(candidate => candidate.id),
+            this.selectedReading?.id,
+            latest.map(candidate => candidate.id),
+        ]);
+        if (navigationIdentity === this.readingNavigationIdentity) return;
+        this.readingNavigationIdentity = navigationIdentity;
+        clearChildren(this.readingNavigationEl);
+        const addCandidate = (candidate: PageletAgentDeliveryCandidate): void => {
+            const button = el("button", "pa-pagelet-tab-nav-item", candidate.title);
+            button.setAttribute("type", "button");
+            button.setAttribute("aria-pressed", String(candidate.id === this.selectedReading?.id));
+            button.addEventListener("click", () => { void this.selectReading(candidate); });
+            this.readingNavigationEl?.appendChild(button);
+        };
+        for (const candidate of reading.candidates) addCandidate(candidate);
+        if (latest.some(candidate => !reading.candidates.some(current => current.id === candidate.id))) {
+            const button = el("button", "pa-pagelet-tab-nav-item",
+                pageletT("pagelet.panel.agentInsight.newResults", this.locale));
+            button.setAttribute("type", "button");
+            button.addEventListener("click", () => {
+                if (this.reading !== reading || latest.length === 0) return;
+                void this.selectReading(latest[0]!, latest);
+            });
+            this.readingNavigationEl.appendChild(button);
+        }
+    }
+
+    private async validateDisplayedReading(): Promise<void> {
+        const reading = this.reading;
+        const candidate = this.selectedReading;
+        if (!reading || !candidate) return;
+        this.readingValidation?.abort();
+        const controller = new AbortController();
+        this.readingValidation = controller;
+        let valid = false;
+        try { valid = await reading.validate(candidate, controller.signal); } catch { /* Source validation is unavailable. */ }
+        if (controller.signal.aborted || this.reading !== reading || this.selectedReading !== candidate) return;
+        this.readingValidation = null;
+        if (valid) return;
+        this.rememberReadingPosition();
+        this.readingUnavailable = true;
+        this.readingMessage = pageletT("pagelet.deepDiscover.stale", this.locale);
+        if (this.readingHandoffPending) {
+            this.readingAction?.abort();
+            this.readingAction = null;
+            this.readingHandoffPending = false;
+        }
+        this.renderSelectedReading();
+        this.refreshReadingControls();
+    }
+
+    private async selectReading(
+        candidate: PageletAgentDeliveryCandidate,
+        candidates?: readonly PageletAgentDeliveryCandidate[],
+    ): Promise<void> {
+        const reading = this.reading;
+        if (!reading || this.disposed) return;
+        this.readingAction?.abort();
+        this.readingHandoffPending = false;
+        const controller = new AbortController();
+        this.readingAction = controller;
+        let valid = false;
+        try { valid = await reading.validate(candidate, controller.signal); } catch { /* Keep the current reading on validation failure. */ }
+        if (controller.signal.aborted || this.reading !== reading) return;
+        this.readingAction = null;
+        if (!valid) {
+            this.readingMessage = pageletT("pagelet.deepDiscover.stale", this.locale);
+            this.refreshReadingControls();
+            return;
+        }
+        this.rememberReadingPosition();
+        this.readingValidation?.abort();
+        this.readingValidation = null;
+        if (candidates) reading.candidates = candidates;
+        this.selectedReading = candidate;
+        reading.selectedId = candidate.id;
+        this.readingMessage = "";
+        this.readingUnavailable = false;
+        this.renderSelectedReading();
+        reading.onSelect(candidate);
+        this.refreshReadingControls();
+    }
+
+    private async discussReading(candidate: PageletAgentDeliveryCandidate): Promise<void> {
+        const reading = this.reading;
+        if (!reading || this.disposed || this.selectedReading !== candidate || this.readingAction || this.readingUnavailable) return;
+        const controller = new AbortController();
+        this.readingAction = controller;
+        this.readingHandoffPending = true;
+        this.readingMessage = pageletT("pagelet.panel.agentInsight.handoffOpening", this.locale);
+        this.refreshReadingControls();
+        try {
+            const valid = await reading.validate(candidate, controller.signal);
+            if (controller.signal.aborted || this.reading !== reading || this.selectedReading !== candidate) return;
+            if (!valid) {
+                this.readingUnavailable = true;
+                this.readingMessage = pageletT("pagelet.deepDiscover.stale", this.locale);
+                this.renderSelectedReading();
+                return;
+            }
+            const result = await reading.discuss(candidate, controller.signal);
+            if (controller.signal.aborted || this.reading !== reading || this.selectedReading !== candidate) return;
+            const key = result.status === "busy" ? "pagelet.panel.agentInsight.handoffBusy"
+                : result.status === "draft-conflict" ? "pagelet.panel.agentInsight.handoffDraft"
+                    : "pagelet.panel.agentInsight.handoffUnavailable";
+            this.readingMessage = result.status === "prepared" ? "" : pageletT(key, this.locale);
+        } catch {
+            if (!controller.signal.aborted && this.reading === reading && this.selectedReading === candidate) {
+                this.readingMessage = pageletT("pagelet.panel.agentInsight.handoffUnavailable", this.locale);
+            }
+        } finally {
+            if (this.readingAction === controller) {
+                this.readingAction = null;
+                this.readingHandoffPending = false;
+                this.refreshReadingControls();
+            }
         }
     }
 

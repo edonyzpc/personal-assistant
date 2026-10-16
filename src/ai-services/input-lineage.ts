@@ -243,9 +243,13 @@ export function generationInputSnapshotInputLineage(source: GenerationInputSnaps
     const coversParent = parent.state !== 'identified' || dependencies.some(dependency =>
         dependency.kind === 'writing-version' && dependency.versionId === parent.versionId
         && dependency.textHash === parent.textHash.value);
+    const pagelet = source.pagelet;
+    const coversPagelet = pagelet.state === 'none' || pagelet.state === 'identified'
+        && [pagelet.anchor, ...pagelet.sources].every(source => dependencies.some(dependency =>
+            dependency.kind === 'vault' && dependency.path === source.path));
     return !valid || source.task.state === 'unknown' || source.personal.state === 'unknown'
         || source.insights.state !== 'none' || source.style.state === 'unknown'
-        || source.pagelet.state !== 'none' || !source.task.sources.every(coversTaskSource)
+        || !coversPagelet || !source.task.sources.every(coversTaskSource)
         || !coversPersonal || !coversStyle || !coversImages || !coversParent
         ? unknownInputLineage(dependencies) : completeInputLineage(dependencies);
 }

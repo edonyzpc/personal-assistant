@@ -14,7 +14,7 @@
 
 > 第二轮入口/阅读/交接现由 [DEC-066](../../product/decisions/dec-066-pagelet-reading-loop.md)、
 > [B-176 Spec](../../product/specs/pagelet-reading-loop-product-spec.md) 与
-> [开发及必要测试 SDD](../proposals/pagelet-reading-loop/sdd.md)独立承接。
+> [开发及必要测试 SDD](../active/pagelet-reading-loop/sdd.md)独立承接。
 > 本页旧短点 Ring、单一 click 等交互不覆盖 B-176 目标；第一轮范围和测试不变。
 > 更宽上下文、保存历史及专用修改流程仍未进入两轮交付；设计记录不授予实施权限。
 

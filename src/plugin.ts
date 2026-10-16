@@ -2911,6 +2911,9 @@ export class PluginManager extends Plugin {
             saveSettings: () => this.saveSettings(),
             createPageletAttentionStorage: () => this.createPageletAttentionStorage(),
             runDeepDiscover: (input) => this.runPageletDeepDiscover(input),
+            readDeepDiscover: (input) => this.deepDiscoverIntegration.readDeepDiscover(input),
+            getDeepDiscoverActivity: (path) => this.deepDiscoverIntegration.getDeepDiscoverActivity(path),
+            subscribeDeepDiscoverActivity: (listener) => this.deepDiscoverIntegration.subscribeDeepDiscoverActivity(listener),
             getDeepDiscoverFunctionCallingCapability: () => (
                 this.getPageletDeepDiscoverFunctionCallingCapability()
             ),
@@ -5452,6 +5455,8 @@ export class PluginManager extends Plugin {
                 log: (message, metadata) => this.log(message, metadata),
             }),
             getMemoryEvidenceEpoch: () => this.getMemoryGraphTopologyEpoch("chat"),
+            getPageletEvidenceEpoch: () => this.getMemoryGraphTopologyEpoch("pagelet"),
+            isPageletSourcePathAllowed: (path) => this.isPageletProviderPathAllowed(path),
             getTaskSourceAuthorityEpoch: () => this.getTaskSourceAuthorityEpoch(),
             getTaskSourceConfigurationEpoch: () => String(this.taskSourceConfigurationRevision),
             captureTaskSourceConfiguration: () => this.captureAgentSourceConfiguration(),
@@ -5681,7 +5686,8 @@ export class PluginManager extends Plugin {
     }
 
     private async verifyWritingRecoveryPageletNote(
-        snapshot: { path: string; mtime: number; size: number },
+        snapshot: { path: string; mtime: number; size: number;
+            contentHash?: { algorithm: 'sha256' | 'unspecified'; value: string } },
     ): Promise<WritingRecoverySourceReceipt> {
         if (normalizeSnapshotPath(snapshot.path) !== snapshot.path) {
             throw new Error('Writing Pagelet source unavailable');
@@ -5692,6 +5698,10 @@ export class PluginManager extends Plugin {
             'pagelet',
         );
         if (!source || source.mtime !== snapshot.mtime || source.size !== snapshot.size) {
+            throw new Error('Writing Pagelet source unavailable');
+        }
+        if (snapshot.contentHash?.algorithm === 'sha256'
+            && await hashWritingText(source.markdown) !== snapshot.contentHash.value) {
             throw new Error('Writing Pagelet source unavailable');
         }
         const file = this.app.vault.getAbstractFileByPath(source.path);

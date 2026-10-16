@@ -38,6 +38,8 @@ import type { PatternDetectionResult } from "../pa";
 // ---------------------------------------------------------------------------
 
 export interface BubbleCoordinatorCallbacks {
+    /** Provider-free reading of the active Markdown note. */
+    onReadCurrentNote(): void;
     /** Expand findings into the full Panel. */
     onExpandPanel(type: string): void;
     /** Navigate to a source note by vault path. */
@@ -175,37 +177,12 @@ export class BubbleCoordinator {
         bubbleView: BubbleView | null,
         petView: PetView | null,
     ): void {
-        if (!bubbleView) return;
-
-        if (petView?.actionRingOpen) {
-            petView.closeActionRing?.(true, "passive");
-            return;
-        }
-
-        // If bubble is already visible, close it (toggle)
-        if (bubbleView.bubbleState === "visible") {
-            bubbleView.close();
-            return;
-        }
-
-        // If Pet is in nudge state, show nudge-specific content
-        if (petView?.stateMachine.state === "nudge") {
-            const result = this.showNudgeBubble(bubbleView, petView);
-            petView.stateMachine.transition("user-interact");
-            this.reconcileNudge(bubbleView, petView);
-            if (result.status === "unavailable") {
-                this.showBubble(bubbleView, petView, { entry: "pet" });
-            }
-            return;
-        }
-
-        if (petView && this.shouldOpenActionRing(bubbleView, petView)) {
-            petView.openActionRing?.();
-            return;
-        }
-
-        // Otherwise, show regular bubble
-        this.showBubble(bubbleView, petView, { entry: "pet" });
+        this.memoryReadinessRefreshEpoch += 1;
+        this.pendingMemoryReadinessRefresh = null;
+        petView?.closeActionRing?.(false, "action");
+        bubbleView?.close();
+        petView?.stateMachine.transition("user-interact");
+        this.callbacks.onReadCurrentNote();
     }
 
     // ======================================================================
@@ -452,40 +429,6 @@ export class BubbleCoordinator {
         }
     }
 
-    private shouldOpenActionRing(
-        bubbleView: BubbleView,
-        petView: PetView,
-    ): boolean {
-        if (!petView.rootEl || petView.stateMachine.state === "working") return false;
-        const locale = getPageletUiLanguage();
-        const admittedTickets = this.sortNudgeTickets(
-            this.collectAdmittedNudgeTickets().filter((ticket) => this.ticketRuntimeEnabled(ticket)),
-        );
-        const presentation = this.callbacks.getAgentInsightCandidate?.()
-            ? null
-            : this.buildRegularBubbleContent(
-                bubbleView,
-                this.buildStateCallbacks(bubbleView),
-                locale,
-                admittedTickets,
-                "pet",
-            );
-        if (!presentation) return false;
-        if (presentation.content.type === "ready-empty") {
-            return this.explanationIsAcknowledged(
-                "ready-empty",
-                READY_EMPTY_EXPLANATION_COPY_VERSION,
-            );
-        }
-        if (presentation.content.type === "intentionally-quiet") {
-            return this.explanationIsAcknowledged(
-                "intentionally-quiet",
-                INTENTIONALLY_QUIET_EXPLANATION_COPY_VERSION,
-            );
-        }
-        return false;
-    }
-
     private buildStateContext(): Parameters<typeof resolveBubbleExplanationState>[0] {
         const activeFile = this.host.app?.workspace?.getActiveFile?.() as
             | { path?: string; extension?: string; stat?: { size?: number } }
@@ -605,10 +548,9 @@ export class BubbleCoordinator {
                 ) {
                     if (
                         request.entry === "pet"
-                        && request.petView
-                        && this.shouldOpenActionRing(request.bubbleView, request.petView)
                     ) {
-                        request.petView.openActionRing?.();
+                        request.bubbleView.close();
+                        this.callbacks.onReadCurrentNote();
                     } else {
                         this.showBubble(request.bubbleView, request.petView, {
                             preserveFocus: true,

@@ -1,6 +1,7 @@
 import { stableStringify } from "../../ai-services/agent-utils";
 import { isAbortError, throwIfAborted } from "../../ai-services/chat-utils";
 import { stableHash } from "../../pa/helpers";
+import { clonePageletInputEvidence } from "../../ai-services/pagelet-handoff";
 import {
     anchorSnapshotIdentity,
     sameSourceSnapshot,
@@ -450,6 +451,7 @@ function readEvidenceEpoch(getEpoch: (() => string) | undefined):
 function cloneInsight(insight: PageletAgentVerifiedInsight): PageletAgentVerifiedInsight {
     return {
         ...insight,
+        ...(insight.inputEvidence ? { inputEvidence: clonePageletInputEvidence(insight.inputEvidence) } : {}),
         anchor: { ...insight.anchor },
         sources: insight.sources.map((source) => ({ ...source })),
         sourceRefs: insight.sourceRefs.map((source) => ({ ...source })),

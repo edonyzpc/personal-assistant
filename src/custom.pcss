@@ -5809,6 +5809,23 @@ body > .tooltip {
 	border-left: 2px solid var(--interactive-accent,#7c9eff);
 }
 
+.pa-pagelet-reading-controls {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 12px 0;
+}
+.pa-pagelet-reading-anchor,
+.pa-pagelet-reading-status {
+	flex-basis: 100%;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	overflow-wrap: anywhere;
+}
+.pa-pagelet-reading-status:empty {
+	display: none;
+}
 .pa-pagelet-panel-timeline-actions {
 	display: flex;
 	flex-wrap: wrap;

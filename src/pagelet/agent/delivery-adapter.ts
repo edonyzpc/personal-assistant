@@ -1,6 +1,7 @@
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import {
     createPageletChatHandoffContext,
+    clonePageletInputEvidence,
     type PageletChatHandoffContext,
 } from "../../ai-services/pagelet-handoff";
 import { noteTitleFromPath } from "../../pa/helpers";
@@ -54,6 +55,8 @@ export function pageletAgentInsightToDeliveryCandidate(
         triggerReason: insight.triggerReason,
         preparedAt: insight.preparedAt,
         pipelineVersion: insight.cacheIdentity.pipelineVersion,
+        bodyHash: insight.bodyContentHash,
+        ...(insight.inputEvidence ? { inputEvidence: insight.inputEvidence } : {}),
     });
     return {
         id: insight.insightId,
@@ -114,6 +117,7 @@ function freezeValidationIdentity(
         insightId: insight.insightId,
         normalizedBody: insight.normalizedBody,
         normalizedClaim: insight.normalizedClaim,
+        ...(insight.inputEvidence ? { inputEvidence: clonePageletInputEvidence(insight.inputEvidence) } : {}),
     });
 }
 

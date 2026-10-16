@@ -3,7 +3,7 @@
 Decision ID: DEC-066
 Status: Accepted
 Updated: 2026-10-16
-Authority: 用户在第二轮连续讨论中认可短点阅读、长按快捷操作、已看复访、稳定阅读与完整 Agent 交接，并于 2026-10-16 要求以新 work item 完成方案及 SDD 开发/测试设计；仅授权文档，不授权代码实施或 Git 交付。
+Authority: 用户在第二轮连续讨论中认可短点阅读、长按快捷操作、已看复访、稳定阅读与完整 Agent 交接，并于 2026-10-16 要求独立方案与 SDD；随后明确授权按 B-176 完成全部开发测试。执行结果由 Tracker 承接，Git 交付另行授权。
 Work item: B-176
 
 ## Context
@@ -61,7 +61,7 @@ B-175 的任务、测试与状态不变：第二轮接收终态校验后的完�
 - Pagelet 交接前保持其 current-evidence 校验；Chat 接纳后的生成、重试及下一 loop 遵循
   [DEC-055](./dec-055-agent-snapshot-execution-and-debug-history.md)，不新增在途文件变化撤销规则。
 - B-141 的 Detail 交接缺口由本轮范围承接，完成后再依真实证据处置；B-002 仅有局部重合，不整体重开或关闭。
-- B-175 占用唯一 Next；本轮设计暂存 Proposal 并保留 Backlog，取得实施授权和执行位置后迁入 Active。
+- 设计时 B-175 占用唯一 Next；其后 B-175 已验证并本地提交，本轮取得实施授权，原 SDD 已迁入 Active，执行状态唯一见 [Tracker](../../development/active/pagelet-reading-loop/tracker.md)。
 
 ## Revisit Trigger
 
@@ -71,7 +71,7 @@ B-175 的任务、测试与状态不变：第二轮接收终态校验后的完�
 ## Traceability
 
 - [Product Spec](../specs/pagelet-reading-loop-product-spec.md)
-- [开发与测试 SDD](../../development/proposals/pagelet-reading-loop/sdd.md)
+- [开发与测试 SDD](../../development/active/pagelet-reading-loop/sdd.md)
 - [Backlog B-176 / B-141](../../backlog.md#已延期的产品与工程工作)
 - [Command Architecture Contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)
 - 来源：User request / approval 2026-10-16，本对话第二轮方案认可与独立文档化授权。

@@ -3,7 +3,7 @@ import { WritingVersionService } from '../src/chat/writing-versions';
 import { hashWritingText, type WritingVersion } from '../src/chat/writing-types';
 import type { ChatTurnMemoryMetadata, ChatWritingRecovery } from '../src/ai-services/chat-types';
 import type { MessageImage } from '../src/chat/image-types';
-import type { GenerationInputSnapshot, GenerationInputSnapshotV1, GenerationInputSnapshotV2 } from '../src/ai-services/generation-input-snapshot';
+import { cloneGenerationInputSnapshot, type GenerationInputSnapshot, type GenerationInputSnapshotV1, type GenerationInputSnapshotV2 } from '../src/ai-services/generation-input-snapshot';
 import { completeInputLineage, generationInputSnapshotInputLineage, resolveWritingVersionInputLineage,
     toGenerationInputLineage, writingVersionInputLineage } from '../src/ai-services/input-lineage';
 import type { InputDependency } from '../src/ai-services/input-lineage';
@@ -49,6 +49,31 @@ function v2RecoveryWithParent(version: WritingVersion, dependencies: InputDepend
 }
 
 describe('explicitly confirmed recovery source revalidation', () => {
+    test('keeps identified Pagelet descendants complete only with their recorded input dependencies', async () => {
+        const { host } = setup();
+        const source = { path: 'pagelet-anchor.md', mtime: 1, size: 10,
+            contentHash: { algorithm: 'sha256' as const, value: 'a'.repeat(64) } };
+        const snapshot: GenerationInputSnapshotV2 = { schemaVersion: 2, inputPurpose: 'writing',
+            task: { state: 'none', sources: [] }, personal: { state: 'none' }, insights: { state: 'none' },
+            style: { state: 'none' }, images: [], parent: { state: 'none' },
+            pagelet: { state: 'identified', id: 'pagelet-known', pipelineVersion: 'pagelet-deep-discover-v4',
+                bodyHash: { algorithm: 'sha256', value: 'b'.repeat(64) }, anchor: source, sources: [source] },
+            lineage: toGenerationInputLineage(completeInputLineage([
+                { kind: 'vault', path: source.path, via: 'pagelet' },
+            ]), []),
+        };
+        const receipt = await prepareWritingRecoverySources(host, { ...recovery(), generationInput: snapshot }, [], 'chat', undefined, 'notes');
+        expect(receipt.lineageComplete).toBe(true);
+        expect(host.verifyGenerationSource).toHaveBeenCalledWith({ kind: 'pagelet', source: snapshot.pagelet });
+        expect(host.verifyNote).toHaveBeenCalledWith({ path: source.path }, false);
+        expect(generationInputSnapshotInputLineage({ ...snapshot,
+            lineage: toGenerationInputLineage(completeInputLineage([]), []) }).completeness).toBe('unknown');
+        const { lineage: _lineage, ...withoutLineage } = snapshot;
+        expect(() => cloneGenerationInputSnapshot({ ...withoutLineage, schemaVersion: 1 })).toThrow();
+        await expect(prepareWritingRecoverySources(host, { ...recovery(), generationInput: snapshot }, [], 'chat', undefined, 'web'))
+            .rejects.toThrow('outside current scope');
+    });
+
     test('does not treat an identified Personal field omitted from complete v2 lineage as a complete recovery', async () => {
         const { host } = setup();
         const personal = { state: 'identified' as const, mode: 'governed' as const,

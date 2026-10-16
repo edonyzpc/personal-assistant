@@ -348,6 +348,8 @@ function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetail
     }
     if (payload.sourcePath) copy.sourcePath = payload.sourcePath;
     if (payload.summarySaveNote) copy.summarySaveNote = payload.summarySaveNote;
+    // Reading callbacks and the latest position stay in this existing session cache only.
+    if (payload.reading) copy.reading = payload.reading;
     return copy;
 }
 
@@ -416,7 +418,7 @@ export class PageletDetailView extends ItemView {
     private sessionId: string;
     private contextualMemoryClaimIds: string[] = [];
     private hasContextualMemoryState = false;
-    private payloadOptions: Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason" | "deliveryTarget"> = {};
+    private payloadOptions: Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason" | "deliveryTarget" | "reading"> = {};
 
     constructor(
         leaf: WorkspaceLeaf,
@@ -588,6 +590,7 @@ export class PageletDetailView extends ItemView {
             restoredFromState: payload.restoredFromState,
             entryReason: payload.entryReason,
             deliveryTarget: payload.deliveryTarget,
+            reading: payload.reading,
         };
         if (!payload.restoredFromState) {
             this.cacheCurrentPayload();
@@ -670,6 +673,7 @@ export class PageletDetailView extends ItemView {
             || Boolean(this.payloadOptions.extra)
             || Boolean(this.payloadOptions.sourcePath)
             || Boolean(this.payloadOptions.summarySaveNote)
+            || Boolean(this.payloadOptions.reading)
             || Boolean(this.payloadOptions.restoredFromState);
     }
 
@@ -684,6 +688,7 @@ export class PageletDetailView extends ItemView {
             sourcePath: this.payloadOptions.sourcePath,
             summarySaveNote: this.payloadOptions.summarySaveNote,
             entryReason: this.payloadOptions.entryReason,
+            reading: this.payloadOptions.reading,
         });
     }
 

@@ -69,7 +69,10 @@ export type GenerationInputPageletSource =
     | { state: 'none' }
     | { state: 'unknown'; id: string; pipelineVersion: string;
         anchor: { path: string; mtime: number; size: number; contentHash: { algorithm: 'unspecified'; value: string } };
-        sources: Array<{ path: string; mtime: number; size: number; contentHash: { algorithm: 'unspecified'; value: string } }> };
+        sources: Array<{ path: string; mtime: number; size: number; contentHash: { algorithm: 'unspecified'; value: string } }> }
+    | { state: 'identified'; id: string; pipelineVersion: string; bodyHash: { algorithm: 'sha256'; value: string };
+        anchor: { path: string; mtime: number; size: number; contentHash: { algorithm: 'sha256'; value: string } };
+        sources: Array<{ path: string; mtime: number; size: number; contentHash: { algorithm: 'sha256'; value: string } }> };
 
 interface GenerationInputSnapshotBase {
     inputPurpose: 'writing';
@@ -195,10 +198,17 @@ const parentSchema = z.discriminatedUnion('state', [
 const pageletRevisionSchema = z.object({ path: sourcePath,
     mtime: z.number().finite().nonnegative(), size: z.number().finite().nonnegative(),
     contentHash: z.object({ algorithm: z.literal('unspecified'), value: shortText }).strict() }).strict();
-const pageletSchema = z.discriminatedUnion('state', [
+const legacyPageletSchema = z.discriminatedUnion('state', [
     z.object({ state: z.literal('none') }).strict(),
     z.object({ state: z.literal('unknown'), id: revisionId, pipelineVersion: revisionId,
         anchor: pageletRevisionSchema, sources: z.array(pageletRevisionSchema).max(2048) }).strict(),
+]);
+const pageletSchema = z.discriminatedUnion('state', [
+    ...legacyPageletSchema.options,
+    z.object({ state: z.literal('identified'), id: revisionId, pipelineVersion: revisionId,
+        bodyHash: z.object({ algorithm: z.literal('sha256'), value: sha256 }).strict(),
+        anchor: pageletRevisionSchema.extend({ contentHash: z.object({ algorithm: z.literal('sha256'), value: sha256 }).strict() }),
+        sources: z.array(pageletRevisionSchema.extend({ contentHash: z.object({ algorithm: z.literal('sha256'), value: sha256 }).strict() })).max(2048) }).strict(),
 ]);
 const taskSchemaV1 = z.object({ state: z.enum(['none', 'identified', 'unknown']),
     sources: z.array(taskSourceSchemaV1).max(2048) }).strict().superRefine(validateTaskIdentity);
@@ -228,7 +238,7 @@ const lineageSchema = z.discriminatedUnion('state', [
 const generationInputSnapshotSchemaV1 = z.object({
     ...commonSnapshotFields,
     schemaVersion: z.literal(1), inputPurpose: z.literal('writing'),
-    task: taskSchemaV1,
+    task: taskSchemaV1, pagelet: legacyPageletSchema,
 }).strict();
 const generationInputSnapshotSchemaV2 = z.object({
     ...commonSnapshotFields,
@@ -282,7 +292,14 @@ export function cloneGenerationInputSnapshot(value: unknown): GenerationInputSna
             ? { state: 'identified', versionId: parsed.parent.versionId,
                 textHash: { algorithm: 'sha256', value: parsed.parent.textHash.value } }
             : { state: 'none' },
-        pagelet: parsed.pagelet.state === 'unknown'
+        pagelet: parsed.pagelet.state === 'identified'
+            ? {
+                state: 'identified', id: parsed.pagelet.id, pipelineVersion: parsed.pagelet.pipelineVersion,
+                bodyHash: { algorithm: 'sha256', value: parsed.pagelet.bodyHash.value },
+                anchor: { ...parsed.pagelet.anchor, contentHash: { ...parsed.pagelet.anchor.contentHash } },
+                sources: parsed.pagelet.sources.map(source => ({ ...source, contentHash: { ...source.contentHash } })),
+            }
+            : parsed.pagelet.state === 'unknown'
             ? {
                 state: 'unknown', id: parsed.pagelet.id, pipelineVersion: parsed.pagelet.pipelineVersion,
                 anchor: { ...parsed.pagelet.anchor,
@@ -302,7 +319,7 @@ export function generationInputNeedsRecoveryConfirmation(value: unknown): boolea
         || snapshot.personal.state === 'unknown'
         || snapshot.insights.state !== 'none'
         || snapshot.style.state === 'unknown'
-        || snapshot.pagelet.state !== 'none';
+        || snapshot.pagelet.state === 'unknown';
 }
 
 /** A live path guard cannot prove legacy input or replay an editor/partition observation. */

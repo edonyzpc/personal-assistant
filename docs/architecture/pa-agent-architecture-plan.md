@@ -990,7 +990,8 @@ The Agent chooses the result content and number; single-anchor evidence may
 support a complete text. Each text has independent source/currentness checks,
 identity and delivery receipt; exact identities are idempotent, without semantic
 similarity or value gates. Collection commit remains atomic, while an invalid
-sibling does not delete valid members. Pipeline v3 rejects predecessor caches.
+sibling does not delete valid members. Pipeline v4 carries each completed text's
+actual authoring-input ancestry and rejects predecessor caches.
 
 Controlled error/incomplete runs may deliver validated completed staged texts
 with the unfinished state visible, without caching the incomplete run or using
@@ -1000,6 +1001,26 @@ viewing remains provider-free. All delivered texts and sources are reachable,
 and source ordering does not create a Link action. No-findings, no-new-results,
 failure, incomplete, cancellation and stale outcomes remain distinguishable;
 consumed calls retain their usage even if results are rejected.
+
+[DEC-066](../product/decisions/dec-066-pagelet-reading-loop.md) defines the
+reading loop: short click reads without starting discovery, long press retains
+the Action Ring, and each anchor keeps its most recent session-only reading.
+Activity updates and later results preserve the selected body, scroll and source
+expansion; only the originating request may fill its empty waiting reader.
+Panel-to-Detail transfer binds to the target's independent lifetime.
+
+Chat handoff carries the selected full body and its actual authoring ancestry.
+Preparation and first acceptance verify the original anchor, current source
+owners, evidence epoch, independent web permission and existing web lifetime.
+Finite read observations retain the original Pagelet owner epoch, and source
+validation intersects that owner's current scope with Chat permission. A completed
+canonical Pagelet descendant may rebind its observation run identity for the next
+request only after owner checks; dependencies, epoch and stored history stay intact.
+Missing proof remains unavailable. Actual accepted projection owns request
+lineage, Writing input records and successful attachment consumption; after
+acceptance DEC-055 snapshot semantics apply. Attachment material grants no
+tool, network or write authority. The [B-176 Tracker](../development/active/pagelet-reading-loop/tracker.md)
+owns implementation and validation evidence.
 
 ## Persistence And Compatibility
 

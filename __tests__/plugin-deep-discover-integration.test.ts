@@ -99,6 +99,40 @@ const createDependencies = () => {
 };
 
 describe("DeepDiscoverPluginIntegration ownership", () => {
+    it("keeps cold reading provider-free even when AI is unavailable", async () => {
+        const dependencies = createDependencies();
+        dependencies.getAISetupIssue = jest.fn(() => 'not configured');
+        const owner = new DeepDiscoverPluginIntegration(dependencies);
+        await expect(owner.readDeepDiscover({ path: 'notes/a.md' })).resolves.toMatchObject({ status: 'unavailable' });
+        expect(owner.getDeepDiscoverActivity('notes/a.md')).toEqual({ phase: 'idle', requestId: null });
+        expect(dependencies.ensureAIConfigured).not.toHaveBeenCalled();
+        expect(dependencies.getAISetupIssue).not.toHaveBeenCalled();
+        expect(dependencies.createLiveHost).not.toHaveBeenCalled();
+        expect(dependencies.getProviderCallAdmission).not.toHaveBeenCalled();
+        expect(dependencies.createRateLimitStorage).not.toHaveBeenCalled();
+    });
+
+    it("does not publish an existing-scheduler read after its controller was reset", async () => {
+        const dependencies = createDependencies();
+        const owner = new DeepDiscoverPluginIntegration(dependencies);
+        const state = owner as unknown as OwnerState;
+        let finish!: (value: { status: 'empty' }) => void;
+        const readCachedCollection = jest.fn<PageletDeepDiscoverScheduler['readCachedCollection']>(
+            () => new Promise<{ status: 'empty' }>(resolve => { finish = resolve; }),
+        );
+        const dispose = jest.fn();
+        state.scheduler = { readCachedCollection, dispose } as unknown as PageletDeepDiscoverScheduler;
+        state.controllerPolicyIdentitySnapshot = owner.getPolicyIdentityKey();
+        const read = owner.readDeepDiscover({ path: 'notes/a.md' });
+        expect(readCachedCollection).toHaveBeenCalledWith('notes/a.md', undefined);
+        owner.resetController();
+        finish({ status: 'empty' });
+        await expect(read).resolves.toEqual({ status: 'stale', reason: 'reading-context-changed' });
+        expect(dispose).toHaveBeenCalledTimes(1);
+        expect(dependencies.ensureAIConfigured).not.toHaveBeenCalled();
+        expect(dependencies.createLiveHost).not.toHaveBeenCalled();
+    });
+
     it("constructs without initializing a scheduler, model host, limiter, or provider call", () => {
         const dependencies = createDependencies();
         const owner = new DeepDiscoverPluginIntegration(dependencies);

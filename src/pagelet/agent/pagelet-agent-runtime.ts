@@ -31,6 +31,11 @@ import {
 import { resolveB125RetrievalOptimizationFlags } from "../../retrieval-optimization-platform-policy";
 import type { PaAgentMessage, SourceRecord } from "../../ai-services/chat-types";
 import { cloneSourceRecord } from "../../ai-services/source-store";
+import { completeInputLineage, sourceRecordsInputLineage, unionInputLineages, unknownInputLineage } from "../../ai-services/input-lineage";
+import { clonePageletInputEvidence, type PageletInputEvidence } from "../../ai-services/pagelet-handoff";
+import { parseVaultObservationEvidence } from "../../ai-services/vault-observation-evidence";
+import { isSafeSourceFreeToolObservation } from "../../ai-services/pa-agent-runtime";
+import { captureRunNotesObservationLineage } from "../../ai-services/task-source-run";
 import {
     capturePageletSourceSnapshot,
     hashPageletContent,
@@ -177,6 +182,51 @@ function recordPromptBodyEvidence(
     }
 }
 
+function capturePageletInputEvidence(
+    previous: PageletInputEvidence,
+    transcript: readonly PaAgentMessage[],
+    snapshots: ReadonlyMap<string, PageletAgentSourceSnapshot>,
+    runId: string,
+    sourceEpoch: string | undefined,
+): PageletInputEvidence {
+    const records = new Map(previous.sourceRecords.map(record => [JSON.stringify(record), record]));
+    const observations = new Map(previous.vaultObservations.map(observation => [observation.observationId, observation]));
+    const sources = new Map(previous.sourceSnapshots.map(source => [source.path, source]));
+    const lineages = [previous.lineage];
+    for (const message of transcript) {
+        if (message.role !== "toolResult" || message.isError || !message.content.includeInNextPrompt
+            || !message.content.promptText || message.toolName === PAGELET_STAGE_INSIGHT_TOOL_NAME) continue;
+        const actualRecords = (message.content.sourceRecords ?? []).filter(record => record.metadata?.sourceDependency === true
+            || !record.redacted && !record.statusOnly);
+        for (const record of actualRecords) {
+            records.set(JSON.stringify(record), record);
+            if (record.path) {
+                const snapshot = snapshots.get(record.path);
+                if (snapshot) sources.set(snapshot.path, snapshot);
+            }
+        }
+        if (actualRecords.length) lineages.push(sourceRecordsInputLineage(actualRecords));
+        const contract = message.content.metadata?.vaultObservationContractVersion === 1;
+        if (contract) {
+            const parsed = parseVaultObservationEvidence(message.content.metadata?.vaultObservationEvidence);
+            if (!parsed.ok) { lineages.push(unknownInputLineage()); continue; }
+            observations.set(parsed.evidence.observationId, parsed.evidence);
+            if (!actualRecords.length && "aggregate" in parsed.evidence) {
+                lineages.push(sourceEpoch ? completeInputLineage([{ kind: "run-notes-observation",
+                    runId, owner: "vault", sourceEpoch }]) : unknownInputLineage());
+            }
+        } else if (!actualRecords.length && message.toolName !== "search_memory") {
+            // A successful unsourced payload cannot become complete ancestry
+            // merely because the final Markdown omits its path or URL.
+            lineages.push(isSafeSourceFreeToolObservation(message)
+                ? message.inputLineage ?? unknownInputLineage() : unknownInputLineage());
+        }
+    }
+    return clonePageletInputEvidence({ lineage: unionInputLineages(...lineages),
+        sourceRecords: [...records.values()], sourceSnapshots: [...sources.values()],
+        vaultObservations: [...observations.values()] });
+}
+
 function memorySourcePathsFromObservation(promptText: string): string[] {
     try {
         const envelope = JSON.parse(promptText) as {
@@ -234,6 +284,10 @@ async function runPageletAgent(
     const stagedSourceTools = new Map<string, Set<string>>();
     const toolProvenance: PageletAgentToolProvenance[] = [];
     const webObservations: PageletAgentWebObservation[] = [];
+    let inputEvidence = clonePageletInputEvidence({
+        lineage: completeInputLineage([{ kind: "vault", path: request.anchor.path, via: "pagelet" }]),
+        sourceRecords: [], sourceSnapshots: [sourceSnapshotIdentity(request.anchor)], vaultObservations: [],
+    });
     const recovery = new PageletRecoveryCoordinator({
         enabled: recoveryEnabled,
         anchorPath: request.anchor.path,
@@ -275,6 +329,7 @@ async function runPageletAgent(
             sourceTools: promptSourceTools,
         }),
         validateStaged: async (input, signal, _control) => {
+            const authoringEvidence = clonePageletInputEvidence(inputEvidence);
             const validation = await validateStagedPageletInsight({
                 dependencies,
                 request,
@@ -289,7 +344,7 @@ async function runPageletAgent(
                     for (const tool of promptSourceTools.get(path) ?? []) addSourceTool(stagedSourceTools, path, tool);
                 }
             }
-            return validation;
+            return validation.accepted ? { ...validation, inputEvidence: authoringEvidence } : validation;
         },
     });
     const registry = createPageletRegistry(dependencies, request, recovery);
@@ -322,6 +377,8 @@ async function runPageletAgent(
         ),
         recordPromptProjection: (transcript) => {
             recordPromptBodyEvidence(transcript, promptSourceTools);
+            inputEvidence = capturePageletInputEvidence(inputEvidence, transcript, sourceSnapshots,
+                runId, dependencies.host.getMemoryEvidenceEpoch?.());
         },
     });
 
@@ -349,6 +406,7 @@ async function runPageletAgent(
         sourceTools,
         toolProvenance,
         webObservations,
+        runId,
     });
     const loop = new PaAgentLoop({
         runId,
@@ -498,7 +556,8 @@ async function runPageletAgent(
             merged.add("search_memory");
             resultSourceTools.set(path, merged);
         }
-        const insightDrafts = recoverySnapshot.drafts;
+        const insightDrafts = recoverySnapshot.drafts.map(draft => draft.origin === "terminal"
+            ? { ...draft, inputEvidence: clonePageletInputEvidence(inputEvidence) } : draft);
         const runtimeCompletion = summarizeRuntimeCompletion({
             loopResult,
             finalText,
@@ -809,6 +868,7 @@ function createProvenanceCapturingExecutor(options: {
     sourceTools: Map<string, Set<string>>;
     toolProvenance: PageletAgentToolProvenance[];
     webObservations: PageletAgentWebObservation[];
+    runId: string;
 }): PaAgentToolExecutor {
     return {
         getCanonicalToolCallKey: (toolCall, context) => (
@@ -818,10 +878,19 @@ function createProvenanceCapturingExecutor(options: {
             ? "sequential"
             : options.baseExecutor.getExecutionMode?.(toolName),
         execute: async (input) => {
+            const sourceEpoch = input.toolCall.name === "search_vault_metadata"
+                ? options.dependencies.host.getMemoryEvidenceEpoch?.() : undefined;
             const executeBase = () => options.baseExecutor.execute(input);
             const result = options.bindMemoryEpisodes && input.toolCall.name === "search_memory"
                 ? await options.recovery.withMemorySearchToolCall(input.toolCall.id, executeBase)
                 : await executeBase();
+            if (input.toolCall.name === "search_vault_metadata" && isSafeSourceFreeToolObservation({
+                role: "toolResult", id: input.toolCall.id, toolCallId: input.toolCall.id,
+                toolName: input.toolCall.name, timestamp: 0, isError: result.outcome !== "success",
+                content: { promptText: result.promptText, includeInNextPrompt: result.includeInNextPrompt ?? true,
+                    sourceRecords: result.sourceRecords, resultFact: result.resultFact, metadata: result.metadata },
+            })) result.inputLineage = captureRunNotesObservationLineage({ runId: options.runId, owner: "vault",
+                sourceEpoch, currentSourceEpoch: options.dependencies.host.getMemoryEvidenceEpoch?.() });
             const sourceRecords = cloneSourceRecords(result.sourceRecords ?? []);
             if (input.toolCall.name === "search_memory") {
                 for (const path of memorySourcePathsFromObservation(result.promptText)) {

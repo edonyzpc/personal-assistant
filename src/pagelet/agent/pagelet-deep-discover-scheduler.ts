@@ -1,11 +1,23 @@
 import type {
     PageletDeepDiscoverController,
     PageletDeepDiscoverControllerRequest,
+    PageletDeepDiscoverReadResult,
 } from "./pagelet-deep-discover-controller";
 import type {
     PageletAgentValidationIdentity,
     PageletDeepDiscoverControllerResult,
+    PageletAgentRuntimeCompletion,
 } from "./types";
+
+export interface PageletDeepDiscoverActivity {
+    readonly phase: "idle" | "queued" | "preparing" | "running";
+    readonly requestId: string | null;
+    readonly terminal?: {
+        readonly status: PageletDeepDiscoverControllerResult["status"];
+        readonly reason?: string;
+        readonly runtimeCompletion?: PageletAgentRuntimeCompletion;
+    };
+}
 
 interface ScheduledRequest {
     request: PageletDeepDiscoverControllerRequest;
@@ -30,6 +42,7 @@ interface ActiveScheduledRun {
     request: PageletDeepDiscoverControllerRequest;
     preemptedByExplicit: boolean;
     settle(result: PageletDeepDiscoverControllerResult): void;
+    phase: "preparing" | "running";
 }
 
 export interface PageletDeepDiscoverSchedulerOptions {
@@ -55,6 +68,8 @@ export class PageletDeepDiscoverScheduler {
     private disposed = false;
     private automaticEnabled = true;
     private automaticEpoch = 0;
+    private nextRequestSequence = 0;
+    private readonly activityListeners = new Set<(path: string) => void>();
 
     constructor(private readonly options: PageletDeepDiscoverSchedulerOptions) {
         this.delayMs = Math.max(0, options.delayMs ?? 5_000);
@@ -69,6 +84,7 @@ export class PageletDeepDiscoverScheduler {
         if (this.disposed || !this.automaticEnabled || request.signal?.aborted) {
             return Promise.resolve({ status: "quiet", reason: "aborted" });
         }
+        request = this.identifyRequest(request);
         const existing = this.pending.get(request.path);
         if (existing?.timer) this.clearTimer(existing.timer);
 
@@ -90,6 +106,7 @@ export class PageletDeepDiscoverScheduler {
                 }, this.delayMs);
             }
             this.pending.set(request.path, pending);
+            this.notifyActivity(request.path);
         });
     }
 
@@ -102,6 +119,7 @@ export class PageletDeepDiscoverScheduler {
         if (this.disposed || request.signal?.aborted) {
             return { status: "quiet", reason: "aborted" };
         }
+        request = this.identifyRequest(request);
         this.cancelPending(request.path);
         return await new Promise((resolve) => {
             const explicit: ExplicitRequest = {
@@ -120,10 +138,12 @@ export class PageletDeepDiscoverScheduler {
                         if (index >= 0) this.explicitQueue.splice(index, 1);
                     }
                     this.settleExplicit(explicit, abortedResult());
+                    this.notifyActivity(request.path);
                 };
                 request.signal.addEventListener("abort", explicit.abortListener, { once: true });
             }
             this.explicitQueue.push(explicit);
+            this.notifyActivity(request.path);
             if (this.activeRun?.kind === "automatic") {
                 this.activeRun.preemptedByExplicit = true;
                 this.options.controller.cancel();
@@ -153,6 +173,7 @@ export class PageletDeepDiscoverScheduler {
             reason: "aborted",
         };
         for (const waiter of pending.waiters) waiter.resolve(result);
+        this.notifyActivity(path);
     }
 
     /** Pause only future/background work, preserving explicit work and cache. */
@@ -178,6 +199,27 @@ export class PageletDeepDiscoverScheduler {
         return await this.options.controller.validateInsight(identity, signal);
     }
 
+    readCachedCollection(path: string, signal?: AbortSignal): Promise<PageletDeepDiscoverReadResult> {
+        if (this.disposed || signal?.aborted) return Promise.resolve({ status: "unavailable", reason: "inactive" });
+        return this.options.controller.readCachedCollection(path, signal);
+    }
+
+    getActivity(path: string): PageletDeepDiscoverActivity {
+        if (this.disposed) return { phase: "idle", requestId: null };
+        const queued = [...this.explicitQueue].reverse().find(item => !item.settled && item.request.path === path)?.request
+            ?? this.pending.get(path)?.request;
+        if (queued) return { phase: "queued", requestId: queued.requestId ?? null };
+        const active = this.activeRun;
+        return active?.request.path === path
+            ? { phase: active.phase, requestId: active.request.requestId ?? null }
+            : { phase: "idle", requestId: null };
+    }
+
+    subscribeActivity(listener: (path: string) => void): () => void {
+        this.activityListeners.add(listener);
+        return () => { this.activityListeners.delete(listener); };
+    }
+
     dispose(): void {
         if (this.disposed) return;
         this.disposed = true;
@@ -188,6 +230,7 @@ export class PageletDeepDiscoverScheduler {
         }
         this.activeRun?.settle(abortedResult());
         this.options.controller.dispose();
+        this.activityListeners.clear();
     }
 
     private markReady(path: string): void {
@@ -282,12 +325,25 @@ export class PageletDeepDiscoverScheduler {
             request,
             preemptedByExplicit: false,
             settle,
+            phase: "preparing",
         };
         this.activeRun = active;
-        void this.runController(request)
-            .then((result) => active.settle(result))
+        this.notifyActivity(request.path);
+        void this.runController({
+            ...request,
+            onRuntimeStart: () => {
+                if (this.activeRun !== active || this.disposed) return;
+                active.phase = "running";
+                this.notifyActivity(request.path);
+            },
+        })
+            .then((result) => {
+                if (this.activeRun === active) this.activeRun = undefined;
+                active.settle(result);
+            })
             .finally(() => {
                 if (this.activeRun === active) this.activeRun = undefined;
+                this.notifyActivity(request.path);
                 this.pump();
             });
         return active;
@@ -346,6 +402,18 @@ export class PageletDeepDiscoverScheduler {
         return this.explicitQueue.some((explicit) => (
             !explicit.settled && explicit.request.path === path
         ));
+    }
+
+    private identifyRequest(request: PageletDeepDiscoverControllerRequest): PageletDeepDiscoverControllerRequest {
+        return request.requestId ? request : {
+            ...request, requestId: `pagelet-scheduled-${++this.nextRequestSequence}`,
+        };
+    }
+
+    private notifyActivity(path: string): void {
+        for (const listener of this.activityListeners) {
+            try { listener(path); } catch { /* A view listener cannot stop discovery. */ }
+        }
     }
 }
 

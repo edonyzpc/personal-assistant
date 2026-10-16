@@ -8,7 +8,9 @@ import {
 } from './ai-utils';
 import type { AiServiceHost } from './AiServiceHost';
 import type { MemoryMode } from '../memory-manager';
-import type { PageletChatHandoffContext } from './pagelet-handoff';
+import { createPageletChatHandoffContext, pageletChatHandoffSourceLifetimeIsCurrent, type PageletChatHandoffContext } from './pagelet-handoff';
+import { capturePageletSourceSnapshot, hashPageletContent } from '../pagelet/agent/anchor-snapshot';
+import { validatePageletInputEvidence } from '../pagelet/agent/pagelet-agent-quality-gate';
 import {
     PaAgentRuntime,
     canFallbackToNonStreaming,
@@ -114,6 +116,25 @@ export interface StreamLLMOptions {
 export class ChatService {
     private aiUtils: AIUtils;
     private host: AiServiceHost;
+
+    /** First handoff admission; sending rechecks once before Chat accepts its snapshot. */
+    async validatePageletHandoff(context: PageletChatHandoffContext, signal?: AbortSignal): Promise<boolean> {
+        try {
+            const handoff = createPageletChatHandoffContext(context);
+            if (!pageletChatHandoffSourceLifetimeIsCurrent(handoff)
+                || !handoff.bodyHash || await hashPageletContent(handoff.body) !== handoff.bodyHash) return false;
+            return await validatePageletInputEvidence(handoff.inputEvidence, {
+                anchor: handoff.anchor,
+                isAuthoringPathAllowed: this.host.isPageletSourcePathAllowed?.bind(this.host),
+                isPathAllowed: path => this.host.isDataBoundaryAllowedPath?.(path) !== false,
+                readCurrentSourceSnapshot: (path, signal) => capturePageletSourceSnapshot({ host: this.host,
+                    path, signal, isPathAllowed: path => this.host.isDataBoundaryAllowedPath?.(path) !== false }),
+                revalidateVaultObservation: this.host.revalidateVaultObservation?.bind(this.host),
+                getEvidenceEpoch: this.host.getMemoryEvidenceEpoch?.bind(this.host), signal,
+                getAuthoringEvidenceEpoch: this.host.getPageletEvidenceEpoch?.bind(this.host),
+            });
+        } catch { return false; }
+    }
     private readonly operationsSession: OperationsSession;
     private readonly ownedOperationsService: OperationsService | null;
     private readonly contextSummarizer = new PaAgentContextSummarizer();

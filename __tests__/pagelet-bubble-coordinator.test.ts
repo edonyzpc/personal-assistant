@@ -153,6 +153,7 @@ function makeCoordinator(
             quietHours: { enabled: false, start: "22:00", end: "08:00" },
         }),
         {
+            onReadCurrentNote: jest.fn(),
             onExpandPanel: jest.fn(),
             onSourceClick: jest.fn(),
             onDismiss: jest.fn(),
@@ -181,6 +182,35 @@ async function flushAsyncWork(): Promise<void> {
 }
 
 describe("BubbleCoordinator Review Queue reminders", () => {
+    it("B-176 short taps read current-note content without opening Ring or probing Memory", async () => {
+        const onReadCurrentNote = jest.fn();
+        const probe = jest.fn(async () => true);
+        const coordinator = makeCoordinator(() => [], { isMemoryReadyForPageletDiscovery: probe }, { onReadCurrentNote });
+        const bubbleView = makeBubbleView();
+        const petView = Object.assign(makePetView(), { actionRingOpen: false, openActionRing: jest.fn(), closeActionRing: jest.fn() });
+        coordinator.handlePetClick(bubbleView, petView);
+        await flushAsyncWork();
+        expect(onReadCurrentNote).toHaveBeenCalledTimes(1);
+        expect(petView.openActionRing).not.toHaveBeenCalled();
+        expect(probe).not.toHaveBeenCalled();
+    });
+
+    it("B-176 delayed readiness from a Pet presentation also routes to reading", async () => {
+        let finish!: (ready: boolean) => void;
+        const onReadCurrentNote = jest.fn();
+        const coordinator = makeCoordinator(() => [], {
+            isMemoryReadyForPageletDiscovery: () => new Promise(resolve => { finish = resolve; }),
+        }, { onReadCurrentNote });
+        const bubble = makeBubbleView();
+        const pet = Object.assign(makePetView(), { openActionRing: jest.fn() });
+        coordinator.showBubble(bubble, pet, { entry: 'pet' });
+        finish(true);
+        await flushAsyncWork();
+        expect(onReadCurrentNote).toHaveBeenCalledTimes(1);
+        expect(pet.openActionRing).not.toHaveBeenCalled();
+        expect(bubble.bubbleState).toBe('hidden');
+    });
+
     it("presents an admitted Agent insight through the shared nudge lifecycle", () => {
         const proactiveHints = new ProactiveHints({
             enabled: false,
@@ -202,7 +232,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         const bubbleView = makeBubbleView();
         const petView = makeNudgePetView();
 
-        coordinator.handlePetClick(bubbleView, petView);
+        coordinator.showNudgeBubble(bubbleView, petView);
 
         const content = shownContent(bubbleView);
         expect(content.type).toBe("review-delivery");
@@ -380,8 +410,9 @@ describe("BubbleCoordinator Review Queue reminders", () => {
             const bubbleView = makeBubbleView();
             const petView = makeNudgePetView();
 
-            coordinator.handlePetClick(bubbleView, petView);
+            coordinator.showNudgeBubble(bubbleView, petView);
             expect(shownContent(bubbleView).type).toBe("nudge");
+            petView.stateMachine.transition("user-interact");
             bubbleView.close();
             coordinator.handleBubbleClosed(bubbleView, petView);
 
@@ -429,7 +460,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         const bubbleView = makeBubbleView();
         const petView = makeNudgePetView();
         try {
-            coordinator.handlePetClick(bubbleView, petView);
+            coordinator.showNudgeBubble(bubbleView, petView);
             bubbleView.close();
             coordinator.handleBubbleClosed(bubbleView, petView);
             expect(jest.getTimerCount()).toBe(1);
@@ -465,7 +496,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         coordinator.reconcileNudge(bubbleView, petView);
         expect(petView.stateMachine.forceState).toHaveBeenCalledWith("nudge");
 
-        coordinator.handlePetClick(bubbleView, petView);
+        coordinator.showNudgeBubble(bubbleView, petView);
         expect(shownContent(bubbleView).type).toBe("review-delivery");
     });
 
@@ -509,7 +540,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         const coordinator = makeCoordinator(listReviewQueueItems);
         const bubbleView = makeBubbleView();
 
-        coordinator.showBubble(bubbleView, makePetView());
+        coordinator.showBubble(bubbleView, makePetView(), { entry: "quick-review" });
         await flushAsyncWork();
 
         const content = shownContent(bubbleView);
@@ -526,7 +557,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         });
         const bubbleView = makeBubbleView();
 
-        coordinator.showBubble(bubbleView, makePetView());
+        coordinator.showBubble(bubbleView, makePetView(), { entry: "quick-review" });
         await Promise.resolve();
         await Promise.resolve();
 
@@ -542,7 +573,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         (coordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
         const bubbleView = makeBubbleView();
 
-        coordinator.showBubble(bubbleView, makePetView());
+        coordinator.showBubble(bubbleView, makePetView(), { entry: "quick-review" });
         expect(shownContent(bubbleView).type).toBe("ready-empty");
         await flushAsyncWork();
 
@@ -565,7 +596,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         const coordinator = makeCoordinator(listReviewQueueItems);
         const bubbleView = makeBubbleView();
 
-        coordinator.showBubble(bubbleView, makePetView());
+        coordinator.showBubble(bubbleView, makePetView(), { entry: "quick-review" });
         await Promise.resolve();
 
         const content = shownContent(bubbleView);
@@ -584,7 +615,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         });
         const bubbleView = makeBubbleView();
 
-        coordinator.showBubble(bubbleView, makePetView());
+        coordinator.showBubble(bubbleView, makePetView(), { entry: "quick-review" });
 
         const content = shownContent(bubbleView);
         expect(content.type).toBe("needs-setup");
@@ -598,7 +629,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         });
         const bubbleView = makeBubbleView();
 
-        coordinator.showBubble(bubbleView, makePetView());
+        coordinator.showBubble(bubbleView, makePetView(), { entry: "quick-review" });
 
         const content = shownContent(bubbleView);
         expect(content.type).toBe("context-limited");
@@ -612,7 +643,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         });
         const bubbleView = makeBubbleView();
 
-        coordinator.showBubble(bubbleView, makePetView());
+        coordinator.showBubble(bubbleView, makePetView(), { entry: "quick-review" });
         await flushAsyncWork();
         shownContent(bubbleView).actions[0].callback();
 
@@ -628,7 +659,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
     it.each([
         ["ready-empty", true, READY_EMPTY_EXPLANATION_COPY_VERSION],
         ["intentionally-quiet", false, INTENTIONALLY_QUIET_EXPLANATION_COPY_VERSION],
-    ] as const)("acknowledges %s only after visible, then routes Pet short click to Ring", (
+    ] as const)("acknowledges %s only after visible, then routes Pet short click to reading", (
         kind,
         proactiveHints,
         copyVersion,
@@ -672,18 +703,18 @@ describe("BubbleCoordinator Review Queue reminders", () => {
             closeActionRing: jest.fn(),
         });
 
-        coordinator.handlePetClick(failedBubble, petView);
+        coordinator.showBubble(failedBubble, petView);
         expect(onExplanationVisible).not.toHaveBeenCalled();
 
         const visibleBubble = makeBubbleView();
-        coordinator.handlePetClick(visibleBubble, petView);
+        coordinator.showBubble(visibleBubble, petView);
         expect(shownContent(visibleBubble).type).toBe(kind);
         expect(onExplanationVisible).toHaveBeenCalledWith(kind, copyVersion);
         expect(updatePageletSetting).not.toHaveBeenCalled();
 
         visibleBubble.close();
         coordinator.handlePetClick(visibleBubble, petView);
-        expect(petView.openActionRing).toHaveBeenCalledTimes(1);
+        expect(petView.openActionRing).not.toHaveBeenCalled();
     });
 
 
@@ -823,7 +854,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
 
         bubbleView.close();
         settings.pagelet.proactiveHints = true;
-        coordinator.handlePetClick(bubbleView, petView);
+        coordinator.showBubble(bubbleView, petView);
 
         expect(shownContent(bubbleView)).toEqual(expect.objectContaining({
             type: "ready-empty",

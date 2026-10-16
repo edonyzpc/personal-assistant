@@ -6513,6 +6513,7 @@ export class LLMView extends ItemView {
             };
             let modelHistory: ChatMessage[];
             let turnPageletHandoff: PageletChatHandoffContext | undefined;
+            let acceptedPageletHandoffId: string | undefined;
             let previousResult = this.result;
             let runSourceSelection: ReturnType<ConversationPersistence['captureRunSourceSelection']> | undefined;
             let currentUserLineage: InputLineage;
@@ -6636,6 +6637,9 @@ export class LLMView extends ItemView {
                 };
                 const handleTurnMetadata = (metadata: ChatTurnMemoryMetadata) => {
                     if (!acceptingStreamEvents || !isLiveTurn()) return;
+                    if (metadata.acceptedPageletHandoffId === turnPageletHandoff?.id) {
+                        acceptedPageletHandoffId = metadata.acceptedPageletHandoffId;
+                    }
                     if (turn.canonicalLifecycle.active) return;
                     turn.memoryMetadata = metadata;
                     addContextUsedItems(turn, metadata.contextUsed ?? []);
@@ -7335,6 +7339,7 @@ export class LLMView extends ItemView {
                     finalized
                     && completedPageletTurn
                     && turnPageletHandoff
+                    && acceptedPageletHandoffId === turnPageletHandoff.id
                     && this.pendingPageletHandoff?.id === turnPageletHandoff.id
                 ) {
                     this.clearPendingPageletHandoff();
@@ -8004,6 +8009,8 @@ export class LLMView extends ItemView {
                 textArea.focus();
                 return { status: "draft-conflict" };
             }
+
+            if (!await this.chatService.validatePageletHandoff(context, signal)) return { status: "invalid" };
 
             const handoffDraft = composerDraft.snapshot(textArea.value);
             const canCommitHandoff = () => isCurrentSession()

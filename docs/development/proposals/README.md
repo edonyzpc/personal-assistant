@@ -10,6 +10,5 @@ B-123 / B-101 下方已命名的固定文件是 owner 明确保留的永久 hand
 
 | Proposal | Backlog | Current boundary | Restart condition |
 | --- | --- | --- | --- |
-| [Pagelet 入口与阅读 SDD](./pagelet-reading-loop/sdd.md) | B-176 | DEC-066 / Product Spec 已确认；这里只保存开发与必要测试设计，不承载实施或终态证据 | B-175 可接续、实施获授权且唯一 Next 可用后迁入 Active；Blocked 表示待执行条件，不是产品待决 |
 | [Pagelet Agent direction](./pagelet-agent/pagelet-agent-proposal.md) / [Deep Discover SDD](./pagelet-agent/pagelet-agent-deep-discover-sdd.md) | B-123 | Closed 2026-08-01：20/20 修复版 dogfood、owner 盲评、配额、provider-free runner、Bubble → Panel / Settings 可见验证与真实 vault 恢复全部通过 | 永久保留为 Step 1 方向与设计证据；不再承担待办状态 |
 | [Owner decision](./proposal-review-response-2026-07-28.md) / [implementation handoff](./implementation-handoff.md) / [Operations capability](./operations-agent/agent-operations-capability.md) / [Step 2 SDD](./operations-agent/operations-agent-step2-sdd.md) / [Step 3 SDD](./operations-agent/operations-agent-step3-sdd.md) / [historical boundary plan](./operations-agent/operations-agent-plan.md) / [historical mode SDD](./operations-agent/operations-agent-mode-sdd.md) | B-101 | Closed 2026-08-01：Step 2 Chat 写入与 Step 3 Pagelet 单文件确认动作、完整 Chat handoff、共享 Operations 层通过 review/fix、`make deploy`、test-vault 与真实 vault dogfood | 永久保留为有界 Operations 方向、实现与验证证据；额外写工具或 Pagelet 动作需独立需求证据与 owner 授权 |

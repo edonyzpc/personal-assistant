@@ -17,8 +17,9 @@ import type {
 import type { MemorySearchResult, PaAgentMessage, SourceRecord } from "../../ai-services/chat-types";
 import type { CapabilityRegistry } from "../../ai-services/capability-registry";
 import type { AiServiceHost } from "../../ai-services/AiServiceHost";
+import type { PageletInputEvidence } from "../../ai-services/pagelet-handoff";
 
-export const PAGELET_DEEP_DISCOVER_PIPELINE_VERSION = "pagelet-deep-discover-v3" as const;
+export const PAGELET_DEEP_DISCOVER_PIPELINE_VERSION = "pagelet-deep-discover-v4" as const;
 export const PAGELET_DEEP_DISCOVER_MAX_TURNS = 256;
 export const PAGELET_DEEP_DISCOVER_MAX_TOOL_CALLS = 1024;
 export const PAGELET_DEEP_DISCOVER_MAX_WALL_CLOCK_MS = Number.POSITIVE_INFINITY;
@@ -167,6 +168,7 @@ export interface PageletAgentInsightDraft {
     readonly body: string;
     readonly origin: "terminal" | "staged";
     readonly declaredSourceIds: readonly string[];
+    readonly inputEvidence?: PageletInputEvidence;
 }
 
 export interface PageletAgentRecoveryDiagnostics {
@@ -273,6 +275,8 @@ export interface PageletAgentVerifiedInsight {
     normalizedBody: string;
     normalizedClaim: string;
     bodyHash: string;
+    /** SHA256 of the full original Markdown; distinct from the normalized cache identity. */
+    bodyContentHash?: string;
     claimHash: string;
     anchor: PageletAnchorSnapshotIdentity;
     sources: PageletAgentSourceSnapshot[];
@@ -283,6 +287,7 @@ export interface PageletAgentVerifiedInsight {
     preparedAt: number;
     metrics: PageletAgentRunMetrics;
     webObservations: PageletAgentWebObservation[];
+    inputEvidence?: PageletInputEvidence;
 }
 
 export interface PageletAgentVerifiedInsightCollection {
@@ -305,6 +310,7 @@ export interface PageletAgentValidationIdentity {
     readonly insightId: string;
     readonly normalizedBody: string;
     readonly normalizedClaim: string;
+    readonly inputEvidence?: PageletInputEvidence;
 }
 
 export type PageletAgentQualityRejectReason =
@@ -332,6 +338,10 @@ export type PageletAgentQualityGateResult =
     };
 
 export type PageletDeepDiscoverControllerResult =
+    {
+        /** Session-only identity of the scheduler request that produced this result. */
+        requestId?: string;
+    } & (
     | {
         status: "verified";
         insight: PageletAgentVerifiedInsight;
@@ -362,4 +372,4 @@ export type PageletDeepDiscoverControllerResult =
         reason: string;
         metrics?: PageletAgentRunMetrics;
         runtimeCompletion?: PageletAgentRuntimeCompletion;
-    };
+    });

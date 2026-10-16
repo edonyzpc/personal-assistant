@@ -3,6 +3,9 @@ import {
     sameSourceSnapshot,
 } from "./anchor-snapshot";
 import type { SourceRecord } from "../../ai-services/chat-types";
+import type { AiServiceHost } from "../../ai-services/AiServiceHost";
+import type { PageletInputEvidence } from "../../ai-services/pagelet-handoff";
+import { parseInputLineage } from "../../ai-services/input-lineage";
 import { normalizePageletInsightBody } from "./pagelet-agent-cache";
 import {
     isPageletNoInsightTerminal,
@@ -19,6 +22,76 @@ const CONTENT_EVIDENCE_TOOLS = new Set([
     "read_note_outline",
     "read_note",
 ]);
+
+export interface PageletInputEvidenceValidationOptions {
+    anchor: PageletAgentSourceSnapshot;
+    isPathAllowed(path: string): boolean;
+    isAuthoringPathAllowed?: (path: string) => boolean;
+    readCurrentSourceSnapshot(path: string, signal?: AbortSignal): Promise<PageletAgentSourceSnapshot | null>;
+    revalidateVaultObservation?: AiServiceHost["revalidateVaultObservation"];
+    getEvidenceEpoch?: () => string;
+    getAuthoringEvidenceEpoch?: () => string;
+    signal?: AbortSignal;
+}
+
+/** Reuse the observation owners; a displayed citation never proves the full input ancestry. */
+export async function validatePageletInputEvidence(
+    evidence: PageletInputEvidence | undefined,
+    options: PageletInputEvidenceValidationOptions,
+): Promise<boolean> {
+    try {
+        if (options.signal?.aborted || !evidence) return false;
+        const lineage = parseInputLineage(evidence.lineage);
+        if (lineage?.completeness !== "complete") return false;
+        if (!lineage.dependencies.some(dependency => dependency.kind === "vault" && dependency.path === options.anchor.path)
+            || !evidence.sourceSnapshots.some(snapshot => sameSourceSnapshot(snapshot, options.anchor))) return false;
+        const epoch = options.getEvidenceEpoch?.();
+        if (!epoch) return false;
+        const authoringEpoch = options.getAuthoringEvidenceEpoch?.();
+        if (evidence.vaultObservations.length && !options.isAuthoringPathAllowed) return false;
+        const isPathAllowed = (path: string) => options.isPathAllowed(path)
+            && options.isAuthoringPathAllowed?.(path) !== false;
+        for (const observation of evidence.vaultObservations) {
+            if (!options.revalidateVaultObservation) return false;
+            const current = await options.revalidateVaultObservation(observation, {
+                isPathAllowed,
+                signal: options.signal,
+            });
+            if (!current || current.observationId !== observation.observationId
+                || !current.aggregateCurrent
+                || current.validItemIndexes.length !== observation.items.length
+                || new Set(current.validItemIndexes).size !== observation.items.length
+                || current.validItemIndexes.some(index => index < 0 || index >= observation.items.length)) return false;
+        }
+        const snapshots = new Map(evidence.sourceSnapshots.map(source => [source.path, source]));
+        for (const snapshot of snapshots.values()) {
+            if (!isPathAllowed(snapshot.path)) return false;
+            const current = await options.readCurrentSourceSnapshot(snapshot.path, options.signal);
+            if (!current || !sameSourceSnapshot(snapshot, current)) return false;
+        }
+        for (const dependency of lineage.dependencies) {
+            if (dependency.kind === "vault") {
+                if (!isPathAllowed(dependency.path)) return false;
+                if (snapshots.has(dependency.path)) continue;
+                const record = evidence.sourceRecords.find(source => source.path === dependency.path);
+                if (!record || !evidence.vaultObservations.some(observation =>
+                    observation.tool === record.capabilityName
+                    && (observation.items.some(item => item.path === dependency.path)
+                        || "aggregate" in observation && record.metadata?.sourceDependency === true))) return false;
+            } else if (dependency.kind === "web") {
+                if (!evidence.sourceRecords.some(source => source.sourceBoundary === "web"
+                    && source.providerId === dependency.providerId && source.dedupKey === dependency.resultKey
+                    && typeof source.url === "string" && /^https?:\/\//u.test(source.url))) return false;
+            } else if (dependency.kind === "run-notes-observation") {
+                if (dependency.owner !== "vault" || !authoringEpoch || dependency.sourceEpoch !== authoringEpoch) return false;
+            } else return false;
+        }
+        return !options.signal?.aborted && options.getEvidenceEpoch?.() === epoch
+            && options.getAuthoringEvidenceEpoch?.() === authoringEpoch;
+    } catch {
+        return false;
+    }
+}
 
 export function pageletObservationBodyEvidencePaths(
     toolName: string,

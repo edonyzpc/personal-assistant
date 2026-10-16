@@ -1,3 +1,17 @@
+import type { SourceRecord } from "./chat-types";
+import { cloneInputLineage, unknownInputLineage, type InputLineage } from "./input-lineage";
+import { cloneSourceRecord } from "./source-store";
+import { parseVaultObservationEvidence, type VaultObservationEvidence } from "./vault-observation-evidence";
+import { PAGELET_DEEP_DISCOVER_WEB_CACHE_TTL_MS } from "../pagelet/agent/types";
+
+/** Host-owned ancestry captured at the actual authoring request, never citation inference. */
+export interface PageletInputEvidence {
+    readonly lineage: InputLineage;
+    readonly sourceRecords: readonly SourceRecord[];
+    readonly sourceSnapshots: readonly PageletChatHandoffSourceSnapshot[];
+    readonly vaultObservations: readonly VaultObservationEvidence[];
+}
+
 export interface PageletChatHandoffAnchorSnapshot {
     readonly path: string;
     readonly mtime: number;
@@ -37,6 +51,15 @@ export interface PageletChatHandoffContext {
     readonly triggerReason: string;
     readonly preparedAt: number;
     readonly pipelineVersion: string;
+    /** SHA256 of the full original body, independent of Pagelet's normalized cache identity. */
+    readonly bodyHash?: string;
+    readonly inputEvidence?: PageletInputEvidence;
+}
+
+/** The existing web reuse lifetime applies until Chat first accepts this material. */
+export function pageletChatHandoffSourceLifetimeIsCurrent(context: PageletChatHandoffContext, now = Date.now()): boolean {
+    return !context.inputEvidence?.lineage.dependencies.some(dependency => dependency.kind === "web")
+        || now - context.preparedAt < PAGELET_DEEP_DISCOVER_WEB_CACHE_TTL_MS;
 }
 
 export type PageletChatHandoffPreparationStatus =
@@ -70,8 +93,32 @@ export function createPageletChatHandoffContext(
         triggerReason: requireString(input.triggerReason, "trigger reason"),
         preparedAt: requireFiniteNumber(input.preparedAt, "prepared time"),
         pipelineVersion: requireString(input.pipelineVersion, "pipeline version"),
+        ...(input.bodyHash ? { bodyHash: requireString(input.bodyHash, "body hash") } : {}),
+        ...(input.inputEvidence ? { inputEvidence: clonePageletInputEvidence(input.inputEvidence) } : {}),
     };
     return Object.freeze(context);
+}
+
+/** Copy identity facts only; source snippets, tool logs and arbitrary metadata never cross this boundary. */
+export function clonePageletInputEvidence(input: PageletInputEvidence): PageletInputEvidence {
+    const sourceRecords = input.sourceRecords.map(record => {
+        const safe = cloneSourceRecord(record);
+        delete safe.snippet;
+        delete safe.metadata;
+        if (record.metadata?.sourceDependency === true) safe.metadata = { sourceDependency: true };
+        return Object.freeze(safe);
+    });
+    const vaultObservations = input.vaultObservations.map(value => {
+        const parsed = parseVaultObservationEvidence(value);
+        if (!parsed.ok) throw new Error("Pagelet authoring observation is invalid.");
+        return parsed.evidence;
+    });
+    return Object.freeze({
+        lineage: cloneInputLineage(input.lineage) ?? unknownInputLineage(),
+        sourceRecords: Object.freeze(sourceRecords),
+        sourceSnapshots: Object.freeze(input.sourceSnapshots.map(source => freezeSnapshot(source, "input source"))),
+        vaultObservations: Object.freeze(vaultObservations),
+    });
 }
 
 function freezeSnapshot(

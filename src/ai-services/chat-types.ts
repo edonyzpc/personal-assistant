@@ -247,6 +247,8 @@ export interface ChatTurnMemoryMetadata {
     sourceRecords?: SourceRecord[];
     runSourceSelection?: RunSourceSelection;
     inputLineage?: InputLineage;
+    /** This visible attachment was admitted and represented by the actual request projection. */
+    acceptedPageletHandoffId?: string;
     contextTrace?: PersistedContextTrace;
     /** Trusted host observation envelopes retained for later revalidation. */
     vaultObservationEvidence?: VaultObservationEvidence[];

@@ -27,6 +27,8 @@ import type {
     PanelLayoutType,
     PanelOpenExtra,
     PanelViewOptions,
+    PageletReadingControls,
+    PageletReadingPosition,
 } from "./types";
 
 import {
@@ -35,6 +37,10 @@ import {
     renderDiscoveryLayout,
     renderReviewTimeline,
     renderSummaryPreview,
+    capturePageletReadingPosition,
+    restorePageletReadingPosition,
+    renderPageletReadingControls,
+    renderPageletFindingActions,
 } from "./PanelLayouts";
 
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
@@ -110,6 +116,7 @@ function makeContentKey(findings: PanelFinding[]): string {
             suggestionKey(finding) ?? "",
             finding.title,
             finding.description,
+            finding.insightText ?? "",
             finding.suggestion?.rationale ?? "",
             finding.suggestion?.proposed_action ?? "",
         ].join(":"))
@@ -156,6 +163,7 @@ export class PanelView {
     private _isOpen = false;
     private currentLayout: PanelLayoutType | null = null;
     private primaryButtonMode: "save" | "run" = "save";
+    private pendingReadingPosition: { key: string; position: PageletReadingPosition; appliedScrollTop: number } | null = null;
 
     get currentLayoutType(): PanelLayoutType | null {
         return this.currentLayout;
@@ -281,13 +289,19 @@ export class PanelView {
         this.ensureMounted();
         if (!this.rootEl || !this.bodyEl || !this.titleEl) return;
 
+        const contentKey = makeContentKey(content);
+        const preserveReading = this._isOpen
+            && extra?.reading !== undefined
+            && this.currentExtra?.reading !== undefined
+            && this.currentLayout === layoutType
+            && this.currentContentKey === contentKey
+            && this.currentExtra.sourcePath === extra.sourcePath;
         this.currentLayout = layoutType;
         this.currentFindings = content;
         this.currentExtra = extra;
         this.reviewRunPending = false;
         this.reviewRunError = null;
         this.clearSlowReviewTimer();
-        const contentKey = makeContentKey(content);
         if (contentKey !== this.currentContentKey) {
             this.currentContentKey = contentKey;
             this.dismissedSuggestionIds.clear();
@@ -306,7 +320,18 @@ export class PanelView {
             this.renderComponent = null;
         }
 
-        this.renderCurrentLayout();
+        if (preserveReading && extra?.reading) {
+            const actionFocus = this.captureActionFocus();
+            this.updateReadingControls(extra.reading);
+            const regions = Array.from(this.bodyEl.querySelectorAll<HTMLElement>(".pa-pagelet-panel-finding-actions"));
+            content.filter(finding => finding.insightText).forEach((finding, index) => {
+                if (regions[index]) renderPageletFindingActions(regions[index], finding);
+            });
+            this.restoreActionFocus(actionFocus);
+        } else {
+            this.pendingReadingPosition = null;
+            this.renderCurrentLayout();
+        }
 
         // Force a layout flush so the initial `data-state="hidden"`
         // styles apply before flipping to `visible`; otherwise the
@@ -334,6 +359,22 @@ export class PanelView {
         const visibleFindings = this.visibleFindings();
         this.updateShareCardControl();
         const renderOptions = this.buildRenderOptions();
+        if (this.currentExtra?.reading) {
+            const readingKey = this.currentContentKey;
+            renderOptions.onMarkdownRendered = () => {
+                if (this.bodyEl !== body || !this._isOpen || this.currentContentKey !== readingKey
+                    || this.renderComponent !== renderOptions.renderComponent) return;
+                const pending = this.pendingReadingPosition;
+                if (pending?.key !== readingKey) return;
+                this.pendingReadingPosition = null;
+                if (body.scrollTop === pending.appliedScrollTop) body.scrollTop = pending.position.scrollTop;
+            };
+            const controls = createHtmlElement("div");
+            controls.className = "pa-pagelet-reading-controls";
+            renderPageletReadingControls(controls, this.currentExtra.reading);
+            body.appendChild(controls);
+            renderOptions.reading = true;
+        }
 
         if (this.currentExtra?.contextPager) {
             body.appendChild(this.renderContextPagerSection(this.currentExtra.contextPager));
@@ -458,6 +499,23 @@ export class PanelView {
         this.renderComponent = null;
         this.scheduleUnmount(root);
         this.options.callbacks.onClose();
+    }
+
+    getReadingPosition(): PageletReadingPosition {
+        return this.bodyEl
+            ? capturePageletReadingPosition(this.bodyEl)
+            : { scrollTop: 0, sourcesExpanded: [] };
+    }
+
+    restoreReadingPosition(position: PageletReadingPosition): void {
+        if (this.bodyEl) restorePageletReadingPosition(this.bodyEl, position);
+        this.pendingReadingPosition = { key: this.currentContentKey, position, appliedScrollTop: this.bodyEl?.scrollTop ?? 0 };
+    }
+
+    updateReadingControls(controls: PageletReadingControls): void {
+        if (this.currentExtra) this.currentExtra.reading = controls;
+        const region = this.bodyEl?.querySelector<HTMLElement>(".pa-pagelet-reading-controls");
+        if (region) renderPageletReadingControls(region, controls);
     }
 
     /** Whether the panel is currently open. */

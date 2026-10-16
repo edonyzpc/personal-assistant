@@ -15,6 +15,9 @@ import type {
 import type { ContextPagerState } from "../../pa";
 import type { ScopeRecapRunResult } from "../../pa";
 import type { DeliveryReceipt } from "../attention";
+import type { PageletAgentDeliveryCandidate } from "../agent/delivery-adapter";
+import type { PageletChatHandoffPreparationResult } from "../../ai-services/pagelet-handoff";
+import type { PageletReadingPosition } from "../panel/types";
 
 /**
  * Pagelet -- Tab component types.
@@ -90,6 +93,21 @@ export type TabEntryReason =
     | "scope-recap"
     | "default";
 
+/** Current-session reading and callbacks; never serialized into workspace state. */
+export interface PageletDetailReadingPayload {
+    anchorPath: string;
+    candidates: readonly PageletAgentDeliveryCandidate[];
+    selectedId: string;
+    positions: Readonly<Record<string, PageletReadingPosition>>;
+    onSelect: (candidate: PageletAgentDeliveryCandidate) => void;
+    onPositionChange: (id: string, position: PageletReadingPosition) => void;
+    validate: (candidate: PageletAgentDeliveryCandidate, signal: AbortSignal) => Promise<boolean>;
+    discuss: (candidate: PageletAgentDeliveryCandidate, signal: AbortSignal) => Promise<PageletChatHandoffPreparationResult>;
+    getActivityLabel: () => string;
+    subscribe: (listener: () => void) => () => void;
+    getLatestCandidates: () => readonly PageletAgentDeliveryCandidate[];
+}
+
 export interface PageletDetailPayload {
     title: string;
     content: PageletDetailContent;
@@ -102,4 +120,5 @@ export interface PageletDetailPayload {
     entryReason?: TabEntryReason;
     /** Transient exact-target render acknowledgement; never persisted or cached. */
     deliveryTarget?: PageletDetailDeliveryTarget;
+    reading?: PageletDetailReadingPayload;
 }

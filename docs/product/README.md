@@ -64,7 +64,7 @@
 
 ## Pagelet Delivery
 
-- [入口与阅读闭环](./specs/pagelet-reading-loop-product-spec.md) — B-176：独立第二轮的短点内容、已看复访、稳定阅读与完整 Agent 交接；[开发与测试设计](../development/proposals/pagelet-reading-loop/sdd.md)，不扩大 B-175。
+- [入口与阅读闭环](./specs/pagelet-reading-loop-product-spec.md) — B-176：独立第二轮的短点内容、已看复访、稳定阅读与完整 Agent 交接；[开发与测试设计](../development/active/pagelet-reading-loop/sdd.md)，不扩大 B-175。
 - [Autonomous Discovery](./specs/pagelet-autonomous-discovery-product-spec.md) — B-175：第一轮自主探索、可选完整暂存、事实边界与可靠交付；实施状态见其 Tracker。
 - [Attention-Aware Delivery and Action Ring](./specs/pagelet-attention-aware-delivery-product-spec.md)
 - [Bubble Readiness and Recall](./specs/pagelet-bubble-readiness-and-recall-product-spec.md)

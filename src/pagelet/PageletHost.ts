@@ -37,6 +37,8 @@ import type {
     PageletDeepDiscoverTriggerReason,
 } from "./agent/types";
 import type { PageletAgentDeliveryCandidate } from "./agent/delivery-adapter";
+import type { PageletDeepDiscoverReadResult } from "./agent/pagelet-deep-discover-controller";
+import type { PageletDeepDiscoverActivity } from "./agent/pagelet-deep-discover-scheduler";
 import type {
     ConfirmedMemoryRecord,
     GraphDiscoveryRunResult,
@@ -167,6 +169,11 @@ export interface PageletHost {
         force?: boolean;
         signal?: AbortSignal;
     }): Promise<PageletDeepDiscoverControllerResult>;
+
+    /** Read existing results without initializing a provider or scheduling analysis. */
+    readDeepDiscover?(input: { path: string; signal?: AbortSignal }): Promise<PageletDeepDiscoverReadResult>;
+    getDeepDiscoverActivity?(path: string): PageletDeepDiscoverActivity;
+    subscribeDeepDiscoverActivity?(listener: (path: string) => void): () => void;
 
     /** Diagnostic catalog lookup after an explicit run fails without tool use. */
     getDeepDiscoverFunctionCallingCapability?(): Promise<"supported" | "unsupported" | "unknown">;

@@ -9,6 +9,7 @@ import {
     resolveMemoryRecoveryDeadlineWindow,
 } from "../../ai-services/retrieval-recovery-coordinator";
 import type { RetrievalDiagnosticRecorder } from "../../ai-services/retrieval-diagnostics";
+import { clonePageletInputEvidence, type PageletInputEvidence } from "../../ai-services/pagelet-handoff";
 import { isPageletNoInsightTerminal, type PageletAgentInsightDraft, type PageletAgentRecoveryDiagnostics,
     type PageletStageValidationSubreason, type StagePageletInsightInput } from "./types";
 
@@ -21,6 +22,7 @@ interface StageValidationResult {
     rejection?: "first" | "lead";
     subreason?: PageletStageValidationSubreason;
     verifiedSourceIds?: readonly string[];
+    inputEvidence?: PageletInputEvidence;
 }
 
 export interface PageletRecoveryCoordinatorOptions {
@@ -285,6 +287,7 @@ export class PageletRecoveryCoordinator {
             body: input.insightMarkdown,
             origin: "staged",
             declaredSourceIds: [...validation.verifiedSourceIds],
+            ...(validation.inputEvidence ? { inputEvidence: clonePageletInputEvidence(validation.inputEvidence) } : {}),
         });
         return {
             status: "ok",

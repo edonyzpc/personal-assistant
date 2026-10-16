@@ -1,6 +1,8 @@
 import { isAbortError } from "../../ai-services/chat-utils";
+import { clonePageletInputEvidence, type PageletInputEvidence } from "../../ai-services/pagelet-handoff";
 import {
     anchorSnapshotIdentity,
+    hashPageletContent,
     sameSourceSnapshot,
     sourceSnapshotIdentity,
 } from "./anchor-snapshot";
@@ -49,7 +51,15 @@ export interface PageletDeepDiscoverControllerRequest {
     signal?: AbortSignal;
     /** Host-owned automatic epoch fence; never a model-facing authority flag. */
     isAutomaticRequestCurrent?: () => boolean;
+    /** Session-only scheduler identity, unrelated to evidence or effect authority. */
+    requestId?: string;
+    /** Scheduler notification at actual runtime entry, after cache/admission. */
+    onRuntimeStart?: () => void;
 }
+
+export type PageletDeepDiscoverReadResult =
+    | Extract<PageletDeepDiscoverControllerResult, { status: "cache-hit" }>
+    | { status: "empty" | "unavailable" | "stale"; reason?: string };
 
 export interface PageletDeepDiscoverControllerRunIdentity {
     readonly schemaVersion: 1;
@@ -219,6 +229,11 @@ export class PageletDeepDiscoverController {
                         ...("runtimeCompletion" in result ? { runtimeCompletion: result.runtimeCompletion } : {}),
                     };
                 }
+                if (normalizedRequest.requestId) {
+                    // Keep the original object: smoke acknowledgement owns its
+                    // identity, while reading needs the originating request.
+                    Object.assign(result, { requestId: normalizedRequest.requestId });
+                }
                 const completion: PageletDeepDiscoverControllerRunCompletion = Object.freeze({
                     ...runIdentity,
                     resultId: `${runId}:result`,
@@ -252,6 +267,37 @@ export class PageletDeepDiscoverController {
 
     clearCache(): void {
         this.cache.clear();
+    }
+
+    /** Read and revalidate existing results without entering or cancelling a run. */
+    async readCachedCollection(path: string, signal?: AbortSignal): Promise<PageletDeepDiscoverReadResult> {
+        try {
+            if (this.disposed || signal?.aborted) return { status: "unavailable", reason: "inactive" };
+            if (!safeAllowed(this.dependencies.isPathAllowed, path)) {
+                return { status: "unavailable", reason: "data-boundary" };
+            }
+            const readSignal = signal ?? new AbortController().signal;
+            const anchor = await this.dependencies.captureSnapshot(path, readSignal);
+            if (this.disposed || readSignal.aborted) return { status: "unavailable", reason: "inactive" };
+            if (!anchor) return { status: "stale", reason: "anchor-snapshot-unavailable" };
+            const policy = this.dependencies.getPolicyIdentity();
+            const cached = await this.readCacheAtStableCommit(anchor, policy, readSignal);
+            if (this.disposed || readSignal.aborted) return { status: "unavailable", reason: "inactive" };
+            if (cached.status === "miss") return { status: "empty", reason: "cache-miss" };
+            if (cached.status === "stale") return { status: "stale", reason: cached.reason };
+            const sealed = this.sealStableCommit(
+                policy, cached.evidenceEpoch, collectionSourcePaths(cached.prepared.collection), readSignal,
+            );
+            if (sealed.status === "stale") return { status: "stale", reason: sealed.reason };
+            if (this.disposed || readSignal.aborted) return { status: "unavailable", reason: "inactive" };
+            const collection = this.cache.commitPreparedCollection(cached.prepared);
+            return collection ? {
+                status: "cache-hit", insight: collection.insights[0], insights: collection.insights,
+                collection, commitSeal: sealed.commitSeal,
+            } : { status: "empty", reason: "cache-miss" };
+        } catch {
+            return { status: "unavailable", reason: signal?.aborted ? "aborted" : "cache-unavailable" };
+        }
     }
 
     /**
@@ -395,6 +441,7 @@ export class PageletDeepDiscoverController {
         if (!admission.ok) return { status: "limit", reason: admission.reason };
         throwIfRequestAborted(request, signal);
 
+        safelyNotify(() => request.onRuntimeStart?.());
         const run = await this.dependencies.runtime.run({
             anchor,
             triggerReason: request.triggerReason,
@@ -460,7 +507,7 @@ export class PageletDeepDiscoverController {
             const acceptedQualities: Array<Extract<
                 Awaited<ReturnType<typeof evaluatePageletAgentQuality>>,
                 { accepted: true }
-            >> = [];
+            > & { inputEvidence?: PageletInputEvidence; bodyContentHash: string }> = [];
             const acceptedIdentities = new Set<string>();
             let firstRejectReason: PageletAgentQualityRejectReason | undefined;
             for (const draft of drafts) {
@@ -523,7 +570,13 @@ export class PageletDeepDiscoverController {
                     });
                     if (acceptedIdentities.has(insightId)) continue;
                     acceptedIdentities.add(insightId);
-                    acceptedQualities.push(quality);
+                    const bodyContentHash = await hashPageletContent(quality.body);
+                    throwIfRequestAborted(request, signal);
+                    acceptedQualities.push({
+                        ...quality,
+                        bodyContentHash,
+                        ...(draft.inputEvidence ? { inputEvidence: clonePageletInputEvidence(draft.inputEvidence) } : {}),
+                    });
                 } catch (error) {
                     if (isAbortError(error, signal)) throw error;
                     firstRejectReason ??= "stale-source";
@@ -615,6 +668,9 @@ export class PageletDeepDiscoverController {
                 return {
                     insightId: input.insightId,
                     collectionId,
+                    bodyContentHash: input.quality.bodyContentHash,
+                    ...(input.quality.inputEvidence
+                        ? { inputEvidence: clonePageletInputEvidence(input.quality.inputEvidence) } : {}),
                     body: input.quality.body,
                     normalizedBody: input.quality.normalizedBody,
                     normalizedClaim: input.normalizedClaim,

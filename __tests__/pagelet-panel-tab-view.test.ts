@@ -310,6 +310,8 @@ globalRecord.requestAnimationFrame = (callback: FrameRequestCallback): number =>
 
 import { PanelView } from "../src/pagelet/panel/PanelView";
 import { TabView } from "../src/pagelet/tab/TabView";
+import type { PageletDetailReadingPayload } from "../src/pagelet/tab/types";
+import type { PageletAgentDeliveryCandidate } from "../src/pagelet/agent/delivery-adapter";
 import {
     createContextPagerStateFromRetrievalOutcome,
     type ConfirmedMemoryRecord,
@@ -330,6 +332,318 @@ import {
 } from "../src/pagelet/tab/PageletDetailView";
 
 describe("Pagelet panel and tab view regressions", () => {
+    function readingCandidate(id: string): PageletAgentDeliveryCandidate {
+        return {
+            id,
+            title: `Reading ${id}`,
+            body: `## Full ${id}\n\nFirst paragraph.\n\n### Last section\nThe complete ending for ${id}.`,
+            sourceRefs: [{ path: "notes/anchor.md", title: "Anchor" }],
+            pageletAgent: {
+                handoff: { anchor: { path: "notes/anchor.md" } },
+            },
+        } as PageletAgentDeliveryCandidate;
+    }
+
+    function readingPayload(
+        overrides: Partial<PageletDetailReadingPayload> = {},
+    ): PageletDetailReadingPayload {
+        return {
+            anchorPath: "notes/anchor.md",
+            candidates: [readingCandidate("first"), readingCandidate("second")],
+            selectedId: "second",
+            positions: { second: { scrollTop: 371, sourcesExpanded: [true] } },
+            onSelect: jest.fn(),
+            onPositionChange: jest.fn(),
+            validate: async () => true,
+            discuss: async () => ({ status: "prepared" }),
+            getActivityLabel: () => "",
+            subscribe: () => () => undefined,
+            getLatestCandidates: () => [],
+            ...overrides,
+        };
+    }
+
+    it("preserves Panel reading DOM and position when the same content receives activity updates", async () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+        const candidate = readingCandidate("selected");
+        const finding = { title: candidate.title, description: candidate.body,
+            insightText: candidate.body, sourceFile: "notes/anchor.md" };
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("discover", [finding], {
+            sourcePath: "notes/anchor.md",
+            reading: { anchorPath: "notes/anchor.md", label: "Analyzing" },
+        });
+        await Promise.resolve();
+        const body = container.querySelector(".pa-pagelet-panel-body");
+        const markdown = container.querySelector(".pa-pagelet-panel-timeline-insight");
+        const sourceToggle = container.querySelector(".pa-pagelet-panel-source-toggle");
+        await sourceToggle?.click();
+        if (body) body.scrollTop = 487;
+        panel.open("discover", [{ ...finding, actionStatus: { label: "Ready to discuss" } }], {
+            sourcePath: "notes/anchor.md",
+            reading: { anchorPath: "notes/anchor.md", label: "New results are available" },
+        });
+        expect(container.querySelector(".pa-pagelet-panel-timeline-insight")).toBe(markdown);
+        expect(container.querySelector(".pa-pagelet-panel-source-toggle")).toBe(sourceToggle);
+        expect(panel.getReadingPosition()).toEqual({ scrollTop: 487, sourcesExpanded: [true] });
+        expect(container.textContent).toContain("New results are available");
+        expect(container.textContent).toContain("Ready to discuss");
+        expect(mockMarkdownRender).toHaveBeenCalledTimes(1);
+        panel.destroy();
+    });
+
+    it("restores Panel position after Markdown layout and isolates a late renderer from a reopened reading", async () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+        panel.mount(container as unknown as HTMLElement);
+        const candidate = readingCandidate("selected");
+        const openDeferred = (scrollTop: number): (() => void) => {
+            let finish!: () => void;
+            mockMarkdownRender.mockImplementationOnce((_app, markdown, target) => {
+                const body = container.querySelector(".pa-pagelet-panel-body")!;
+                let ready = false;
+                let actualScrollTop = 0;
+                Object.defineProperty(body, "scrollTop", {
+                    configurable: true,
+                    get: () => actualScrollTop,
+                    set: (value: number) => { actualScrollTop = ready ? value : 0; },
+                });
+                return new Promise<void>((resolve) => {
+                    finish = () => { ready = true; target.textContent = markdown; resolve(); };
+                });
+            });
+            panel.open("discover", [{ title: candidate.title, description: candidate.body,
+                insightText: candidate.body, sourceFile: "notes/anchor.md" }], {
+                sourcePath: "notes/anchor.md",
+                reading: { anchorPath: "notes/anchor.md", label: "" },
+            });
+            panel.restoreReadingPosition({ scrollTop, sourcesExpanded: [true] });
+            return () => finish();
+        };
+        const finishFirst = openDeferred(371);
+        expect(panel.getReadingPosition().scrollTop).toBe(0);
+        finishFirst();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(panel.getReadingPosition()).toEqual({ scrollTop: 371, sourcesExpanded: [true] });
+
+        panel.close();
+        const finishOld = openDeferred(412);
+        panel.close();
+        const finishCurrent = openDeferred(219);
+        finishOld();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(panel.getReadingPosition().scrollTop).toBe(0);
+        finishCurrent();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(panel.getReadingPosition()).toEqual({ scrollTop: 219, sourcesExpanded: [true] });
+        expect(container.querySelector(".pa-pagelet-panel-timeline-insight")?.textContent).toBe(candidate.body);
+        panel.destroy();
+    });
+
+    it("carries selected full reading, anchor, order and position into Detail", async () => {
+        const reading = readingPayload();
+        const view = new PageletDetailView({} as never, () => "en");
+        const content = view.contentEl as unknown as FakeElement;
+        content.isConnected = true;
+        view.setPayload({ title: "Pagelet", content: [], locale: "en", reading });
+        await view.onOpen();
+
+        const body = content.querySelector(".pa-pagelet-tab-body");
+        expect(body?.textContent).toContain(reading.candidates[1]!.body);
+        expect(content.textContent).toContain("notes/anchor.md");
+        expect(body?.scrollTop).toBe(371);
+        expect(body?.querySelector(".pa-pagelet-panel-source-toggle")?.getAttribute("aria-expanded"))
+            .toBe("true");
+        const navigation = content.querySelector(".pa-pagelet-reading-navigation");
+        const buttons = navigation?.querySelectorAll("button") ?? [];
+        expect(buttons.map((button) => button.textContent)).toEqual(["Reading first", "Reading second"]);
+        await buttons[0]?.click();
+        await Promise.resolve();
+        expect(reading.onSelect).toHaveBeenCalledWith(reading.candidates[0]);
+        expect(body?.textContent).toContain(reading.candidates[0]!.body);
+        const state = view.getState();
+        expect(JSON.stringify(state)).not.toContain("Full second");
+        if (body) body.scrollTop = 219;
+        await view.onClose();
+        const restored = new PageletDetailView({} as never, () => "en");
+        const restoredContent = restored.contentEl as unknown as FakeElement;
+        restoredContent.isConnected = true;
+        await restored.setState(state, {} as never);
+        await restored.onOpen();
+        expect(restoredContent.querySelector(".pa-pagelet-tab-body")?.scrollTop).toBe(219);
+        expect(restoredContent.textContent).toContain(reading.candidates[0]!.body);
+        await restored.onClose();
+    });
+
+    it("updates Detail activity without rebuilding reading, and disposes its subscription", async () => {
+        let label = "Analyzing";
+        let update = (): void => undefined;
+        const unsubscribe = jest.fn();
+        const reading = readingPayload({
+            getActivityLabel: () => label,
+            subscribe: (listener) => { update = listener; return unsubscribe; },
+        });
+        const view = new PageletDetailView({} as never, () => "en");
+        const content = view.contentEl as unknown as FakeElement;
+        content.isConnected = true;
+        view.setPayload({ title: "Pagelet", content: [], locale: "en", reading });
+        await view.onOpen();
+        const body = content.querySelector(".pa-pagelet-tab-body");
+        const markdown = content.querySelector(".pa-pagelet-panel-timeline-insight");
+        if (body) body.scrollTop = 512;
+        label = "New discoveries are available";
+        update();
+        expect(content.querySelector(".pa-pagelet-panel-timeline-insight")).toBe(markdown);
+        expect(body?.scrollTop).toBe(512);
+        const navigation = content.querySelector(".pa-pagelet-reading-navigation")?.querySelectorAll("button")[0];
+        update();
+        expect(content.querySelector(".pa-pagelet-reading-navigation")?.querySelectorAll("button")[0])
+            .toBe(navigation);
+        expect(content.querySelector(".pa-pagelet-panel-source-toggle")?.getAttribute("aria-expanded"))
+            .toBe("true");
+        expect(content.textContent).toContain(label);
+        await view.onClose();
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
+        update();
+        expect(content.querySelector(".pa-pagelet-tab")).toBeNull();
+    });
+
+    it("restores position after asynchronous Markdown layout without applying late work to replacement reading", async () => {
+        const view = new PageletDetailView({} as never, () => "en");
+        const content = view.contentEl as unknown as FakeElement;
+        content.isConnected = true;
+        const deferredRender = (): (() => void) => {
+            let finish!: () => void;
+            mockMarkdownRender.mockImplementationOnce((_app, markdown, target) => {
+                const body = content.querySelector(".pa-pagelet-tab-body")!;
+                let ready = false;
+                let scrollTop = 0;
+                Object.defineProperty(body, "scrollTop", {
+                    configurable: true,
+                    get: () => scrollTop,
+                    set: (value: number) => { scrollTop = ready ? value : 0; },
+                });
+                return new Promise<void>((resolve) => {
+                    finish = () => {
+                        ready = true;
+                        target.textContent = markdown;
+                        resolve();
+                    };
+                });
+            });
+            return () => finish();
+        };
+        const finishFirst = deferredRender();
+        view.setPayload({ title: "Pagelet", content: [], locale: "en", reading: readingPayload() });
+        await view.onOpen();
+        expect(content.querySelector(".pa-pagelet-tab-body")?.scrollTop).toBe(0);
+        finishFirst();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(content.querySelector(".pa-pagelet-tab-body")?.scrollTop).toBe(371);
+
+        const finishLate = deferredRender();
+        view.setPayload({ title: "Pagelet", content: [], locale: "en", reading: readingPayload() });
+        const replacement = readingPayload({
+            selectedId: "first", positions: { first: { scrollTop: 219, sourcesExpanded: [false] } },
+        });
+        // The replacement has laid out while the old renderer is still pending.
+        const body = content.querySelector(".pa-pagelet-tab-body")!;
+        Object.defineProperty(body, "scrollTop", { configurable: true, writable: true, value: 0 });
+        view.setPayload({ title: "Pagelet", content: [], locale: "en", reading: replacement });
+        finishLate();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(body.scrollTop).toBe(219);
+        expect(body.textContent).toContain(replacement.candidates[0]!.body);
+        await view.onClose();
+    });
+
+    it.each(["close", "select another"] as const)("cancels a pending Detail handoff on %s", async (actionKind) => {
+        let finishValidation!: (valid: boolean) => void;
+        let validationSignal: AbortSignal | undefined;
+        let validationCalls = 0;
+        const discuss = jest.fn< PageletDetailReadingPayload["discuss"] >()
+            .mockResolvedValue({ status: "prepared" });
+        const reading = readingPayload({
+            validate: (_candidate, signal) => {
+                validationCalls += 1;
+                if (validationCalls === 1 || _candidate.id === "first") return Promise.resolve(true);
+                validationSignal = signal;
+                return new Promise((resolve) => { finishValidation = resolve; });
+            },
+            discuss,
+        });
+        const view = new PageletDetailView({} as never, () => "en");
+        const content = view.contentEl as unknown as FakeElement;
+        content.isConnected = true;
+        view.setPayload({ title: "Pagelet", content: [], locale: "en", reading });
+        await view.onOpen();
+        const action = content.querySelector(".pa-pagelet-panel-timeline-action-btn");
+        expect(action?.textContent).toBe("Discuss in Chat");
+        const pending = action?.click();
+        await Promise.resolve();
+        if (actionKind === "close") await view.onClose();
+        else {
+            await content.querySelector(".pa-pagelet-reading-navigation")?.querySelectorAll("button")[0]?.click();
+            await Promise.resolve();
+        }
+        expect(validationSignal?.aborted).toBe(true);
+        finishValidation(true);
+        await pending;
+        expect(discuss).not.toHaveBeenCalled();
+        await view.onClose();
+    });
+
+    it("hands the selected full reading to Chat independently and preserves it on preparation failure", async () => {
+        const discuss = jest.fn<PageletDetailReadingPayload["discuss"]>()
+            .mockResolvedValueOnce({ status: "busy" })
+            .mockResolvedValueOnce({ status: "prepared" });
+        const reading = readingPayload({ discuss });
+        const view = new PageletDetailView({} as never, () => "en");
+        const content = view.contentEl as unknown as FakeElement;
+        content.isConnected = true;
+        view.setPayload({ title: "Pagelet", content: [], locale: "en", reading });
+        await view.onOpen();
+        const markdown = content.querySelector(".pa-pagelet-panel-timeline-insight");
+        const action = content.querySelector(".pa-pagelet-panel-timeline-action-btn");
+        await action?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(discuss).toHaveBeenCalledWith(reading.candidates[1], expect.any(AbortSignal));
+        expect(content.textContent).toContain("Chat is busy");
+        expect(content.querySelector(".pa-pagelet-panel-timeline-insight")).toBe(markdown);
+        await action?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(discuss).toHaveBeenCalledTimes(2);
+        expect(content.querySelector(".pa-pagelet-panel-timeline-insight")).toBe(markdown);
+        await view.onClose();
+    });
     beforeEach(() => {
         globalRecord.document = new FakeDocument();
         globalRecord.confirm = originalConfirm;

@@ -17,7 +17,7 @@
 import { Component, MarkdownRenderer } from "obsidian";
 import type { App } from "obsidian";
 
-import type { NoteConnection, PanelFinding } from "./types";
+import type { NoteConnection, PanelFinding, PageletReadingControls, PageletReadingPosition } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import {
     createSuggestionCardRenderer,
@@ -43,6 +43,43 @@ export interface PanelLayoutRenderOptions {
     sourcePath?: string;
     app?: App;
     renderComponent?: Component;
+    reading?: boolean;
+    onMarkdownRendered?: () => void;
+}
+
+export function capturePageletReadingPosition(body: HTMLElement): PageletReadingPosition {
+    return {
+        scrollTop: body.scrollTop,
+        sourcesExpanded: Array.from(body.querySelectorAll(".pa-pagelet-panel-source-toggle"))
+            .map(toggle => toggle.getAttribute("aria-expanded") === "true"),
+    };
+}
+
+export function restorePageletReadingPosition(body: HTMLElement, position: PageletReadingPosition): void {
+    Array.from(body.querySelectorAll(".pa-pagelet-panel-source-toggle")).forEach((toggle, index) => {
+        const expanded = position.sourcesExpanded[index] === true;
+        toggle.setAttribute("aria-expanded", String(expanded));
+        const chips = toggle.parentElement?.querySelector(".pa-pagelet-panel-source-chips");
+        if (expanded) chips?.removeAttribute("hidden");
+        else chips?.setAttribute("hidden", "");
+    });
+    body.scrollTop = position.scrollTop;
+}
+
+export function renderPageletReadingControls(container: HTMLElement, controls: PageletReadingControls): void {
+    clearChildren(container);
+    container.appendChild(el("div", "pa-pagelet-reading-anchor", controls.anchorPath));
+    const status = el("div", "pa-pagelet-reading-status", controls.label);
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    container.appendChild(status);
+    for (const action of controls.actions ?? []) {
+        const button = el("button", "pa-pagelet-panel-timeline-action-btn", action.label);
+        button.type = "button";
+        button.disabled = action.disabled === true || action.busy === true;
+        button.addEventListener("click", () => { if (!button.disabled) action.callback(); });
+        container.appendChild(button);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -176,16 +213,26 @@ function renderTimelineItem(
             )).catch(() => {
                 clearChildren(insight);
                 renderSimpleMarkdownPreview(insight, finding.insightText!);
-            });
+            }).then(() => options.onMarkdownRendered?.());
         } else if (renderInsightAsMarkdown) {
             renderSimpleMarkdownPreview(insight, finding.insightText);
+            options.onMarkdownRendered?.();
         } else {
             insight.textContent = finding.insightText;
         }
         content.appendChild(insight);
     }
 
+    const actionRegion = el("div", "pa-pagelet-panel-finding-actions");
+    renderPageletFindingActions(actionRegion, finding);
+    content.appendChild(actionRegion);
 
+    item.appendChild(content);
+    return item;
+}
+
+export function renderPageletFindingActions(content: HTMLElement, finding: PanelFinding): void {
+    clearChildren(content);
     if (finding.actionStatus) {
         const status = el(
             "div",
@@ -226,9 +273,6 @@ function renderTimelineItem(
         }
         content.appendChild(actionsRow);
     }
-
-    item.appendChild(content);
-    return item;
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +355,16 @@ export function renderDiscoveryLayout(
     const wrapper = el("div", "pa-pagelet-panel-timeline");
 
     const sourcePaths = collectDiscoverySourcePaths(findings);
+    if (options.reading) {
+        for (const finding of findings) {
+            if (finding.insightText) wrapper.appendChild(renderTimelineItem(finding, locale, options, true));
+        }
+        if (sourcePaths.length > 0) {
+            wrapper.appendChild(renderCollapsibleSourceSection(sourcePaths, locale, options.sourcePath, options.onConnectionNodeClick));
+        }
+        container.appendChild(wrapper);
+        return;
+    }
     const singleNoteInsight = findings.some((finding) => finding.insightText)
         && sourcePaths.length === 1
         && !connections?.length;

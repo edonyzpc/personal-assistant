@@ -43,6 +43,7 @@ import type {
     PageletAnchorSnapshot,
     PageletDeepDiscoverControllerResult,
 } from '../src/pagelet/agent/types';
+import { PAGELET_DEEP_DISCOVER_PIPELINE_VERSION } from '../src/pagelet/agent/types';
 
 const anchor: PageletAnchorSnapshot = {
     path: 'notes/anchor.md',
@@ -69,6 +70,140 @@ const policyIdentity: PageletAgentPolicyIdentity = {
     modelIdentity: 'provider:test-model',
     locale: 'zh',
 };
+
+describe('B-176 provider-free reading and factual activity', () => {
+    const body = '`notes/anchor.md` has a useful contrast with `notes/related.md`.';
+    const dependencies = (overrides: Partial<ConstructorParameters<typeof PageletDeepDiscoverController>[0]> = {}) => ({
+        runtime: { run: jest.fn(async () => makeRun(body)) },
+        captureSnapshot: jest.fn(async () => anchor),
+        captureSourceMaterial: jest.fn(async (path: string) => materials().get(path) ?? null),
+        getPolicyIdentity: () => policyIdentity,
+        getEvidenceEpoch: () => 'reading-epoch',
+        controllerEpoch: 1,
+        isPathAllowed: () => true,
+        admitRun: jest.fn(async () => ({ ok: true as const })),
+        ...overrides,
+    });
+
+    it('reads cold and warm collections without admission, runtime calls, or cancelling the active discovery', async () => {
+        let finishRun!: (result: PageletAgentRunResult) => void;
+        let runtimeStarted!: () => void;
+        const started = new Promise<void>(resolve => { runtimeStarted = resolve; });
+        const runSignal: { signal?: AbortSignal } = {};
+        const runtime = { run: jest.fn((request: { signal?: AbortSignal }) => {
+            runSignal.signal = request.signal;
+            runtimeStarted();
+            return new Promise<PageletAgentRunResult>(resolve => { finishRun = resolve; });
+        }) };
+        const deps = dependencies({ runtime });
+        const controller = new PageletDeepDiscoverController(deps);
+        await expect(controller.readCachedCollection(anchor.path)).resolves.toMatchObject({ status: 'empty' });
+        expect(deps.admitRun).not.toHaveBeenCalled();
+        expect(runtime.run).not.toHaveBeenCalled();
+        const running = controller.run({ path: anchor.path, triggerReason: 'explicit', force: true });
+        await started;
+        await expect(controller.readCachedCollection(anchor.path)).resolves.toMatchObject({ status: 'empty' });
+        expect(runSignal.signal?.aborted).toBe(false);
+        expect(runtime.run).toHaveBeenCalledTimes(1);
+        finishRun(makeRun(body));
+        const completed = await running;
+        expect(completed.status).toBe('verified');
+        const reading = await controller.readCachedCollection(anchor.path);
+        expect(reading).toMatchObject({ status: 'cache-hit', insights: [{ body }] });
+        expect(deps.admitRun).toHaveBeenCalledTimes(1);
+        expect(runtime.run).toHaveBeenCalledTimes(1);
+        controller.dispose();
+    });
+
+    it('does not publish a pure read that resumes after disposal', async () => {
+        let release!: () => void;
+        let entered!: () => void;
+        let block = false;
+        const enteredRead = new Promise<void>(resolve => { entered = resolve; });
+        const deps = dependencies({ captureSnapshot: async () => {
+            if (block) {
+                entered();
+                await new Promise<void>(resolve => { release = resolve; });
+            }
+            return anchor;
+        } });
+        const controller = new PageletDeepDiscoverController(deps);
+        await controller.run({ path: anchor.path, triggerReason: 'explicit', force: true });
+        block = true;
+        const reading = controller.readCachedCollection(anchor.path);
+        await enteredRead;
+        controller.dispose();
+        release();
+        await expect(reading).resolves.toMatchObject({ status: 'unavailable' });
+    });
+
+    it('binds a completed result to its originating request while a newer same-anchor request is queued', async () => {
+        let finishRuntime!: (value: PageletAgentRunResult) => void;
+        let entered!: () => void;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const controller = new PageletDeepDiscoverController(dependencies({
+            runtime: { run: jest.fn(() => {
+                entered();
+                return new Promise<PageletAgentRunResult>(resolve => { finishRuntime = resolve; });
+            }) },
+        }));
+        const scheduler = new PageletDeepDiscoverScheduler({
+            controller,
+            setTimer: () => 1 as unknown as ReturnType<typeof setTimeout>,
+            clearTimer: jest.fn(),
+        });
+        const first = scheduler.schedule({ path: anchor.path, triggerReason: 'leave-note' });
+        const firstId = scheduler.getActivity(anchor.path).requestId;
+        const firstFlush = scheduler.flush(anchor.path);
+        await started;
+        const second = scheduler.schedule({ path: anchor.path, triggerReason: 'open-changed-note' });
+        const secondId = scheduler.getActivity(anchor.path).requestId;
+        const secondFlush = scheduler.flush(anchor.path);
+        expect(secondId).not.toBe(firstId);
+        expect(scheduler.getActivity(anchor.path)).toEqual({ phase: 'queued', requestId: secondId });
+        finishRuntime(makeRun(body));
+        const [firstResult, secondResult] = await Promise.all([first, second, firstFlush, secondFlush]);
+        expect(firstResult).toMatchObject({ status: 'verified', requestId: firstId });
+        expect(secondResult).toMatchObject({ status: 'cache-hit', requestId: secondId });
+        scheduler.dispose();
+    });
+
+    it('separates the actual queue, cache/admission preparation, and runtime entry', async () => {
+        let releaseSnapshot!: (value: PageletAnchorSnapshot) => void;
+        let finishRuntime!: (value: PageletAgentRunResult) => void;
+        let enteredRuntime!: () => void;
+        const started = new Promise<void>(resolve => { enteredRuntime = resolve; });
+        const deps = dependencies({
+            captureSnapshot: () => new Promise(resolve => { releaseSnapshot = resolve; }),
+            runtime: { run: jest.fn(() => {
+                enteredRuntime();
+                return new Promise<PageletAgentRunResult>(resolve => { finishRuntime = resolve; });
+            }) },
+        });
+        const controller = new PageletDeepDiscoverController(deps);
+        const scheduler = new PageletDeepDiscoverScheduler({
+            controller,
+            setTimer: () => 1 as unknown as ReturnType<typeof setTimeout>,
+            clearTimer: jest.fn(),
+        });
+        const phases: string[] = [];
+        const unsubscribe = scheduler.subscribeActivity(path => phases.push(scheduler.getActivity(path).phase));
+        const scheduled = scheduler.schedule({ path: anchor.path, triggerReason: 'edit-idle' });
+        const identity = scheduler.getActivity(anchor.path).requestId;
+        expect(scheduler.getActivity(anchor.path).phase).toBe('queued');
+        const flushed = scheduler.flush(anchor.path);
+        expect(scheduler.getActivity(anchor.path)).toEqual({ phase: 'preparing', requestId: identity });
+        releaseSnapshot(anchor);
+        await started;
+        expect(scheduler.getActivity(anchor.path)).toEqual({ phase: 'running', requestId: identity });
+        finishRuntime(makeRun('NO_INSIGHT'));
+        await Promise.all([scheduled, flushed]);
+        expect(scheduler.getActivity(anchor.path)).toEqual({ phase: 'idle', requestId: null });
+        expect(phases).toEqual(expect.arrayContaining(['queued', 'preparing', 'running']));
+        unsubscribe();
+        scheduler.dispose();
+    });
+});
 
 function snapshots(): PageletAgentSourceSnapshot[] {
     return [
@@ -2942,11 +3077,12 @@ describe('Pagelet agent cache and controller', () => {
         expect(current?.collectionId).toBe(createPageletInsightCollectionId([second.insightId]));
     });
 
-    it('projects complete immutable action and Chat context without hidden runtime fields', () => {
+    it('projects complete immutable action and Chat context without hidden runtime fields', async () => {
         const body = `## Complete insight\n${'source-backed detail '.repeat(40)}`;
         const insight = {
             ...verifiedInsight(true),
             body,
+            bodyContentHash: await hashPageletContent(body),
             metrics: { modelTurns: 99, toolCalls: 88, wallTimeMs: 77 },
             webObservations: [
                 { url: 'https://example.com/evidence', observationHash: 'one' },
@@ -2970,11 +3106,12 @@ describe('Pagelet agent cache and controller', () => {
             webUrls: ['https://example.com/evidence'],
             triggerReason: 'explicit',
             preparedAt: 1_000,
-            pipelineVersion: 'pagelet-deep-discover-v3',
+            pipelineVersion: PAGELET_DEEP_DISCOVER_PIPELINE_VERSION,
         });
         expect(Object.keys(candidate.pageletAgent.handoff).sort()).toEqual([
             'anchor',
             'body',
+            'bodyHash',
             'id',
             'pipelineVersion',
             'preparedAt',
@@ -3249,6 +3386,8 @@ describe('Pagelet agent cache and controller', () => {
             path: anchor.path,
             triggerReason: 'open-changed-note',
             isAutomaticRequestCurrent: expect.any(Function),
+            requestId: expect.any(String),
+            onRuntimeStart: expect.any(Function),
         });
         expect(firstResult).toEqual(secondResult);
     });
@@ -3669,8 +3808,15 @@ describe('Pagelet agent cache and controller', () => {
         controlledRuns[0].finish({ status: 'quiet', reason: 'aborted' });
         await explicitStarted;
         expect(controlledRuns.map(({ request }) => request)).toEqual([
-            { path: 'notes/automatic.md', triggerReason: 'leave-note', isAutomaticRequestCurrent: expect.any(Function) },
-            { path: 'notes/explicit.md', triggerReason: 'explicit', force: true },
+            {
+                path: 'notes/automatic.md', triggerReason: 'leave-note',
+                isAutomaticRequestCurrent: expect.any(Function),
+                requestId: expect.any(String), onRuntimeStart: expect.any(Function),
+            },
+            {
+                path: 'notes/explicit.md', triggerReason: 'explicit', force: true,
+                requestId: expect.any(String), onRuntimeStart: expect.any(Function),
+            },
         ]);
 
         controlledRuns[1].finish({ status: 'quiet', reason: 'no-insight' });
@@ -3680,6 +3826,8 @@ describe('Pagelet agent cache and controller', () => {
             path: 'notes/automatic.md',
             triggerReason: 'edit-idle',
             isAutomaticRequestCurrent: expect.any(Function),
+            requestId: expect.any(String),
+            onRuntimeStart: expect.any(Function),
         });
 
         const resumedResult = { status: 'quiet', reason: 'no-insight' } as const;

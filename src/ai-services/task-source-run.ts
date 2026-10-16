@@ -35,6 +35,23 @@ import { isObsidianSdkMethodName, resolveObsidianSdkReadPlan, type ObsidianSdkHo
 export const MAX_TASK_SOURCE_NOTE_HANDLES = 32;
 export const MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS = 8000;
 
+/** Preserve the existing finite observation owner boundary across read-only surfaces. */
+export function captureRunNotesObservationLineage(input: {
+    runId: string;
+    owner: 'vault' | 'memory';
+    sourceEpoch: string | undefined;
+    currentSourceEpoch: string | undefined;
+    memoryEnabledAtCall?: boolean;
+    currentMemoryEnabled?: boolean;
+}): InputLineage {
+    if (!input.sourceEpoch?.trim() || input.currentSourceEpoch !== input.sourceEpoch
+        || input.owner === 'memory' && (typeof input.memoryEnabledAtCall !== 'boolean'
+            || input.currentMemoryEnabled !== input.memoryEnabledAtCall)) return unknownInputLineage();
+    return completeInputLineage([{ kind: 'run-notes-observation', runId: input.runId,
+        owner: input.owner, sourceEpoch: input.sourceEpoch,
+        ...(input.owner === 'memory' ? { memoryEnabled: input.memoryEnabledAtCall } : {}) }]);
+}
+
 export interface TaskSourceRunHost {
     runId: string;
     conversationId?: string;
@@ -209,14 +226,9 @@ export class TaskSourceRun {
         memoryEnabledAtCall?: boolean,
     ): InputLineage => {
         try {
-            if (!sourceEpoch || this.currentNotesObservationEpoch() !== sourceEpoch
-                || (owner === 'memory' && (typeof memoryEnabledAtCall !== 'boolean'
-                    || this.currentMemoryAvailability() !== memoryEnabledAtCall))) {
-                return unknownInputLineage();
-            }
-            return completeInputLineage([{ kind: 'run-notes-observation',
-                runId: this.state.snapshot().runId, owner, sourceEpoch,
-                ...(owner === 'memory' ? { memoryEnabled: memoryEnabledAtCall } : {}) }]);
+            return captureRunNotesObservationLineage({ runId: this.state.snapshot().runId, owner,
+                sourceEpoch, currentSourceEpoch: this.currentNotesObservationEpoch(), memoryEnabledAtCall,
+                currentMemoryEnabled: owner === 'memory' ? this.currentMemoryAvailability() : undefined });
         } catch { return unknownInputLineage(); }
     };
 
@@ -895,6 +907,7 @@ export class TaskSourceRun {
 
     /** D12: keep canonical history; omit only assistant turns with known revoked evidence. */
     readonly projectHistory = (history: readonly ChatMessage[]): ChatMessage[] => {
+        history = history.map(message => this.rebindHistoricalPageletAnswer(message, history));
         this.registerHistoricalResources(history);
         const constraint = this.state.snapshot();
         const prose = new Set(history.filter(message => {
@@ -930,6 +943,43 @@ export class TaskSourceRun {
             return this.historyFragment(message, prose.has(message) && !this.hasHistoricalActionObservation(message), states, transcript, lineages, history);
         });
     };
+
+    /** Rebind a completed Pagelet descendant's owned observation to this request only. */
+    private rebindHistoricalPageletAnswer(message: ChatMessage, history: readonly ChatMessage[]): ChatMessage {
+        const lineage = historyInputLineage(message);
+        const observations = lineage?.dependencies.filter(dependency => dependency.kind === 'run-notes-observation') ?? [];
+        const constraint = this.state.snapshot();
+        if (message.role !== 'assistant' || !observations.some(observation => observation.runId !== constraint.runId)
+            || lineage?.completeness !== 'complete'
+            || !lineage.dependencies.some(dependency => dependency.kind === 'vault' && dependency.via === 'pagelet')
+            || observations.some(observation => observation.owner !== 'vault')
+            || !this.conversationId || constraint.allowedNoteIds !== null || constraint.excludedNoteIds.length
+            || message.actionStates?.length || message.canonicalTurn?.actionStates?.length) return message;
+        const canonical = message.canonicalTurn;
+        const binding = cloneActionStateBinding(message.actionStateBinding);
+        const restoredId = binding ? `rehydrated:${binding.conversationId}:${binding.turnIndex}` : undefined;
+        const restored = !!canonical && !!binding && binding.conversationId === this.conversationId
+            && canonical.runId === restoredId && canonical.turnId === restoredId && canonical.messages.length === 0;
+        const originRunId = restored ? binding!.runId : canonical?.runId;
+        const userId = this.historicalActionUser(message, history);
+        const lineageKey = JSON.stringify(lineage);
+        if (!canonical || canonical.status !== 'completed' || !originRunId || !userId
+            || binding && (binding.conversationId !== this.conversationId || binding.runId !== originRunId
+                || !restored && binding.turnId !== canonical.turnId)
+            || observations.some(observation => observation.runId !== originRunId)
+            || !lineage.dependencies.some(dependency => dependency.kind === 'user-text' && dependency.messageId === userId)
+            || JSON.stringify(cloneInputLineage(canonical.inputLineage)) !== lineageKey
+            || !restored && (canonical.committedFinalText !== message.content
+                || !canonical.messages.some(item => item.role === 'assistant'
+                    && item.content.filter(part => part.type === 'text').map(part => part.text).join('') === message.content
+                    && JSON.stringify(cloneInputLineage(item.inputLineage)) === lineageKey))) return message;
+        const rebound = completeInputLineage(lineage.dependencies.map(dependency => dependency.kind === 'run-notes-observation'
+            ? { ...dependency, runId: constraint.runId } : dependency));
+        if (!this.admitsLineage(rebound, true)) return message;
+        return { ...message, inputLineage: rebound, canonicalTurn: { ...canonical, inputLineage: rebound,
+            messages: canonical.messages.map(item => JSON.stringify(cloneInputLineage(item.inputLineage)) === lineageKey
+                ? { ...item, inputLineage: rebound } : item) } };
+    }
 
     private registerHistoricalResources(history: readonly ChatMessage[]): void {
         for (const message of history) {
@@ -1058,6 +1108,7 @@ export class TaskSourceRun {
         history: readonly ChatMessage[], signal?: AbortSignal,
     ): Promise<ChatMessage[]> => {
         throwIfAborted(signal);
+        history = history.map(message => this.rebindHistoricalPageletAnswer(message, history));
         this.registerHistoricalResources(history);
         if (!this.getTaskSourceAuthorityEpoch) return this.projectHistory(history);
         const messages = [...history];
@@ -1158,6 +1209,26 @@ export class TaskSourceRun {
             isWebAllowed: () => this.isWebAllowed() && this.state.allows({ kind: 'web' }, constraint),
         });
         return allowed && this.isCurrent() && this.state.snapshot() === constraint;
+    };
+
+    /** Called only after the Pagelet observation owners verified the attached snapshot. */
+    readonly admitPageletInputLineage = async (
+        lineage: InputLineage | undefined, signal?: AbortSignal,
+    ): Promise<InputLineage | undefined> => {
+        const owned = cloneInputLineage(lineage);
+        if (owned?.completeness !== 'complete') return undefined;
+        const epoch = this.currentNotesObservationEpoch();
+        const runId = this.state.snapshot().runId;
+        const dependencies: InputDependency[] = [];
+        for (const dependency of owned.dependencies) {
+            if (dependency.kind !== 'run-notes-observation') dependencies.push(dependency);
+            else {
+                if (!epoch) return undefined;
+                dependencies.push({ ...dependency, runId, sourceEpoch: epoch });
+            }
+        }
+        const admitted = completeInputLineage(dependencies);
+        return await this.admitsLineageAsync(admitted, signal, true) ? admitted : undefined;
     };
 
     /** Invalidates a proof, not the source snapshot itself. */

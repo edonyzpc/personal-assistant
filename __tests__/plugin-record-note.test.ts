@@ -4238,6 +4238,27 @@ describe('Memory governance plugin bootstrap', () => {
             }, [], 'style-conversation')).rejects.toThrow('Writing style source unavailable');
         });
 
+        it('rejects an identified Pagelet backing source whose text changed with the same stats', async () => {
+            const { plugin } = await setup();
+            plugin.settings.pagelet = { ...plugin.settings.pagelet, enabled: true, excludedTags: [] };
+            const path = 'notes/pagelet-identified.md';
+            let markdown = '# Anchor\n\nSource body';
+            const expected = { path, mtime: 30, size: markdown.length,
+                contentHash: { algorithm: 'sha256' as const, value: await hashWritingText(markdown) } };
+            const file = createTFileWithStat(path, { mtime: 30, size: markdown.length });
+            plugin.app.vault.getAbstractFileByPath = jest.fn((candidate: string) => candidate === path ? file : null);
+            plugin.app.vault.read = jest.fn(async () => markdown);
+            plugin.isPageletProviderPathAllowed = jest.fn(() => true);
+            plugin.createPageletProviderSourceResolver = jest.fn(() => ({}));
+            plugin.isPageletProviderSourceAllowedByResolver = jest.fn(() => true);
+            const receipt = await plugin.verifyWritingRecoveryPageletNote(expected);
+            expect(receipt.isCurrent()).toBe(true);
+            markdown = '# Anchor\n\nSource text';
+            expect(markdown.length).toBe(expected.size);
+            await expect(plugin.verifyWritingRecoveryPageletNote(expected)).rejects
+                .toThrow('Writing Pagelet source unavailable');
+        });
+
         it('revalidates Pagelet pipeline, live Markdown boundary and backing note stats', async () => {
             const { plugin } = await setup();
             plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };

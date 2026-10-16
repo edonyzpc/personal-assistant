@@ -8,6 +8,7 @@ Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governa
 
 | Track | Work item | Feature Home | Tracker |
 | --- | --- | --- | --- |
+| Pagelet Reading Loop | B-176 | [Feature Home](./pagelet-reading-loop/README.md) | [Tracker](./pagelet-reading-loop/tracker.md) |
 | Pagelet Autonomous Discovery | B-175 | [Feature Home](./pagelet-autonomous-discovery/README.md) | [Tracker](./pagelet-autonomous-discovery/tracker.md) |
 | Complete Note Query | B-169 | [Feature Home](./complete-note-query/README.md) | [Tracker](./complete-note-query/tracker.md) |
 | Lean Ghost Publishing | B-163 | [Feature Home](./lean-ghost-publishing/README.md) | [Tracker](./lean-ghost-publishing/tracker.md) |

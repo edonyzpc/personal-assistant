@@ -149,6 +149,10 @@ export interface AiServiceHost {
      * reads to be sealed before provider use.
      */
     getMemoryEvidenceEpoch?(): string;
+    /** Original Pagelet owner epoch, for first Chat intake of its finite read observations. */
+    getPageletEvidenceEpoch?(): string;
+    /** Original Pagelet source owner predicate; Chat additionally enforces its own boundary. */
+    isPageletSourcePathAllowed?(path: string): boolean;
 
     /** Live authority/identity fence for sealing cooperatively validated input ancestry. */
     getTaskSourceAuthorityEpoch?(): string;

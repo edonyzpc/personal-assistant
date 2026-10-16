@@ -90,12 +90,12 @@ Pagelet 成果复访及交接前沿用 current-evidence 校验。材料进入 Ch
 
 ## Open Decisions
 
-没有阻止本轮设计的未决产品选择。实现授权及执行排期尚未授予；任何需要新增持久化、来源范围或权限的方案
+没有阻止本轮设计的未决产品选择。用户已于 2026-10-16 授权按本方案完成开发测试，执行状态见 Tracker；任何需要新增持久化、来源范围或权限的方案
 都超出本轮，不能以实现便利代替用户决定。
 
 ## Delivery Handoff
 
-- [开发设计、顺序与必要测试矩阵](../../development/proposals/pagelet-reading-loop/sdd.md)
-- [Backlog B-176](../../backlog.md#已延期的产品与工程工作)：未进入 Active；接续条件见 SDD，不新建第二份执行台账。
+- [开发设计、顺序与必要测试矩阵](../../development/active/pagelet-reading-loop/sdd.md)
+- [Active Tracker](../../development/active/pagelet-reading-loop/tracker.md)：唯一执行状态和验收事实，不新建第二份执行台账。
 - [第一轮 B-175](./pagelet-autonomous-discovery-product-spec.md)：独立前置成果契约，范围与验证不扩张。
 - [Command Architecture Contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)

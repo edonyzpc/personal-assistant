@@ -63,6 +63,17 @@ export interface PanelAction {
     callback: () => void;
 }
 
+export interface PageletReadingPosition {
+    scrollTop: number;
+    sourcesExpanded: boolean[];
+}
+
+export interface PageletReadingControls {
+    anchorPath: string;
+    label: string;
+    actions?: PanelAction[];
+}
+
 export interface PanelShareCardRequest {
     findings: PanelFinding[];
 }
@@ -171,6 +182,7 @@ export type PanelGraphDiscoveryState = GraphDiscoveryRunResult;
 export type PanelPatternDetectionState = PatternDetectionResult;
 
 export interface PanelOpenExtra {
+    reading?: PageletReadingControls;
     connections?: NoteConnection[];
     markdown?: string;
     sourcePath?: string;

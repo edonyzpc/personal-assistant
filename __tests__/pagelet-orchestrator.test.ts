@@ -78,12 +78,13 @@ import type { OnboardingNudge } from "../src/pagelet/bubble/BubbleContent";
 import { quietRecallCandidateToDeliveryCandidate } from "../src/pagelet/bubble/recall-card";
 import { scopeRecapToDeliveryCandidate } from "../src/pagelet/bubble/recap-card";
 import type { DeliveryReceipt } from "../src/pagelet/attention";
-import type {
-    PageletDeepDiscoverControllerResult,
-    PageletDeepDiscoverTriggerReason,
+import {
+    PAGELET_DEEP_DISCOVER_PIPELINE_VERSION,
+    type PageletDeepDiscoverControllerResult,
+    type PageletDeepDiscoverTriggerReason,
 } from "../src/pagelet/agent/types";
 import type { PageletAgentDeliveryCandidate } from "../src/pagelet/agent/delivery-adapter";
-import type { PanelFinding } from "../src/pagelet/panel/types";
+import type { PanelFinding, PanelLayoutType, PanelOpenExtra } from "../src/pagelet/panel/types";
 import type { PageletDetailPayload } from "../src/pagelet/tab/types";
 import type {
     ConfirmedMemoryRecord,
@@ -99,6 +100,8 @@ import type {
     ScopeRecapPreparationResult,
     ScopeRecapRunResult,
 } from "../src/pa";
+
+type PanelOpen = (layout: PanelLayoutType, findings: PanelFinding[], extra?: PanelOpenExtra) => void;
 
 function makeTFile(path: string, stat: { size?: number; mtime?: number; ctime?: number } = {}): TFile {
     const FileCtor = TFile as unknown as {
@@ -333,6 +336,7 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
         linkRecallCandidate: async () => ({ ok: false, message: "not configured" }),
         recordQuietRecallFeedback: async () => ({ ok: false, reason: "disabled" }),
         getDeepDiscoverPolicyIdentity: () => "policy:v1",
+        validateDeepDiscoverInsight: async () => true,
         isDeepDiscoverCommitSealCurrent: (seal) => (
             seal.schemaVersion === 1
             && seal.controllerEpoch === 1
@@ -349,7 +353,7 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
 function makeVerifiedDeepDiscoverResult(
     triggerReason: PageletDeepDiscoverTriggerReason = "explicit",
     anchorPath = "notes/current.md",
-): PageletDeepDiscoverControllerResult {
+): Extract<PageletDeepDiscoverControllerResult, { status: "verified" }> {
     const anchor = {
         path: anchorPath,
         mtime: 100,
@@ -380,7 +384,7 @@ function makeVerifiedDeepDiscoverResult(
         sources: [anchor, related],
         sourceRefs: [{ path: anchorPath }, { path: related.path }],
         cacheIdentity: {
-            pipelineVersion: "pagelet-deep-discover-v3" as const,
+            pipelineVersion: PAGELET_DEEP_DISCOVER_PIPELINE_VERSION,
             anchor,
             sources: [anchor, related],
             dataBoundaryIdentity: "boundary-test",
@@ -581,6 +585,259 @@ function makeMemoryRecord(overrides: Partial<ConfirmedMemoryRecord> = {}): Confi
 }
 
 describe("PageletOrchestrator Deep Discover migration", () => {
+    it("B-176 ignores a late pure read for A after reading B without running or cancelling analysis", async () => {
+        let activePath = 'notes/a.md';
+        let finishA!: (result: Awaited<ReturnType<NonNullable<PageletHost['readDeepDiscover']>>>) => void;
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost['runDeepDiscover']>>();
+        const cancelDeepDiscover = jest.fn();
+        const ready = (path: string) => ({ ...makeVerifiedDeepDiscoverResult('explicit', path), status: 'cache-hit' as const });
+        const readDeepDiscover = jest.fn<NonNullable<PageletHost['readDeepDiscover']>>(input => input.path === 'notes/a.md'
+            ? new Promise(resolve => { finishA = resolve; }) : Promise.resolve(ready(input.path)));
+        const host = makeHost({ runDeepDiscover, cancelDeepDiscover, readDeepDiscover });
+        jest.mocked(host.app.workspace.getActiveFile).mockImplementation(() => makeTFile(activePath));
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = { open: jest.fn<PanelOpen>(), close: jest.fn(), isOpen: true };
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+        const pendingA = orchestrator.openPanel();
+        await flushAsyncWork();
+        activePath = 'notes/b.md';
+        await orchestrator.openPanel();
+        const bodyB = panelView.open.mock.calls.at(-1)?.[1][0].insightText;
+        expect(bodyB).toContain('notes/b.md');
+        finishA(ready('notes/a.md'));
+        await pendingA;
+        expect(panelView.open.mock.calls.at(-1)?.[1][0].insightText).toBe(bodyB);
+        expect(runDeepDiscover).not.toHaveBeenCalled();
+        expect(cancelDeepDiscover).not.toHaveBeenCalled();
+    });
+
+    it("B-176 retains A's selected reading when only B's last reminder source becomes invalid", async () => {
+        const pathA = 'notes/a.md';
+        const oldA = makeVerifiedDeepDiscoverResult('explicit', pathA);
+        const newA = makeVerifiedDeepDiscoverResult('edit-idle', pathA);
+        if (oldA.status !== 'verified' || newA.status !== 'verified') throw new Error('fixture');
+        oldA.insights = [oldA.insight, {
+            ...oldA.insight, insightId: 'a-reading-second', body: '## Original A second text\nKeep this complete text.',
+        }];
+        oldA.collection.insights = oldA.insights;
+        newA.insight = { ...newA.insight, insightId: 'a-newer-collection', body: '## Newer A\nDo not replace the recent reading.' };
+        newA.insights = [newA.insight];
+        newA.collection.insights = newA.insights;
+        let cachedA = oldA;
+        const readDeepDiscover = jest.fn<NonNullable<PageletHost['readDeepDiscover']>>(async () => ({
+            ...cachedA, status: 'cache-hit',
+        }));
+        const host = makeHost({ readDeepDiscover });
+        jest.mocked(host.app.workspace.getActiveFile).mockImplementation(() => makeTFile(pathA));
+        const orchestrator = new PageletOrchestrator(host);
+        let position = { scrollTop: 0, sourcesExpanded: [false] };
+        const panelView = {
+            open: jest.fn<PanelOpen>(), close: jest.fn(), isOpen: true,
+            getReadingPosition: () => position,
+            restoreReadingPosition: jest.fn((next: typeof position) => { position = next; }),
+        };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            panelReading: { selectedId: string; candidates: PageletAgentDeliveryCandidate[] };
+            agentInsightCandidate: PageletAgentDeliveryCandidate | null;
+            clearPanelSession(): void;
+            acceptDeepDiscoverResult(result: PageletDeepDiscoverControllerResult, options: { path: string; proactive: boolean }): unknown;
+            invalidateAgentInsightForPaths(paths: readonly string[]): void;
+        };
+        internals.panelView = panelView;
+        await orchestrator.openPanel();
+        panelView.open.mock.calls.at(-1)?.[1][0].actions?.find((action: { label: string }) => action.label === 'Next result')?.callback();
+        await flushAsyncWork();
+        position = { scrollTop: 93, sourcesExpanded: [true] };
+        internals.clearPanelSession();
+
+        cachedA = newA;
+        internals.acceptDeepDiscoverResult(newA, { path: pathA, proactive: true });
+        internals.acceptDeepDiscoverResult(makeVerifiedDeepDiscoverResult('edit-idle', 'notes/b.md'), {
+            path: 'notes/b.md', proactive: true,
+        });
+        expect(internals.agentInsightCandidate?.pageletAgent.handoff.anchor.path).toBe('notes/b.md');
+        internals.invalidateAgentInsightForPaths(['notes/b.md']);
+        expect(internals.agentInsightCandidate).toBeNull();
+
+        await orchestrator.openPanel();
+        expect(internals.panelReading.selectedId).toBe('a-reading-second');
+        expect(panelView.open.mock.calls.at(-1)?.[1][0].insightText).toBe(oldA.insights[1].body);
+        expect(panelView.restoreReadingPosition).toHaveBeenLastCalledWith({ scrollTop: 93, sourcesExpanded: [true] });
+        expect(readDeepDiscover).toHaveBeenCalledTimes(1);
+    });
+
+    it("B-176 restores seen reading and position by anchor after a newer collection arrives", async () => {
+        let activePath = 'notes/a.md';
+        const resultA = makeVerifiedDeepDiscoverResult('explicit', activePath);
+        if (resultA.status !== 'verified') throw new Error('fixture');
+        resultA.insights = [resultA.insight, { ...resultA.insight, insightId: 'a-second', body: '## Second full text\nThe complete second body.' }];
+        resultA.collection.insights = resultA.insights;
+        const resultB = makeVerifiedDeepDiscoverResult('explicit', 'notes/b.md');
+        const readDeepDiscover = jest.fn<NonNullable<PageletHost['readDeepDiscover']>>(async input => ({
+            ...(input.path === 'notes/a.md' ? resultA : resultB), status: 'cache-hit',
+        }));
+        let activityListener: ((path: string) => void) | undefined;
+        let phase: 'idle' | 'running' = 'idle';
+        const invalid = new Set<string>();
+        const host = makeHost({
+            readDeepDiscover,
+            validateDeepDiscoverInsight: async identity => !invalid.has(identity.insightId),
+            getDeepDiscoverActivity: () => ({ phase, requestId: 'request-a' }),
+            subscribeDeepDiscoverActivity: listener => { activityListener = listener; return () => undefined; },
+        });
+        jest.mocked(host.app.workspace.getActiveFile).mockImplementation(() => makeTFile(activePath));
+        const orchestrator = new PageletOrchestrator(host);
+        let position = { scrollTop: 0, sourcesExpanded: [false] };
+        const panelView = {
+            open: jest.fn<PanelOpen>(), isOpen: true, close: jest.fn(), updateReadingControls: jest.fn(),
+            getReadingPosition: () => position,
+            restoreReadingPosition: jest.fn((next: typeof position) => { position = next; }),
+        };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView; clearPanelSession(): void;
+            acceptDeepDiscoverResult(result: PageletDeepDiscoverControllerResult, options: { path: string; proactive: boolean }): unknown;
+            panelReading: { candidates: PageletAgentDeliveryCandidate[] };
+            attentionStore: { isSeen(receipt: DeliveryReceipt): boolean };
+        };
+        internals.panelView = panelView;
+        await orchestrator.openPanel();
+        const originalCandidates = [...internals.panelReading.candidates];
+        expect(internals.attentionStore.isSeen(originalCandidates[0].deliveryReceipt!)).toBe(true);
+        expect(internals.attentionStore.isSeen(originalCandidates[1].deliveryReceipt!)).toBe(false);
+        panelView.open.mock.calls.at(-1)?.[1][0].actions?.find((action: { label: string }) => action.label === 'Next result')?.callback();
+        await flushAsyncWork();
+        position = { scrollTop: 87, sourcesExpanded: [true] };
+        const beforeActivity = panelView.open.mock.calls.length;
+        phase = 'running';
+        activityListener?.('notes/a.md');
+        expect(panelView.open).toHaveBeenCalledTimes(beforeActivity);
+        expect(panelView.updateReadingControls).toHaveBeenLastCalledWith(expect.objectContaining({ label: 'Analyzing this note…' }));
+        expect(position).toEqual({ scrollTop: 87, sourcesExpanded: [true] });
+        internals.clearPanelSession();
+        activePath = 'notes/b.md';
+        await orchestrator.openPanel();
+        internals.clearPanelSession();
+        const newer = makeVerifiedDeepDiscoverResult('edit-idle', 'notes/a.md');
+        if (newer.status !== 'verified') throw new Error('fixture');
+        newer.insight = { ...newer.insight, insightId: 'a-new', body: '## New collection\nNew full body.' };
+        newer.insights = [newer.insight]; newer.collection.insights = newer.insights;
+        internals.acceptDeepDiscoverResult(newer, { path: 'notes/a.md', proactive: false });
+        invalid.add(originalCandidates[0].id);
+        activePath = 'notes/a.md';
+        await orchestrator.openPanel();
+        expect(panelView.open.mock.calls.at(-1)?.[1][0].insightText).toBe('## Second full text\nThe complete second body.');
+        expect(panelView.restoreReadingPosition).toHaveBeenLastCalledWith({ scrollTop: 87, sourcesExpanded: [true] });
+        expect(readDeepDiscover).toHaveBeenCalledTimes(2);
+        expect(internals.panelReading.candidates.map(candidate => candidate.id)).toEqual(['a-second']);
+        const controls = panelView.open.mock.calls.at(-1)?.[2]?.reading;
+        if (!controls) throw new Error("expected controls for the restored reading");
+        controls.actions?.find((action: { label: string }) => action.label === 'Show new results')?.callback();
+        await flushAsyncWork();
+        expect(panelView.open.mock.calls.at(-1)?.[1][0].insightText).toBe(newer.insight.body);
+    });
+
+    it("B-176 does not fill waiting R2 with an earlier R1 result or its cache", async () => {
+        const first = makeVerifiedDeepDiscoverResult('edit-idle');
+        const second = makeVerifiedDeepDiscoverResult('open-changed-note');
+        if (first.status !== 'verified' || second.status !== 'verified') throw new Error('fixture');
+        first.requestId = 'request-r1';
+        second.requestId = 'request-r2';
+        second.insight = { ...second.insight, insightId: 'r2-completed-text', body: '## R2 completed text\nOnly this request may fill its waiting reader.' };
+        second.insights = [second.insight];
+        second.collection.insights = second.insights;
+        second.runtimeCompletion = {
+            loopStatus: 'incomplete', endReason: 'max-turns', diagnosticTypes: [],
+            lastTurnStatus: null, providerStopReason: null, finalTextState: 'empty',
+            citationCoverage: 'not-applicable', turnCount: 3, toolCallCount: 4,
+            insightDraftCount: 1, emptyFinalAnswerRetryCount: 0,
+        };
+        let activity: ReturnType<NonNullable<PageletHost['getDeepDiscoverActivity']>> = {
+            phase: 'queued', requestId: 'request-r2',
+        };
+        let activityListener: ((path: string) => void) | undefined;
+        const readDeepDiscover = jest.fn<NonNullable<PageletHost['readDeepDiscover']>>()
+            .mockResolvedValueOnce({ status: 'empty' })
+            .mockResolvedValue({ ...first, status: 'cache-hit' });
+        const host = makeHost({
+            readDeepDiscover,
+            getDeepDiscoverActivity: () => activity,
+            subscribeDeepDiscoverActivity: listener => { activityListener = listener; return () => undefined; },
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = { open: jest.fn<PanelOpen>(), close: jest.fn(), isOpen: true, updateReadingControls: jest.fn() };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            acceptDeepDiscoverResult(result: PageletDeepDiscoverControllerResult, options: { path: string; proactive: boolean }): unknown;
+        };
+        internals.panelView = panelView;
+        await orchestrator.openPanel();
+        // Both requests use the same note snapshot; R2 is queued while R1 completes.
+        internals.acceptDeepDiscoverResult(first, { path: 'notes/current.md', proactive: true });
+        expect(panelView.open.mock.calls.at(-1)?.[1]).toHaveLength(0);
+
+        // R2 can retain staged results without replacing R1 in the cache.
+        activity = { phase: 'idle', requestId: 'request-r2', terminal: {
+            status: 'verified', runtimeCompletion: second.runtimeCompletion,
+        } };
+        activityListener?.('notes/current.md');
+        await flushAsyncWork();
+        expect(panelView.open.mock.calls.at(-1)?.[1]).toHaveLength(0);
+        expect(readDeepDiscover).toHaveBeenCalledTimes(1);
+
+        internals.acceptDeepDiscoverResult(second, { path: 'notes/current.md', proactive: true });
+        expect(panelView.open.mock.calls.at(-1)?.[1][0].insightText).toBe(second.insight.body);
+    });
+
+    it.each([true, false])("B-176 fills an empty reading only for the awaited request identity: %s", async sameRequest => {
+        let phase: 'idle' | 'running' = 'running';
+        let requestId = 'request-1';
+        const host = makeHost({
+            readDeepDiscover: async () => ({ status: 'empty' }),
+            getDeepDiscoverActivity: () => ({ phase, requestId }),
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = { open: jest.fn<PanelOpen>(), close: jest.fn(), isOpen: true, updateReadingControls: jest.fn() };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            acceptDeepDiscoverResult(result: PageletDeepDiscoverControllerResult, options: { path: string; proactive: boolean }): unknown;
+        };
+        internals.panelView = panelView;
+        await orchestrator.openPanel();
+        phase = 'idle';
+        if (!sameRequest) requestId = 'request-2';
+        const result = makeVerifiedDeepDiscoverResult();
+        result.requestId = 'request-1';
+        internals.acceptDeepDiscoverResult(result, { path: 'notes/current.md', proactive: true });
+        await flushAsyncWork();
+        const findings = panelView.open.mock.calls.at(-1)?.[1];
+        if (!findings) throw new Error("expected the reading Panel to render");
+        expect(findings.length > 0).toBe(sameRequest);
+    });
+
+    it("B-176 keeps a closed reading intent closed when explicit analysis finishes", async () => {
+        let finish!: (result: PageletDeepDiscoverControllerResult) => void;
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost['runDeepDiscover']>>(() => new Promise(resolve => { finish = resolve; }));
+        const orchestrator = new PageletOrchestrator(makeHost({ runDeepDiscover }));
+        const panelView = { open: jest.fn<PanelOpen>(), close: jest.fn(), isOpen: true };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            clearPanelSession(): void;
+        };
+        internals.panelView = panelView;
+        const pending = orchestrator.reviewCurrentNote();
+        panelView.open.mockClear();
+        panelView.isOpen = false;
+        internals.clearPanelSession();
+        finish(makeVerifiedDeepDiscoverResult());
+        await pending;
+        expect(panelView.open).not.toHaveBeenCalled();
+        expect(runDeepDiscover).toHaveBeenCalledTimes(1);
+        await orchestrator.openPanel();
+        expect(panelView.open.mock.calls.at(-1)?.[1][0].insightText).toContain('Release assumptions conflict');
+        expect(runDeepDiscover).toHaveBeenCalledTimes(1);
+    });
+
     it("runs explicit discovery again with an existing result and keeps viewing provider-free", async () => {
         const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>()
             .mockResolvedValueOnce(makeVerifiedDeepDiscoverResult())
@@ -594,11 +851,11 @@ describe("PageletOrchestrator Deep Discover migration", () => {
 
         await orchestrator.reviewCurrentNote();
         const originalBody = panelView.open.mock.calls.at(-1)?.[1][0].insightText;
-        orchestrator.openPanel();
+        await orchestrator.openPanel();
         expect(runDeepDiscover).toHaveBeenCalledTimes(1);
         await orchestrator.reviewCurrentNote();
         expect(runDeepDiscover).toHaveBeenCalledTimes(2);
-        orchestrator.openPanel();
+        await orchestrator.openPanel();
         expect(runDeepDiscover).toHaveBeenCalledTimes(2);
         expect(panelView.open.mock.calls.at(-1)?.[1][0].insightText).toBe(originalBody);
     });
@@ -638,6 +895,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             expect(finding.actionStatus.detail).toContain("did not finish");
             expect(finding.actions.some((action) => action.label.startsWith("Link "))).toBe(false);
             finding.actions.find((action) => action.label === "Next result")?.callback();
+            await flushAsyncWork();
         }
         expect(runDeepDiscover).toHaveBeenCalledTimes(1);
         expect(panelView.open.mock.calls.at(-1)?.[1][0].actions?.some(
@@ -2323,6 +2581,26 @@ describe("PageletOrchestrator pet task visuals", () => {
 });
 
 describe("PageletOrchestrator detail expansion", () => {
+    it("B-176 keeps the Panel intact until the Detail target accepts the payload", async () => {
+        let rejectOpen!: (error: Error) => void;
+        const openPageletDetailView = jest.fn<NonNullable<PageletHost['openPageletDetailView']>>(() => new Promise((_resolve, reject) => { rejectOpen = reject; }));
+        const orchestrator = new PageletOrchestrator(makeHost({ openPageletDetailView }));
+        const panelView = {
+            currentLayoutType: 'discover' as const,
+            currentVisibleFindings: [{ title: 'Read me', description: 'Full body', insightText: 'Full body' }],
+            currentPanelExtra: { sourcePath: 'notes/current.md' },
+            close: jest.fn(), isOpen: true,
+        };
+        const internals = orchestrator as unknown as { panelView: typeof panelView; expandPanelToTab(): void | Promise<void> };
+        internals.panelView = panelView;
+        const pending = internals.expandPanelToTab();
+        expect(panelView.close).not.toHaveBeenCalled();
+        rejectOpen(new Error('leaf unavailable'));
+        await pending;
+        await flushAsyncWork();
+        expect(panelView.close).not.toHaveBeenCalled();
+    });
+
     it("reconciles pending tickets immediately when generic proactive hints are disabled", () => {
         const host = makeHost();
         host.settings.pagelet.proactiveHints = true;
@@ -3102,7 +3380,7 @@ describe("PageletOrchestrator review panel context flow", () => {
         const panelView = { open: jest.fn() };
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
-        orchestrator.openPanel();
+        (orchestrator as unknown as { handleExpandPanel(type: string): void }).handleExpandPanel("review");
 
         expect(listReviewQueueItems).toHaveBeenCalledWith(expect.objectContaining({
             statuses: expect.arrayContaining(["suggested", "accepted", "edited", "snoozed", "failed"]),
@@ -3133,7 +3411,7 @@ describe("PageletOrchestrator review panel context flow", () => {
         const panelView = { open: jest.fn() };
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
-        orchestrator.openPanel();
+        (orchestrator as unknown as { handleExpandPanel(type: string): void }).handleExpandPanel("review");
 
         expect(panelView.open).toHaveBeenCalledWith(
             "review",
@@ -3159,7 +3437,7 @@ describe("PageletOrchestrator review panel context flow", () => {
         const panelView = { open: jest.fn() };
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
-        orchestrator.openPanel();
+        (orchestrator as unknown as { handleExpandPanel(type: string): void }).handleExpandPanel("review");
 
         expect(panelView.open).toHaveBeenCalledWith(
             "review",
@@ -3196,7 +3474,7 @@ describe("PageletOrchestrator review panel context flow", () => {
         const panelView = { open: jest.fn() };
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
-        orchestrator.openPanel();
+        (orchestrator as unknown as { handleExpandPanel(type: string): void }).handleExpandPanel("review");
 
         expect(panelView.open).toHaveBeenCalledWith(
             "review",

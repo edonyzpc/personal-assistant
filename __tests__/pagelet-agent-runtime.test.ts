@@ -33,6 +33,7 @@ import {
     createAnchorBoundReadNoteTool,
 } from '../src/pagelet/agent/anchor-note-tool';
 import { PageletDeepDiscoverController } from '../src/pagelet/agent/pagelet-deep-discover-controller';
+import { validatePageletInputEvidence } from '../src/pagelet/agent/pagelet-agent-quality-gate';
 import {
     PAGELET_AGENT_READ_ONLY_TOOL_ALLOWLIST,
     createPageletAgentRuntime as createPageletAgentRuntimeBase,
@@ -568,6 +569,92 @@ describe('Pagelet autonomous completed text', () => {
         if (!result.insightDrafts) throw new Error('expected runtime drafts');
         expect(result.insightDrafts.map(draft => draft.body)).toEqual([body]);
         expect(result.sourceTools.get(anchor.path)).toContain('get_current_note_context');
+    });
+
+    it('freezes each completed text against its actual authoring inputs before later reads', async () => {
+        const staged = '## Completed\n`notes/anchor.md` validate first';
+        const runtime = runtimeFor({ stream: async function* (input) {
+            if (input.turnIndex === 0) yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
+            else if (input.turnIndex === 1) yield { type: 'toolcall_delta', id: 'stage-before-read', name: 'stage_pagelet_insight', input: { insightMarkdown: staged, sourceIds: [anchor.path] }, index: 0 };
+            else if (input.turnIndex === 2) yield { type: 'toolcall_delta', id: 'read-later', name: 'read_note', input: { path: relatedMaterial.path }, index: 0 };
+            else yield { type: 'text_delta', text: '## Final\n`notes/anchor.md` final response after more reading' };
+        } });
+        const result = await runtime.run({ anchor, triggerReason: 'explicit' });
+        expect(result.loopResult.status).toBe('completed');
+        const [first, terminal] = result.insightDrafts ?? [];
+        expect(first?.origin).toBe('staged');
+        expect(first?.inputEvidence?.lineage.completeness).toBe('complete');
+        expect(first?.inputEvidence?.lineage.dependencies).not.toContainEqual(expect.objectContaining({ kind: 'vault', path: relatedMaterial.path }));
+        expect(terminal?.inputEvidence?.lineage.dependencies).toContainEqual(expect.objectContaining({ kind: 'vault', path: relatedMaterial.path }));
+        expect(terminal?.inputEvidence?.sourceRecords.some(source => source.path === relatedMaterial.path)).toBe(true);
+        const evidence = terminal?.inputEvidence;
+        if (!evidence?.vaultObservations.length) throw new Error('expected actual read observation ancestry');
+        const revalidate = jest.fn(async (observation: (typeof evidence.vaultObservations)[number]) => ({
+            observationId: observation.observationId, validItemIndexes: observation.items.map((_, index) => index), aggregateCurrent: true,
+        }));
+        const options = { anchor, isPathAllowed: (path: string) => path.startsWith('notes/'),
+            isAuthoringPathAllowed: (path: string) => path.startsWith('notes/'),
+            getEvidenceEpoch: () => 'owned-source-epoch',
+            readCurrentSourceSnapshot: async (path: string) => evidence.sourceSnapshots.find(source => source.path === path) ?? null,
+            revalidateVaultObservation: revalidate };
+        expect(await validatePageletInputEvidence(evidence, options)).toBe(true);
+        revalidate.mockImplementation(async observation => ({ observationId: observation.observationId,
+            validItemIndexes: [], aggregateCurrent: false }));
+        expect(await validatePageletInputEvidence(evidence, options)).toBe(false);
+        expect(revalidate).toHaveBeenCalled();
+    });
+
+    it('retains original owner facts for a real metadata no-match observation', async () => {
+        const runtime = runtimeFor({ stream: async function* (input) {
+            if (input.turnIndex === 0) yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
+            else if (input.turnIndex === 1) yield { type: 'toolcall_delta', id: 'metadata-no-match', name: 'search_vault_metadata', input: { query: 'UNMATCHED_SENTINEL_9762' }, index: 0 };
+            else yield { type: 'text_delta', text: '## Complete\n`notes/anchor.md` consider the current question' };
+        } });
+        const result = await runtime.run({ anchor, triggerReason: 'explicit' });
+        const observation = result.loopResult.turns.flatMap(turn => turn.toolResults)
+            .find(message => message.toolName === 'search_vault_metadata');
+        expect(observation?.isError).toBe(false);
+        expect(observation?.content.resultFact).toMatchObject({ kind: 'no_match', search: 'metadata' });
+        expect(observation?.content.sourceRecords).toEqual([]);
+        expect(result.insightDrafts?.[0].inputEvidence?.lineage).toMatchObject({ completeness: 'complete',
+            dependencies: expect.arrayContaining([expect.objectContaining({ kind: 'run-notes-observation', owner: 'vault',
+                sourceEpoch: 'pagelet-test-vault-epoch' })]) });
+    });
+
+    it('retains metadata dependency ancestors omitted from the visible query result', async () => {
+        const runtime = runtimeFor({ stream: async function* (input) {
+            if (input.turnIndex === 0) yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
+            else if (input.turnIndex === 1) yield { type: 'toolcall_delta', id: 'query-one', name: 'query_notes', input: { folder: 'notes', limit: 1 }, index: 0 };
+            else yield { type: 'text_delta', text: '## Complete\n`notes/anchor.md` consider the current question' };
+        } });
+        const result = await runtime.run({ anchor, triggerReason: 'explicit' });
+        const evidence = result.insightDrafts?.[0].inputEvidence;
+        expect(evidence?.lineage.dependencies).toContainEqual(expect.objectContaining({ kind: 'vault', path: relatedMaterial.path }));
+        expect(evidence?.sourceRecords).toContainEqual(expect.objectContaining({ path: relatedMaterial.path,
+            statusOnly: true, redacted: true, metadata: { sourceDependency: true } }));
+        const query = result.loopResult.turns.flatMap(turn => turn.toolResults).find(message => message.toolName === 'query_notes');
+        expect(query?.content.promptText).not.toContain(relatedMaterial.path);
+        expect(result.toolProvenance.filter(item => item.toolName === 'query_notes')
+            .every(item => !(item.bodyEvidencePaths ?? []).includes(relatedMaterial.path))).toBe(true);
+    });
+
+    it('revalidates a query aggregate under its original narrower Pagelet source owner', async () => {
+        const host = createHost({ 'private/hidden.md': '# Hidden\nOutside the Pagelet boundary' });
+        const runtime = runtimeFor({ stream: async function* (input) {
+            if (input.turnIndex === 0) yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
+            else if (input.turnIndex === 1) yield { type: 'toolcall_delta', id: 'query-owner-scope', name: 'query_notes', input: { limit: 1 }, index: 0 };
+            else yield { type: 'text_delta', text: '## Complete\n`notes/anchor.md` consider the current question' };
+        } }, host);
+        const result = await runtime.run({ anchor, triggerReason: 'explicit' });
+        const evidence = result.insightDrafts?.[0].inputEvidence;
+        if (!evidence) throw new Error('Expected actual query input evidence');
+        const options = { anchor, isPathAllowed: () => true,
+            isAuthoringPathAllowed: (path: string) => path.startsWith('notes/'),
+            getEvidenceEpoch: () => 'current-chat-scope', getAuthoringEvidenceEpoch: () => 'pagelet-test-vault-epoch',
+            readCurrentSourceSnapshot: async (path: string) => evidence.sourceSnapshots.find(source => source.path === path) ?? null,
+            revalidateVaultObservation: host.revalidateVaultObservation?.bind(host) };
+        expect(await validatePageletInputEvidence(evidence, options)).toBe(true);
+        expect(await validatePageletInputEvidence(evidence, { ...options, isPathAllowed: path => path !== anchor.path })).toBe(false);
     });
 
     it('projects partial recovery in its original search observation without a stage receipt', async () => {

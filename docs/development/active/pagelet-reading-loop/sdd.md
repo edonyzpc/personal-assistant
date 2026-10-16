@@ -1,21 +1,22 @@
 # Pagelet 入口与阅读闭环 Software Design Document
 
-Document status: Current
-Delivery status: Blocked
+Document status: Approved
 Updated: 2026-10-16
 Work item: B-176
+Tracker: [Development Tracker](./tracker.md)
 Authority: [DEC-066](../../../product/decisions/dec-066-pagelet-reading-loop.md) 与用户认可的第二轮方案；本文件承载源码核实后的开发设计和必要测试设计，不承载实施完成记录。
-Restart condition: B-175 的交付契约可接续、用户授权实施且 Active 的唯一 Next 可用后，复核受影响源码，将本 SDD 迁入 Active Package 并创建唯一 Tracker；不改第一轮状态来腾出位置。
+Execution authority: 用户于 2026-10-16 明确要求按照 B-176 方案完成全部开发测试；执行与验证事实唯一记录在 [Tracker](./tracker.md)。
 Product spec: [Pagelet 入口与阅读闭环](../../../product/specs/pagelet-reading-loop-product-spec.md)
 
-本次为 sdd-only。Blocked 仅表示尚未进入执行队列且未获实施授权，不表示产品方案未定或已发生代码实施阻塞。
-一般 Proposal 按现有规范保持 Current；设计认可见 Approval。开发和测试设计放在本文件，不另建 Plan、测试计划、
-Feature Home 或平行 Tracker。开始执行时按 [Documentation Workflow](../../documentation-workflow.md)迁移，不复制两份权威。
+本次为 implement-approved-spec。B-175 已在本地 master 提交 `67ab2183` 并完成验收；本 SDD 从 Proposal
+真实迁入当前 Active Package，不保留平行副本。开发顺序和必要测试设计复用本文件，不另建 Plan 或测试计划。
+Git、closeout 和 release 权限及其后续变更由 Tracker 记录，不能从本设计状态推定。
 
 ## Current Source Baseline
 
-2026-10-16，基线 ecddc088，相关 src/tests 无未提交差量。B-175 仅完成文档设计，仍有旧运行逻辑。
-下表为静态源码事实；下文为待实施方案。沿用已有模块是工程选择，不代表用户新增授权。
+设计记录基线为 ecddc088，当时 B-175 尚未实现。当前实施基线为 `67ab2183`，进入本轮时工作区干净。
+下表保留设计时静态源码事实；B-175 已交付自主发现、多份暂存、完整集合及最小导航，当前接线须按实际源码复核。
+下文是批准的实现约束，实际修改、偏差和验证只记 Tracker，不从本文件状态推定完成。
 
 | 链路与现有位置 | 已核实事实 / 第二轮影响 |
 | --- | --- |
@@ -56,7 +57,8 @@ B-175 继续拥有模型自主探索、所有模型可见面的旧语义约束�
 ### 2. 纯读入口与真实活动状态
 
 短点在 orchestrator 绑定当前 Markdown anchor 后，经 PageletHost → plugin → 已存在 scheduler/controller
-读取有效集合。拟新增的纯读和活动查询/订阅接口均为 Proposed，当前代码尚无对应入口；具体命名沿实现模块习惯。
+读取有效集合。接口为 readDeepDiscover、getDeepDiscoverActivity 与 subscribeDeepDiscoverActivity；
+controller/scheduler 复用 readCachedCollection，读取与调度入口独立。实现与验收状态见 Tracker。
 controller 复用现有缓存 prepare/commit、source/policy/pipeline/时效校验与并发 epoch，不新造运行回执。
 scheduler 只转发纯读，不排队、取消或 coalesce；plugin 不为查看初始化 AI 或模型 runtime。
 未初始化、缓存空、过期或不可读取都不触发分析；不可读取原因与模型无发现分开。
@@ -134,7 +136,7 @@ projector 继续 context_only 与不授予工具/写入/网络/外部操作权�
 
 ## Development Sequence
 
-下表是未来实现顺序，不是新增产品轮次、审批阶段或已经开始的任务。实施时由 GPT-6 管理契约与验收，
+下表是当前实现顺序，不是新增产品轮次或审批阶段。实施时由 GPT-6 管理契约与验收，
 GLM 按 [交付流程](../../workflows/gpt6-glm-delivery-workflow.md)负责限定代码/测试；共享 runtime 默认一个 writer。
 
 | Slice | Requirement / AC | 修改范围与完成点 |
@@ -166,13 +168,14 @@ B-141 纳入 D-02/D-03，待真实验收再处置旧项；B-002 其他 async UX 
 仅核对受影响移动入口、正文滚动和操作可达性，不重做全产品几何。
 
 交接来源结构变化应更新相应 DTO/缓存身份，旧或缺字段来源保持 unknown 并给出不可交接原因，
-不从引用列表补造完整证明；无用户笔记迁移。实现时确定最窄版本接续，不扩大为旧会话数据迁移。
+不从引用列表补造完整证明；无用户笔记迁移。缓存使用 pagelet-deep-discover-v4；Writing generationInput v2
+承载 identified 全文SHA256和来源快照，v1仍只接受原none/unknown，不伪升级旧记录。
 回退限第二轮阅读/交接适配，保留 B-175 已交付的自主发现及真实来源边界；不能用绕过来源准入作为临时恢复。
 
 ## Test Matrix
 
 证据按 [GOV-001](../../governance/gov-001-agent-managed-project-lifecycle.md#validation-evidence-and-diagnosis)复用。
-以下为未来最低充分验证设计；当前没有运行实现测试。结果在实施时唯一 Tracker 记录，不在本 Proposal 维护执行台账。
+以下定义最低充分验证要求，不代表已通过。结果唯一记录在 Tracker，不在本 SDD 维护执行台账。
 
 | Risk / Requirement / AC | 最低确定性证据与现有 suite | 通过条件 / 必要反例 | 扩展或重跑触发 |
 | --- | --- | --- | --- |
@@ -204,9 +207,8 @@ app 观察证明实际界面；二者不互相冒充。第三条可复用一次�
 
 ### Gates 与停止条件
 
-- 当前仅文档：npm run docs:check、git diff --check，并覆盖新增未跟踪 Markdown 的空白检查；未改 checker/skills，
-  不跑它们的实现自测、TypeScript、build、模型、部署或设备验证。
-- 后续实施先 focused source suites。共享 Chat 输入与多模块行为收口后，在冻结输入上统一运行 lint、production build、
+- 历史设计期只运行文档检查，不作为实现证据；未改 checker/skills，不运行其实现自测。
+- 当前实施先 focused source suites。共享 Chat 输入与多模块行为收口后，在冻结输入上统一运行 lint、production build、
   npm run test:all -- --runInBand、diff check 与 AGENTS 的 DOM/style 注入扫描；build 已覆盖 TypeScript。
 - 使用 [test-vault skill](../../../../.agents/skills/obsidian-test-vault-smoke/SKILL.md)部署及观察；make deploy 已含的
   lint/build/full tests 不再先跑一遍。已有同输入有效 gate 和 build 时用 deploy-current，其身份校验不充当测试成功。
@@ -215,7 +217,7 @@ app 观察证明实际界面；二者不互相冒充。第三条可复用一次�
 
 ## Open Design Findings
 
-无未决产品阻断。已确认的 seen/读取耦合、晚到重开、Detail 回调及实际入模缺口均由上述设计覆盖，代码尚未修复。
+无未决产品阻断。设计时确认的 seen/读取耦合、晚到重开、Detail 回调及实际入模缺口均由上述设计覆盖，实际状态见 Tracker。
 新增接口名、最小来源字段及适配位置是实施细节；若现有事实不足以可靠承载来源，不得降级准入或改写批准范围，
 只暂停有实质偏差的部分并说明具体缺口。B-141 不因设计完成就标解决；B-175/B-002 其余范围保持。
 
@@ -223,5 +225,5 @@ app 观察证明实际界面；二者不互相冒充。第三条可复用一次�
 
 - 产品与设计依据：用户认可第二轮方案后，于 2026-10-16 要求新 work item 的方案及 SDD 开发/测试设计；DEC-066 / Product Spec 承接。
 - 设计记录日期：2026-10-16；本文件为待接续的技术设计，源码基线与方案已区分。
-- 文档编写时授权止于设计与文档检查；用户于 2026-10-16 后续授权本地 master 提交，并选择在 MacBook 上继续开发。本主机不启动 runtime/tests code 修改或部署，推送尚未授权。
-- 进入开发：满足 Restart condition 后迁入 Active，SDD 设为 Approved，创建 Tracker 承接 REQ/AC 与验证结果；不重置第一轮范围。
+- 文档编写时授权止于设计与文档检查；当时本地 master 文档提交和 MacBook 接续属于历史安排。
+- 用户于 2026-10-16 另行明确授权按 B-176 完成全部开发测试；当前包以 `67ab2183` 为实现基线，Tracker 承接全部 REQ/AC 与结果，不重置第一轮范围。

@@ -9,6 +9,7 @@ import { projectActionStates, type PaAgentActionState } from '../src/ai-services
 import { TaskSourceResourceIdentities } from '../src/ai-services/task-source-resource-identities';
 import { actionHistoryMessages, projectPaAgentActionHistory } from '../src/ai-services/pa-agent-action-history';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
+import { createPaAgentPersistedTurn } from '../src/ai-services/pa-agent-history';
 import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
 import {
     MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS,
@@ -28,6 +29,46 @@ function imageState(lineage: InputLineage): PaAgentActionState {
 }
 
 describe('B157 independently admitted historical state', () => {
+    it.each([false, true])('keeps only owner-bound Pagelet answer ancestry across requests; async=%s', async asynchronous => {
+        const h = fixture();
+        let allowed = true;
+        const lineage = completeInputLineage([{ kind: 'user-text', messageId: 'original-user' },
+            { kind: 'vault', path: h.a.path, via: 'pagelet' },
+            { kind: 'run-notes-observation', runId: 'original-run', owner: 'vault', sourceEpoch: 'epoch-1' }]);
+        const canonical = createPaAgentPersistedTurn({ runId: 'original-run', turnId: 'original-turn', status: 'completed',
+            committedFinalText: 'The actual Pagelet-derived answer.', messages: [{ role: 'assistant', id: 'answer', timestamp: 1,
+                content: [{ type: 'text', text: 'The actual Pagelet-derived answer.' }], inputLineage: lineage }] });
+        const history: ChatMessage[] = [{ role: 'user', content: 'Discuss the finding.', hostProvenance: {
+            version: 1, kind: 'ordinary_user_statement', messageId: 'original-user' } },
+        { role: 'assistant', content: 'The actual Pagelet-derived answer.', inputLineage: lineage, canonicalTurn: canonical }];
+        const host = { ...h.host, runId: 'next-run', conversationId: 'conversation', isPathAllowed: () => allowed,
+            runSourceSelection: { schemaVersion: 1 as const, scope: 'notes' as const, selectionId: 'notes', userMessageId: 'user-1' },
+            ...(asynchronous ? { getTaskSourceAuthorityEpoch: () => 'authority' } : {}) };
+        const run = new TaskSourceRun(host);
+        const project = (messages = history) => asynchronous ? run.projectHistoryAsync(messages) : Promise.resolve(run.projectHistory(messages));
+        const original = JSON.stringify(history);
+        const retained = (await project()).find(message => message.role === 'assistant');
+        expect(retained?.content).toBe(history[1].content);
+        expect(retained?.inputLineage?.dependencies).toContainEqual({ kind: 'run-notes-observation',
+            runId: 'next-run', owner: 'vault', sourceEpoch: 'epoch-1' });
+        expect(JSON.stringify(history)).toBe(original);
+        h.setSourceEpoch('epoch-2');
+        expect((await project()).some(message => message.role === 'assistant')).toBe(false);
+        h.setSourceEpoch('epoch-1');
+        allowed = false;
+        expect((await project()).some(message => message.role === 'assistant')).toBe(false);
+        allowed = true;
+        canonical.runId = 'foreign-owner';
+        expect((await project()).some(message => message.role === 'assistant')).toBe(false);
+        canonical.runId = 'original-run';
+        expect(await project([history[1]])).toEqual([]);
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore() });
+        const restored = manager.deserializeTurn(manager.serializeTurn({ kind: 'history', user: history[0], assistant: history[1] }, 'conversation', 2));
+        expect((await project([restored.userMessage, restored.assistantMessage])).some(message => message.role === 'assistant')).toBe(true);
+        const web = new TaskSourceRun({ ...host, runId: 'web-run', runSourceSelection: { ...host.runSourceSelection, scope: 'web' } });
+        expect((await web.projectHistoryAsync(history)).some(message => message.role === 'assistant')).toBe(false);
+    });
+
     it.each([false, true])('retains authorized historical prose and effects without reviving old target identity; async=%s', async asynchronous => {
         const h = fixture();
         const oldIdentities = new TaskSourceResourceIdentities({ runId: 'run-1', getAbstractFileByPath: h.host.getFileByPath });

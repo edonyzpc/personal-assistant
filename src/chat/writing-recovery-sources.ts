@@ -99,7 +99,6 @@ export async function prepareWritingRecoverySources(
                 }
                 if (dependency.kind === 'vault') {
                     await verifyNote(dependency.path, dependency.via === 'memory');
-                    if (dependency.via === 'pagelet') lineageComplete = false;
                 } else if (dependency.kind === 'personal') {
                     await verifySource({ kind: 'personal', source: dependency.source });
                 } else if (dependency.kind === 'insight') {
@@ -124,7 +123,7 @@ export async function prepareWritingRecoverySources(
             for (const source of recordedGenerationSources(snapshot)) await verifySource(source);
             if (snapshot.task.state === 'unknown' || snapshot.personal.state === 'unknown'
                 || snapshot.insights.state !== 'none'
-                || snapshot.style.state === 'unknown' || snapshot.pagelet.state !== 'none') lineageComplete = false;
+                || snapshot.style.state === 'unknown' || snapshot.pagelet.state === 'unknown') lineageComplete = false;
             await verifyLineage(generationInputSnapshotInputLineage(snapshot));
         };
         const expectedImages = generationInput.images.map(image => `${image.ref.assetId}:${image.ref.contentHash}`);

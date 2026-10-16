@@ -13,6 +13,7 @@ import type { GenerationInputTaskSourceV2 } from '../src/ai-services/generation-
 import type { ImageAssetService } from '../src/chat/image-assets';
 import type { MessageImage } from '../src/chat/image-types';
 import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
+import { hashPageletContent } from '../src/pagelet/agent/anchor-snapshot';
 
 jest.mock('obsidian');
 afterEach(() => jest.restoreAllMocks());
@@ -79,7 +80,7 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked' | 'history-re
         { kind: 'vault', path: parentSourcePath, via: 'note' }]);
     const parent = await versions.create({ requestId: 'earlier', conversationId: 'conversation', messageId: 'earlier-message',
         turnIndex: 1, text: textOverride ?? 'Authorized parent draft', images: [],
-        ...(scopedParentScope || scenario === 'parent-ab' || readsHistory ? { generationInput: { schemaVersion: 2 as const, inputPurpose: 'writing' as const,
+        ...(scopedParentScope || scenario === 'parent-ab' || scenario === 'pagelet' || readsHistory ? { generationInput: { schemaVersion: 2 as const, inputPurpose: 'writing' as const,
             task: scopedParentScope ? { state: 'identified' as const, sources: [parentTaskSource] }
                 : { state: 'none' as const, sources: [] },
             personal: { state: 'none' as const }, insights: { state: 'none' as const },
@@ -104,11 +105,22 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked' | 'history-re
     let backgroundUpdated = false;
     let backgroundText = 'Authorized personal background';
     const images: MessageImage[] = [1, 2].map(ordinal => ({ ref: { assetId: `photo-${ordinal}`, contentHash: String(ordinal).repeat(64) }, ordinal, label: `Photo ${ordinal}` }));
+    const pageletContents: Record<string, string> = { 'notes/anchor.md': '# Original anchor', 'notes/source.md': '# Actual source input' };
+    const pageletFiles = Object.entries(pageletContents).map(([path, content], index) => ({ path,
+        extension: 'md', stat: { ctime: 1, mtime: index === 0 ? 10 : 30, size: content.length } }));
+    const pageletSnapshots = await Promise.all(pageletFiles.map(async file => ({ path: file.path,
+        mtime: file.stat.mtime, size: file.stat.size, contentHash: await hashPageletContent(pageletContents[file.path]) })));
+    let pageletEpoch = 'original-pagelet-source-epoch';
+    const changePageletSource = () => { pageletContents['notes/source.md'] += '\nLater edit';
+        pageletFiles[1].stat.mtime += 1; pageletEpoch = `changed-${pageletFiles[1].stat.mtime}`; };
     const pagelet: PageletChatHandoffContext = { version: 1, id: 'pagelet-1', body: 'Source-backed handoff',
-        anchor: { path: 'notes/anchor.md', mtime: 10, size: 20, contentHash: 'a'.repeat(64) },
-        sources: [{ path: 'notes/source.md', mtime: 30, size: 40, contentHash: 'b'.repeat(64) }],
+        bodyHash: await hashPageletContent('Source-backed handoff'),
+        anchor: pageletSnapshots[0], sources: [pageletSnapshots[1]],
         sourceRefs: [{ path: 'notes/source.md' }], webUrls: [], whyNow: ['Relevant now'],
-        triggerReason: 'manual', preparedAt: 1, pipelineVersion: 'pagelet-v1' };
+        triggerReason: 'manual', preparedAt: 1, pipelineVersion: 'pagelet-deep-discover-v4',
+        inputEvidence: { lineage: completeInputLineage(pageletSnapshots.map(source => ({ kind: 'vault' as const,
+            path: source.path, via: 'pagelet' as const }))), sourceSnapshots: pageletSnapshots,
+            sourceRecords: [], vaultObservations: [] } };
     const imageMode = scenario === 'image-subset' || scenario === 'image-empty';
     const release = jest.fn();
     let imageCurrent = true;
@@ -127,11 +139,14 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked' | 'history-re
             memoryEnabled: false, licenseTier: 'free', statisticsVaultId: 'fixture',
             retrievalOptimizationFlags: { lexicalProfile: false, strictReranker: false, graphPpr: false, relaxedRecovery: false } },
         app: { workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
-            vault: { getMarkdownFiles: () => [], getAbstractFileByPath: (path: string) =>
-                path === parentSourcePath && parentSourceLive ? parentSourceFile : null, cachedRead: async () => '' },
+            vault: { getMarkdownFiles: () => scenario === 'pagelet' ? pageletFiles : [], getAbstractFileByPath: (path: string) =>
+                path === parentSourcePath && parentSourceLive ? parentSourceFile
+                    : scenario === 'pagelet' ? pageletFiles.find(file => file.path === path) ?? null : null,
+                cachedRead: async (file: { path: string }) => scenario === 'pagelet' ? pageletContents[file.path] ?? '' : '' },
             metadataCache: { getFileCache: () => null } },
         memorySearch: { ensureReadyForChat: async () => ({ decision: 'answer-now' }), searchHybrid: async () => [], getChunksByPath: async () => [] },
         getAPIToken: async () => 'fixture', log: jest.fn(), isOperationsAgentEnabled: false,
+        ...(scenario === 'pagelet' ? { getMemoryEvidenceEpoch: () => pageletEpoch } : {}),
         isDataBoundaryAllowedPath: (path: string) => path !== parentSourcePath || parentPermission,
         captureWritingStyleSourceValidity: async () => ({ isCurrent: () => styleCurrent }),
         getMemoryExtractionPromptContext: () => {
@@ -167,6 +182,7 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked' | 'history-re
             // Exercise the actual runtime dispatch callback after serialization,
             // with the same local-admission wrapper used by both transports.
             if (scenario === 'history-read-revoked' && inputs.length === 1) historySourceCurrent = false;
+            if (scenario === 'pagelet' && inputs.length === 1) changePageletSource();
             if (backgroundAdmission) runProviderAdmission(options?.onProviderRequestStart);
             else options?.onProviderRequestStart?.();
             const text = String(input);
@@ -251,7 +267,7 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked' | 'history-re
             ...(scenario === 'pagelet' ? { pageletHandoff: pagelet } : {}),
             ...(scenario === 'new-topic' ? { writingContext: { parentVersionId: parent.id, text: parent.text,
                 textHash: parent.textHash, associatedImages: [] } } : {}),
-            ...(scopedParentScope || scenario === 'parent-ab' ? { runSourceSelection: { schemaVersion: 1 as const, scope: scopedParentScope ?? 'notes',
+            ...(scopedParentScope || scenario === 'parent-ab' || scenario === 'pagelet' ? { runSourceSelection: { schemaVersion: 1 as const, scope: scopedParentScope ?? 'notes',
                 selectionId: 'writing-parent-scope', userMessageId: 'writing-parent-user' } } : {}),
             ...(imageMode ? { images, imageAssetService: imageService as unknown as ImageAssetService,
                 imageCapability: { get: () => 'supported' as const, onSuccess: jest.fn(), onError: jest.fn() } } : {}),
@@ -269,6 +285,7 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked' | 'history-re
     return { events, lifecycle, inputs, serializedInputs, messageInputs, images, pagelet, parent, parentB, schemas, prepareStyle, createModel, error, retryErrors, log: host.log as jest.Mock,
         revokeStyle: () => { styleCurrent = false; }, revokePersonal: () => { personalCurrent = false; },
         revokeImage: () => { imageCurrent = false; },
+        changePageletSource,
         revokeParentSource: () => { parentSourceLive = false; }, revokeParentPermission: () => { parentPermission = false; },
         revokeScope: () => { scopeCurrent = false; },
         setDebug: (enabled: boolean) => { host.settings.debug = enabled; } };
@@ -347,17 +364,24 @@ describe('native writing context runtime integration', () => {
         expect(result.events.some(event => event.kind === 'writing-artifact')).toBe(true);
     });
 
-    it('records Pagelet backing hashes without claiming its rendered body is reload-verifiable', async () => {
+    it('records the admitted full Pagelet body and source ancestry while retaining its accepted snapshot after edits', async () => {
         const result = await runScenario('pagelet');
         const artifact = result.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> => event.kind === 'writing-artifact');
+        expect(result.error).toBeUndefined();
         expect(result.inputs[1]).toContain('Source-backed handoff');
         expect(artifact?.generationInput?.pagelet).toEqual({
-            state: 'unknown', id: result.pagelet.id, pipelineVersion: result.pagelet.pipelineVersion,
-            anchor: { path: result.pagelet.anchor.path, mtime: 10, size: 20,
-                contentHash: { algorithm: 'unspecified', value: 'a'.repeat(64) } },
-            sources: [{ path: result.pagelet.sources[0].path, mtime: 30, size: 40,
-                contentHash: { algorithm: 'unspecified', value: 'b'.repeat(64) } }],
+            state: 'identified', id: result.pagelet.id, pipelineVersion: result.pagelet.pipelineVersion,
+            bodyHash: { algorithm: 'sha256', value: result.pagelet.bodyHash },
+            anchor: { ...result.pagelet.anchor, contentHash: { algorithm: 'sha256', value: result.pagelet.anchor.contentHash } },
+            sources: result.pagelet.inputEvidence?.sourceSnapshots.map(source => ({ ...source,
+                contentHash: { algorithm: 'sha256', value: source.contentHash } })),
         });
+        if (!artifact?.generationInput) throw new Error('Missing admitted Pagelet Writing generation input');
+        expect(generationInputSnapshotInputLineage(artifact.generationInput)).toMatchObject({ completeness: 'complete',
+            dependencies: expect.arrayContaining(result.pagelet.inputEvidence?.lineage.dependencies ?? []) });
+        expect(artifact.isSourceCurrent?.()).toBe(true);
+        result.changePageletSource();
+        expect(artifact.isSourceCurrent?.()).toBe(true);
     });
     it('keeps a generation receipt after cleanup and later style edits', async () => {
         const result = await runScenario('complete');

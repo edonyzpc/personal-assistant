@@ -65,6 +65,8 @@ import {
     type PageletDeepDiscoverCommitSeal,
     type PageletDeepDiscoverControllerRequest,
     type PageletDeepDiscoverControllerResult,
+    type PageletDeepDiscoverReadResult,
+    type PageletDeepDiscoverActivity,
     type PageletDeepDiscoverSmokeSnapshot,
 } from "./agent";
 import { AttentionAwareDeliveryStore } from "./attention";
@@ -172,8 +174,53 @@ export class DeepDiscoverPluginIntegration {
     private initialization: Promise<PageletDeepDiscoverScheduler | null> | null = null;
     private initializationIdentity: string | null = null;
     private controllerEpoch = 0;
+    private nextActivitySequence = 0;
+    private readonly readingActivity = new Map<string, PageletDeepDiscoverActivity>();
+    private readonly activityListeners = new Set<(path: string) => void>();
 
     constructor(private readonly dependencies: DeepDiscoverPluginIntegrationDependencies) {}
+
+    async readDeepDiscover(input: { path: string; signal?: AbortSignal }): Promise<PageletDeepDiscoverReadResult> {
+        const scheduler = this.scheduler;
+        const epoch = this.controllerEpoch;
+        const policy = this.getPolicyIdentityKey();
+        if (!scheduler || !this.dependencies.isRuntimeCurrent() || !this.dependencies.isPageletEnabled()
+            || this.controllerPolicyIdentitySnapshot !== policy) {
+            return { status: "unavailable", reason: "not-initialized" };
+        }
+        const result = await scheduler.readCachedCollection(input.path, input.signal);
+        if (input.signal?.aborted || this.scheduler !== scheduler || this.controllerEpoch !== epoch
+            || !this.dependencies.isRuntimeCurrent() || !this.dependencies.isPageletEnabled()
+            || this.controllerPolicyIdentitySnapshot !== policy || this.getPolicyIdentityKey() !== policy) {
+            return { status: "stale", reason: "reading-context-changed" };
+        }
+        return result;
+    }
+
+    getDeepDiscoverActivity(path: string): PageletDeepDiscoverActivity {
+        if (!this.dependencies.isRuntimeCurrent() || !this.dependencies.isPageletEnabled()) {
+            return { phase: "idle", requestId: null };
+        }
+        if (this.scheduler && this.controllerPolicyIdentitySnapshot !== this.getPolicyIdentityKey()) {
+            return { phase: "idle", requestId: null };
+        }
+        const latest = this.readingActivity.get(path);
+        const scheduled = this.scheduler?.getActivity(path);
+        if (scheduled && scheduled.phase !== "idle"
+            && (!latest || scheduled.requestId === latest.requestId)) return scheduled;
+        return latest ?? { phase: "idle", requestId: null };
+    }
+
+    subscribeDeepDiscoverActivity(listener: (path: string) => void): () => void {
+        this.activityListeners.add(listener);
+        return () => { this.activityListeners.delete(listener); };
+    }
+
+    private notifyActivity(path: string): void {
+        for (const listener of this.activityListeners) {
+            try { listener(path); } catch { /* Reading cannot interrupt a discovery run. */ }
+        }
+    }
 
     getSmokeEvidence(): PageletDeepDiscoverSmokeEvidenceStore {
         return (this.smokeEvidence ??= new PageletDeepDiscoverSmokeEvidenceStore());
@@ -215,6 +262,7 @@ export class DeepDiscoverPluginIntegration {
 
     disposeFeature(): void {
         this.rateLimiter = null;
+        this.activityListeners.clear();
     }
 
     getRateLimiter(): PageletRateLimiter {
@@ -235,6 +283,38 @@ export class DeepDiscoverPluginIntegration {
     }
 
     async runPageletDeepDiscover(
+        input: PageletDeepDiscoverControllerRequest,
+    ): Promise<PageletDeepDiscoverControllerResult> {
+        const requestId = `pagelet-${this.controllerEpoch}-${++this.nextActivitySequence}`;
+        this.readingActivity.set(input.path, { phase: "preparing", requestId });
+        this.notifyActivity(input.path);
+        let result: PageletDeepDiscoverControllerResult;
+        try {
+            result = await this.executeDeepDiscover({ ...input, requestId });
+        } catch (error) {
+            if (this.readingActivity.get(input.path)?.requestId === requestId) {
+                this.readingActivity.set(input.path, {
+                    phase: "idle", requestId, terminal: { status: "error", reason: "deep-discover-failed" },
+                });
+                this.notifyActivity(input.path);
+            }
+            throw error;
+        }
+        if (this.readingActivity.get(input.path)?.requestId === requestId) {
+            this.readingActivity.set(input.path, {
+                phase: "idle", requestId,
+                terminal: {
+                    status: result.status,
+                    ...("reason" in result ? { reason: result.reason } : {}),
+                    ...("runtimeCompletion" in result ? { runtimeCompletion: result.runtimeCompletion } : {}),
+                },
+            });
+            this.notifyActivity(input.path);
+        }
+        return result;
+    }
+
+    private async executeDeepDiscover(
         input: PageletDeepDiscoverControllerRequest,
     ): Promise<PageletDeepDiscoverControllerResult> {
         const automaticEpoch = this.dependencies.getBackgroundDiscoveryState().epoch;
@@ -297,6 +377,10 @@ export class DeepDiscoverPluginIntegration {
             anchorSnapshot,
             ...(input.triggerReason !== "explicit" ? { isAutomaticRequestCurrent } : {}),
         };
+        // Scheduling is now real; its queue/runtime phase replaces preparation.
+        if (this.readingActivity.get(input.path)?.requestId === input.requestId) {
+            this.readingActivity.set(input.path, { phase: "idle", requestId: input.requestId ?? null });
+        }
         if (input.triggerReason === "explicit") {
             return scheduler.runNow({
                 ...request,
@@ -335,6 +419,7 @@ export class DeepDiscoverPluginIntegration {
     }
 
     resetController(): void {
+        const paths = [...this.readingActivity.keys()];
         this.controllerEpoch += 1;
         this.smokeEvidence?.clear();
         this.scheduler?.dispose();
@@ -342,6 +427,8 @@ export class DeepDiscoverPluginIntegration {
         this.controllerPolicyIdentitySnapshot = null;
         this.initialization = null;
         this.initializationIdentity = null;
+        this.readingActivity.clear();
+        for (const path of paths) this.notifyActivity(path);
     }
 
     async getOrCreateScheduler(): Promise<PageletDeepDiscoverScheduler | null> {
@@ -569,10 +656,12 @@ export class DeepDiscoverPluginIntegration {
             },
             onResult: handleRuntimeResult,
         });
-        return new PageletDeepDiscoverScheduler({
+        const scheduler = new PageletDeepDiscoverScheduler({
             controller,
             delayMs: 3_000,
         });
+        scheduler.subscribeActivity((path) => this.notifyActivity(path));
+        return scheduler;
     }
 
     async loadWebCapabilities(

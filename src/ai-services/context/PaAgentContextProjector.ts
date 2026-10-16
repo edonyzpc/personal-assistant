@@ -254,7 +254,12 @@ export function formatInjectedContext(context: PaAgentInjectedContext | undefine
     if (context.writingStyleContext) blocks.push(context.writingStyleContext);
     if (context.pageletHandoff) {
         const handoff = createPageletChatHandoffContext(context.pageletHandoff);
-        const serialized = JSON.stringify(handoff, null, 2);
+        // Host-only ancestry stays with admission and Writing records. The
+        // provider receives the visible attachment, never observation logs.
+        const visible = { ...handoff };
+        delete visible.inputEvidence;
+        delete visible.bodyHash;
+        const serialized = JSON.stringify(visible, null, 2);
         blocks.push(`<pagelet_handoff context_only="true" source="pagelet_deep_discover" grants_tool_authority="false" grants_write_authority="false" grants_network_authority="false" grants_external_action_authority="false" format="json">\n${escapeTaggedBoundary(
             serialized,
             "pagelet_handoff",
