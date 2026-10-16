@@ -111,8 +111,11 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   insight text；重复字段只输出一次，不加入隐藏 diagnostics、action、provider metadata
   或来源路径。
 - B-124/REQ-03: v1 卡片固定为 `540×720` CSS px、DPR 2 PNG（`1080×1440`），提供
-  neutral paper light 与 warm dark 两个由 Modal 打开时当前主题选定的样式，并保持可见
-  纸张纤维纹理。每页有一致内容区、细 divider、PA 图形 logo + `Personal Assistant`
+  纸灰 light 与夜松墨 dark 两个由 Modal 打开时当前主题选定的样式；两者均使用固定
+  十字折痕和纤维纸纹的整张本地背景，深色高光/暗面保持松墨色相，不叠加旧平铺噪声。
+  正文、引用、强调和细线采用[已确认配色](../../development/active/share-card-sharer/paper-folds-design.md)，
+  纸面就绪失败时可重试，不静默导出缺失纸面的卡片；不增加运行时 Shader 或远程请求。
+  每页有一致内容区、细 divider、PA 图形 logo + `Personal Assistant`
   品牌和必要页码；预览同时响应 modal/viewport 的宽度和高度，常见窗口应与保存路径、
   主要操作同屏，极小窗口优先保证操作可见并允许预览滚动。点击预览可放大当前页
   查看细节，关闭后返回原状态；放大仅影响检查视图，导出尺寸不受预览缩放影响。

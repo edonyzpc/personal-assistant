@@ -9,6 +9,92 @@ Product spec: [PA Share Card Product Spec](../../../product/specs/pa-share-card-
 
 ## Current Snapshot
 
+- Authorization: 用户于 2026-10-16 明确要求将最后预览的深浅双主题“纸灰 + 夜松墨”
+  折痕方案先落设计文档，再完成代码优化和必要验证；避免过度设计、过度测试。
+  随后用户明确要求“代码修改提交master”，追加授权本轮代码、测试、生成样式和配套
+  文档的本地 master commit；不含 push、release 或 closeout，历史其他修订的远程授权不沿用。
+- Baseline: `master` / `d4af02e62eb52378a91a4044de0fcb60fa90c607`，初始工作区 clean。
+- Current phase: 本轮[设计文档](./paper-folds-design.md)、双主题纸面/配色、定向测试、统一
+  检查和 test 部署后 PNG/API/截图观察已完成，主控独立核对无新增阻断问题。
+  代码已提交本地 master：`4cbfb43b`，设计及验收记录以配套 docs commit 同步交付。
+  原生 Copy/Save 点击证据仍缺失，不据此关闭原有 track 的交互缺口。
+- Next action: 本轮无新增实施待办；保留本地 master 交付，复用已有验证，不重复 full Jest、
+  长文或设备矩阵。历史原生交互只在具备工具和具体后续请求时补验；push/closeout 未获本轮授权。
+- Blocker / decision needed: 无未定产品选择或当前实现阻断。当前机器的 GLM 通道当天已确认周/月额度
+  耗尽，原始 `preflight-auth-host.jsonl` 保留于 `/tmp/pa-share-card-controls-20261016/`，
+  reset 提示为 `2026-10-17 10:14:30`；复用有效证据，不重复请求。按已批准工作流由 GPT
+  接管，不将 GPT 描述为 GLM；主控只写 docs，worker 只写指定 source/tests/CSS。
+- Last verified behavior: 最终 build 已部署/reload 到精确 test vault；实际 Modal 显示双主题
+  纸面，背景 SHA 与冻结原 PNG 相同；本地 capture API 的两张 PNG 均 `1080×1440`，
+  单页32px、body 585/585无overflow，PA/EZ/引用完整。light→dark→light重复打开成功。
+
+## 2026-10-16 · Paper Folds Delivery
+
+沿用 B-124/REQ-03 / B-124/AC-04、DEC-026 和当前 Product Spec；单独设计文档用于直接
+查看最终完整预览，不创建新工作项、Plan、主题框架或参数面板。
+
+| Requirement / risk | Minimum evidence and pass condition | Status / rerun trigger |
+| --- | --- | --- |
+| REQ-03 / AC-04 双主题纸面、配色 | 冻结 PNG SHA 与 design 相同；renderer light/dark 根背景为 data URI、无旧 noise；source focused 和实际 PNG观感一致 | PASS（source、生产部署PNG、应用DOM/截图）；纸面/CSS/theme 映射改变才重验 |
+| REQ-03 / REQ-08 / AC-04 / AC-09 就绪、恢复 | decode 失败可重试、重复页复用；renderer 等待受原取消/超时控制，不成功输出缺背景页 | PASS（自动化和独立源码核对）；loader/renderer 生命周期变化才重验 |
+| REQ-06 / REQ-09 / AC-07 / AC-10 导出边界 | 现有 export focused；保持 self-contained 和 SnapDOM 参数；实际双主题 PNG 均 `1080×1440` | PASS（focused和真实capture API）；原生Copy/Save点击仍未覆盖；export/资源边界变化才扩验 |
+| 验收范围 | lint、production build、docs、社区源码扫描、diff；test 部署身份和受影响视觉观察 | PASS；API修正仅重跑受影响assets/lint/build，其他有效证据复用；不关闭历史缺口 |
+
+本轮原始实现/检查记录：`/tmp/pa-share-card-paper-folds-20261016/`。实施与验收结果取得后
+在本节更新，不另建 report/closeout。未变的入口、分页、正文内容、设备能力均不扩验。
+
+### Implementation And Focused Evidence
+
+- 实际 writer 为 GPT，主控负责 docs 和独立验收；冻结 PNG 精确内嵌，无重采样或新增
+  依赖。`share-card-paper.ts` 仅负责主题取图和 Document/theme decode Promise 复用；
+  renderer 复用原 `awaitActive`，失败映射现有可恢复 ReadinessError。旧 noise 资源、DOM
+  和 CSS 已移除；exporter、paginator、字体、Modal、正文 Xerox 和几何没有改变。
+- 首次 focused：assets、renderer、export、print-style 四个 suite 共 97 tests PASS，
+  自然 exit 0，日志 `worker-focused.log`。print-style 仅因直接使用 renderer 而加局部
+  decode mock；既有断言未弱化。renderer 原取消用例等到 Markdown 真正开始再取消，
+  对齐新增的前置 decode await。
+- 首次 production build PASS。lint 准确指出原生 createElement 需改用 Obsidian
+  `ownerDocument.win.createEl("img")`；diff check 指出旧 noise 删除后的 EOF 空行。
+  修正后仅重跑受影响 assets suite，8 tests PASS、自然 exit 0（`worker-assets-r2.log`），
+  其余三套无相关输入变化，不重复运行；统一 lint/build 对最终输入重验。
+- 第三方 notices 检查 PASS，45 runtime packages / 19 bundled resources；保留生成工具
+  LICENSE/NOTICE 为来源，不加入 Shader runtime。社区源码注入扫描无匹配，rg exit 1；
+  source API/EOF 修正不触及该类调用，复用结果。最终 diff check PASS。
+
+### Final Gate And App Observation
+
+- 最终 `lint-r2.log`、`build-r2.log` 均自然 exit 0；production build 已覆盖 TypeScript 和
+  Tailwind，不另跑 tsc。docs:check PASS（308 Markdown / 3987 local links），diff check PASS。
+  未运行全仓 full Jest、coverage、真实 iPhone、长文或额外性能测试；改变的是固定卡面，
+  没有入口、布局、分页、媒体或设备专属行为的新风险。
+- `make deploy-current` PASS（`deploy.log`），只在当前 focused/lint/build 已通过后复用；
+  build身份由脚本验证，再复制到 `/mnt/code/personal-assistant/test/.obsidian/plugins/personal-assistant/`。
+  实际 CLI target 为 `/mnt/code/personal-assistant/test`，Obsidian 1.14.4、PA 2.10.10，
+  plugin reload 后才进行本轮合成卡片观察。
+- 使用真实 Modal/renderer/exporter 的 capture API，light→dark→light 开关各一次。
+  两主题纸面 SHA 与 design 一致，`no-repeat` / `100% 100%`、无旧 noise，单页32px、
+  body client/scroll 均585；引用和细线颜色匹配设计，PA/EZ完整，PNG均1080×1440。
+  实际输出为本聊天 `share-card-paper-implementation/{light,dark}-actual.png`，应用截图
+  为同目录 `{light,dark}-app.png`。`app-dark.log`、`app-reopen.log` 和 `app-cleanup.log`
+  保留原始结果。CLI 会提前返回 async eval，故以探针完成记录、实际文件和最终状态
+  判断，不将 CLI exit0 单独作为成功。
+- 本机没有原生窗口点击/键入工具，本轮未操作 Copy/Save 按钮；上述结果是应用
+  DOM/截图与 capture API 证据，不标为完整 UI/UX 交互 PASS。错误缓冲为
+  `No errors captured`，全程 debug=false，因此不声称完整 console 捕获。
+- cleanup 已核对原主题light、mobile=false、debug=false、原activeLeaf不变，
+  Modal=0且临时app probe全局对象已删除。未调用AI、未改笔记、未持久化临时主题，
+  验证阶段未提交/推送/发版；后续本地提交见本节交付记录。保留本节引用的原始检查与
+  应用证据，清除不再需要的临时探针脚本。
+
+### Local Master Delivery
+
+2026-10-16，按用户新增授权提交本地 master：`4cbfb43bb253457f9af4ab69b607564ed4b090d4`
+（`feat(share-card): add paper folds and night pine palette`），13个实现、测试、生成样式和
+资源来源路径。设计、预览图片、权威契约与本记录采用独立 docs commit；未推送或发布。
+提交不改变已验证输入，不重复运行代码测试；文档授权记录更新后重跑 docs:check 和 diff check。
+
+## Historical Snapshot — Controls And Pagination
+
 - Authorization: 用户于 2026-10-15 确认当前预览 EZ 大小可用，并要求实现右下角默认
   `by` + EZ SVG、自定义名字替换、清空恢复；同日追加授权修复 `cat` Share Card 已定位
   的分页故障及必要验证，并明确批准正文统一编号、脚注正文集中整组末尾继续分页。

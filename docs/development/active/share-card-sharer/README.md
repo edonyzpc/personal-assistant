@@ -20,6 +20,7 @@ Tracker: [Development Tracker](./tracker.md)
 ## Artifacts
 
 - Tracker: [Development Tracker](./tracker.md)
+- Approved visual design: [纸灰与夜松墨折痕](./paper-folds-design.md)
 - Current product contract: [Share Card Product Spec](../../../product/specs/pa-share-card-product-spec.md)
 - Current architecture contract: [Share Card Architecture](../../../architecture/share-card-architecture.md)
 

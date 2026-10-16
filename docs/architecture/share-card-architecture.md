@@ -206,8 +206,10 @@ data URL，必须在测量前就绪。SnapDOM 的 document-wide font discovery �
 ## Current Visual Contract
 
 - Modal 打开时锁定当前 light/dark theme；后续系统主题变化不改变本批卡片。
-- Light 为中性灰纸渐变和深灰正文，Dark 为暖黑棕纸和米白正文；两者共享莓红强调色、
-  细 divider、枝叶角饰、图形 logo 与 `Personal Assistant` 品牌文字。
+- Light 为纸灰纸面和深墨正文，Dark 为夜松墨纸面和米白正文；引用文字、强调和
+  细 divider 独立配色，枝叶角饰、图形 logo 与 `Personal Assistant` 品牌不变。
+  深浅主题均采用固定十字折痕和纤维；配色、资源身份与完整效果见
+  [纸面设计](../development/active/share-card-sharer/paper-folds-design.md)。
 - 页脚左侧保留 PA 图形 logo、`Personal Assistant` 与既有 source hint；右侧组依次容纳
   多页页码和分享者署名。默认署名为低强调斜体 `by` + EZ SVG，EZ 为 `32×24` CSS px，
   保持原始比例和字形；Light 用 `#233A34`，Dark 只换为主题可读墨色，不改变几何。
@@ -216,8 +218,10 @@ data URL，必须在测量前就绪。SnapDOM 的 document-wide font discovery �
   不按字符数截断输入。页码、品牌、来源与署名各有空间；测量、预览和捕获使用
   一致页脚预留，不通过另行缩字、裁剪正文或 export-only 排版消除冲突。署名与其他
   footer 元素一并排除 Xerox 文字滤镜。
-- 内嵌的纸纤维 raster data URI 在卡面重复铺设：Light 使用 multiply，Dark 使用 screen；
-  不读取外部纹理、字体或品牌资源。
+- 两张原生 `540×720` PNG 作为内嵌 data URI 按主题设置于卡片根背景；正常混合、
+  opacity 1、no-repeat、`100% 100%`，不追加旧 noise 层。创建最终页前按 owner Document /
+  theme 复用图片解码，等待受 renderer 现有取消和超时控制，解码失败不留成功缓存，
+  沿可恢复错误流程处理。不读取外部纹理、字体或品牌资源，不在运行时生成 Shader。
 - 内容区在留白内垂直居中；多页显示稳定页码。Modal 的缩略图按可用宽高缩放，
   为路径与操作保留空间；极小窗口中操作优先可见。点击预览将同一张已渲染卡片移入
   只读放大层，以原 CSS 尺寸检查并允许滚动，关闭后回到缩略图与原焦点。固定尺寸
