@@ -3,6 +3,7 @@ import {
     serializePageletFindings,
 } from "../src/share-card/share-card-markdown";
 import { ShareCardPaginationError } from "../src/share-card/share-card-paginator";
+import MarkdownIt from "markdown-it";
 
 describe("Share Card Markdown preparation", () => {
     it("normalizes CRLF without stripping leading thematic/frontmatter-like text", () => {
@@ -232,6 +233,39 @@ describe("Share Card Markdown preparation", () => {
 });
 
 describe("Share Card footnote projection", () => {
+    it.each([
+        ["table", "| A | B |\n| --- | --- |\n| x | y |"],
+        ["thematic break", "---\nNext paragraph."],
+        ["setext heading", "A heading\n---\nNext paragraph."],
+    ])("preserves a leading %s in a footnote as rendered Markdown", (_label, body) => {
+        const parser = new MarkdownIt();
+        const { markdown } = prepareShareCardMarkdown([
+            "Body[^note].",
+            "",
+            `[^note]: ${body.replace(/\n/gu, "\n    ")}`,
+        ].join("\n"));
+        const rendered = parser.render(markdown);
+
+        expect(rendered).toContain(parser.render(body));
+        expect(rendered).toContain("<p>[1]</p>");
+    });
+
+    it("recognizes definitions after a heading boundary and single-word link-like bodies", () => {
+        const { markdown } = prepareShareCardMarkdown([
+            "An unmatched ` before a heading.",
+            "# Another block",
+            "[^note]: A note with a trailing `.",
+            "",
+            "Body[^note] and [^word].",
+            "",
+            "[^word]: word",
+        ].join("\n"));
+
+        expect(markdown).toContain("Body\\[1\\] and \\[2\\].");
+        expect(markdown).toContain("\\[1\\] A note with a trailing `.");
+        expect(markdown).toContain("\\[2\\] word");
+    });
+
     it("numbers first references across the batch and appends every definition once after the body", () => {
         const input = [
             "[^orphan-first]: Unreferenced first definition.",
@@ -307,12 +341,22 @@ describe("Share Card footnote projection", () => {
     it.each([
         ["fenced code", "```\n[^real]: This is a literal definition.\nUse [^real] literally.\n```"],
         ["inline code", "Use `[^real]` and `[^real]: literal definition` as examples."],
+        ["multiline inline code", "Use `first line [^real]\nsecond line [^real]` as an example."],
+        ["multiline code with a same-named definition", "Code: `start\n[^real]: A literal definition.\nend`"],
         ["indented code", "    [^real]: This is a literal definition.\n    Use [^real] literally."],
         ["escaped reference", "Escaped \\[^real] is literal."],
         ["raw HTML block", "<div>\n[^real]: This stays HTML content.\n<span>[^real]</span>\n</div>"],
         ["inline HTML", "<span title=\"[^real]\">[^real]</span>"],
         ["link destination", "[a link](https://example.com/path/[^real])"],
         ["reference destination", "[destination]: https://example.com/path/[^real]"],
+        ["image alt text", "![diagram [^real]](https://example.com/diagram.png)"],
+        ["reference image alt text", "![diagram [^real]][image]\n\n[image]: https://example.com/diagram.png"],
+        ["image destination", "![diagram](https://example.com/image/[^real].png)"],
+        ["angle destination", "[link](<https://example.com/a)[^real]>)"],
+        ["quoted title", "[link](https://example.com \"literal ) [^real]\")"],
+        ["continued reference destination", "[ref]:\n  https://example.com/[^real]"],
+        ["nested inline HTML", "Keep <span><span>literal</span> [^real]</span>."],
+        ["inline code within image alt text", "![a `]` [^real]](data:image/png;base64,AAAA)"],
     ])("does not rewrite footnote-looking text in %s", (_label, literal) => {
         const { markdown } = prepareShareCardMarkdown([
             literal,
@@ -419,73 +463,6 @@ describe("Share Card footnote projection", () => {
         expect(markdown).toContain("Body cites code examples\\[1\\].");
     });
 
-    it("preserves a footnote-looking literal throughout a multiline inline code span", () => {
-        const literal = "`first line [^known]\nsecond line [^known]`";
-        const { markdown } = prepareShareCardMarkdown([
-            `Use ${literal} and a visible note[^known].`,
-            "",
-            "[^known]: The actual note detail.",
-        ].join("\n"));
-
-        expect(markdown).toContain(literal);
-        expect(markdown).toContain("and a visible note\\[1\\].");
-        expect(markdown.split("The actual note detail.")).toHaveLength(2);
-    });
-
-    it("preserves footnote-looking image alt text and Markdown destinations", () => {
-        const literals = [
-            "![diagram [^known]](https://example.com/diagram.png)",
-            "![reference diagram [^known]][image]",
-            "[a link](https://example.com/path/[^known])",
-            "![an asset](https://example.com/image/[^known].png)",
-            "[image]: https://example.com/reference/[^known].png",
-        ];
-        const { markdown } = prepareShareCardMarkdown([
-            "Body has the actual reference[^known].",
-            "",
-            ...literals,
-            "",
-            "[^known]: Actual visible footnote detail.",
-        ].join("\n"));
-
-        for (const literal of literals) expect(markdown).toContain(literal);
-        expect(markdown).toContain("Body has the actual reference\\[1\\].");
-        expect(markdown.split("Actual visible footnote detail.")).toHaveLength(2);
-    });
-
-    it.each([
-        ["angle destination", "[link](<https://example.com/a)[^known]>)"],
-        ["quoted title", "[link](https://example.com \"literal ) [^known]\")"],
-        ["continued reference destination", "[ref]:\n  https://example.com/[^known]"],
-    ])("preserves footnote-looking text in a %s", (_label, literal) => {
-        const { markdown } = prepareShareCardMarkdown([
-            "Body has the actual reference[^known].",
-            "",
-            literal,
-            "",
-            "[^known]: One actual known definition.",
-        ].join("\n"));
-
-        expect(markdown).toContain(literal);
-        expect(markdown).toContain("Body has the actual reference\\[1\\].");
-        expect(markdown.split("One actual known definition.")).toHaveLength(2);
-    });
-
-    it("preserves footnote-looking content after a nested same-tag inline HTML element", () => {
-        const literal = "Keep <span><span>literal</span> [^known]</span>.";
-        const { markdown } = prepareShareCardMarkdown([
-            literal,
-            "",
-            "Body has the actual reference[^known].",
-            "",
-            "[^known]: One actual known definition.",
-        ].join("\n"));
-
-        expect(markdown).toContain(literal);
-        expect(markdown).toContain("Body has the actual reference\\[1\\].");
-        expect(markdown.split("One actual known definition.")).toHaveLength(2);
-    });
-
     it("moves a space-plus-tab continuation into the final footnote with its Markdown structure", () => {
         const prepared = prepareShareCardMarkdown([
             "Body has the actual reference[^known].",
@@ -507,21 +484,6 @@ describe("Share Card footnote projection", () => {
         expect(prepared.markdown.split("Continued footnote quote.")).toHaveLength(2);
         expect(quoteLine).toMatch(/^> Continued footnote quote\.$/u);
         expect(prepared.markdown).toContain("Body has the actual reference\\[1\\].");
-    });
-
-    it("does not end image alt parsing at a closing bracket inside inline code", () => {
-        const literal = "![a `]` [^known]](data:image/png;base64,AAAA)";
-        const { markdown } = prepareShareCardMarkdown([
-            literal,
-            "",
-            "Body has the actual reference[^known].",
-            "",
-            "[^known]: One actual known definition.",
-        ].join("\n"));
-
-        expect(markdown).toContain(literal);
-        expect(markdown).toContain("Body has the actual reference\\[1\\].");
-        expect(markdown.split("One actual known definition.")).toHaveLength(2);
     });
 
     it("leaves content without footnotes unchanged, including ordinary link and image references", () => {

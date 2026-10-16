@@ -1,5 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
+import MarkdownIt from "markdown-it";
 import {
     findShareCardMarkdownDestinationEnd,
     ShareCardPaginationError,
@@ -552,6 +553,8 @@ interface ShareCardFootnoteDefinition {
     body: string;
 }
 
+const footnoteBlockParser = new MarkdownIt({ html: true });
+
 /** Reuse the preparation scanner so literal code and raw HTML keep their ownership. */
 function ordinaryMarkdownLineIndexes(markdown: string): Set<number> {
     const indexes = new Set<number>();
@@ -594,7 +597,7 @@ function markdownLabelEnd(source: string, start: number): number {
 /** Replace only ordinary inline references, never code, HTML or link destinations. */
 function replaceInlineFootnoteReferences(
     source: string,
-    numberFor: (label: string) => number | undefined,
+    numberFor: (label: string, sourceOffset: number) => number | undefined,
 ): string {
     let output = "";
     let cursor = 0;
@@ -648,7 +651,7 @@ function replaceInlineFootnoteReferences(
         const reference = source.startsWith("[^", cursor)
             ? /^\[\^([^\]\s]+)\]/u.exec(source.slice(cursor)) : null;
         if (reference) {
-            const number = numberFor(reference[1]);
+            const number = numberFor(reference[1], cursor);
             output += number === undefined ? reference[0] : `\\[${number}\\]`;
             cursor += reference[0].length;
         } else {
@@ -657,6 +660,44 @@ function replaceInlineFootnoteReferences(
         }
     }
     return output;
+}
+
+function footnoteDefinitionCandidates(
+    markdown: string,
+    lines: readonly string[],
+): Map<number, RegExpExecArray> {
+    const ordinary = ordinaryMarkdownLineIndexes(markdown);
+    const candidates = new Map<number, RegExpExecArray>();
+    for (const [index, line] of lines.entries()) {
+        const match = ordinary.has(index)
+            ? /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*(.*)$/u.exec(line) : null;
+        if (match) candidates.set(index, match);
+    }
+    if (!candidates.size) return candidates;
+    const candidateLines = Array.from(candidates.keys());
+
+    // Block ranges keep an unmatched backtick from consuming the next heading
+    // or paragraph. Reuse inline ownership to exclude code-literal definitions.
+    // Definitions outside inline tokens remain candidates: Markdown-it may
+    // otherwise recognize a single-word footnote body as a link destination.
+    for (const token of footnoteBlockParser.parse(markdown, {})) {
+        if (token.type !== "inline" || !token.map) continue;
+        const [start, end] = token.map;
+        if (!candidateLines.some((line) => line >= start && line < end)) continue;
+        const references = new Set<number>();
+        replaceInlineFootnoteReferences(lines.slice(start, end).join("\n"), (_label, offset) => {
+            references.add(offset);
+            return undefined;
+        });
+        let offset = 0;
+        for (let line = start; line < end; line += 1) {
+            if (candidates.has(line) && !references.has(offset + lines[line].indexOf("[^"))) {
+                candidates.delete(line);
+            }
+            offset += lines[line].length + 1;
+        }
+    }
+    return candidates;
 }
 
 function replaceFootnoteReferences(
@@ -706,13 +747,12 @@ function footnoteContinuation(line: string): string | null {
 function projectShareCardFootnotes(markdown: string): string {
     if (!markdown.includes("[^")) return markdown;
     const lines = markdown.split("\n");
-    const ordinary = ordinaryMarkdownLineIndexes(markdown);
+    const candidates = footnoteDefinitionCandidates(markdown, lines);
     const definitions = new Map<string, ShareCardFootnoteDefinition>();
     const bodyLines: string[] = [];
     for (let index = 0; index < lines.length; index += 1) {
         const line = lines[index];
-        const match = ordinary.has(index)
-            ? /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*(.*)$/u.exec(line) : null;
+        const match = candidates.get(index);
         if (!match) {
             bodyLines.push(line);
             continue;
@@ -761,7 +801,8 @@ function projectShareCardFootnotes(markdown: string): string {
             const preparedBody = prepareOutsideFencedCode(definition.body);
             const text = replaceFootnoteReferences(preparedBody, numberFor);
             const number = numbers.get(definition.label);
-            const startsWithBlock = /^(?: {0,3}(?:#{1,6}(?:\s|$)|>|[-+*]\s|\d+[.)]\s|`{3,}|~{3,}|<)| {4}|\t)/u.test(text);
+            const firstBlock = footnoteBlockParser.parse(text, {})[0];
+            const startsWithBlock = firstBlock && firstBlock.type !== "paragraph_open";
             projectedDefinitions.push(`\\[${number}\\]${startsWithBlock ? "\n\n" : " "}${text}`);
         }
     };

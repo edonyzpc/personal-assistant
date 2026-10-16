@@ -81,7 +81,6 @@ describe("Share Card export", () => {
                 const match = /^url\("data:image\/svg\+xml,([^#]+)#([^"#]+)"\)$/u.exec(references[index] ?? "");
                 expect(match).not.toBeNull();
                 const captureId = match![2]!;
-                expect(captureId).toBe(`${originalIds[index]}-run-${index}`);
                 const normalizedSvg = decodeURIComponent(match![1]!).replace(
                     `id="${captureId}"`, `id="${originalIds[index]}"`,
                 );

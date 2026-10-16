@@ -320,38 +320,10 @@ describe("ShareCardModal", () => {
     });
 
     it("keeps the sharer local, synchronous, and shared by preview and export", async () => {
-        const document = new ShareCardTestDocument();
-        const renderer = createRenderer(document, []);
-        const exporter = createExporter();
-        const createExporterForAppearance = jest.fn((
-            _app: App,
-            _ownerDocument: Document,
-            _renderer: ShareCardRenderer,
-            _appearance: { sharerName?: string },
-        ) => exporter);
-        const localizeResources = jest.fn(async () => ({
-            markdown: "one",
-            report: {
-                complete: true,
-                resolvedCount: 0,
-                placeholderCount: 0,
-                failedCount: 0,
-                uniqueResourceCount: 0,
-                totalResolvedBytes: 0,
-                resources: [],
-            },
-        }));
-        const prepareMarkdown = jest.fn(() => ({ markdown: "one", blocks: ["one"] }));
-        const paginate = jest.fn(async () => createPages(1));
-        const modal = createModal(document, {
-            localizeResources: localizeResources as unknown as NonNullable<
-                ShareCardModalDependencies["localizeResources"]
-            >,
-            prepareMarkdown,
-            paginate,
-            createRenderer: () => renderer,
-            createExporter: createExporterForAppearance,
-        });
+        const {
+            document, renderer, exporter, createExporterForAppearance,
+            localizeResources, prepareMarkdown, paginate, modal,
+        } = createSharerModalFixture(1);
 
         modal.onOpen();
         const sharerLabel = document.body.querySelector(".pa-share-card-sharer-label")!;
@@ -413,8 +385,9 @@ describe("ShareCardModal", () => {
     });
 
     it("publishes a sharer name typed during block preparation", async () => {
-        const document = new ShareCardTestDocument();
-        const renderer = createRenderer(document, []);
+        const {
+            document, renderer, createExporterForAppearance, prepareMarkdown, paginate, modal,
+        } = createSharerModalFixture(2);
         const createPreparedFitPredicate = jest.fn(() => jest.fn(async () => true));
         let finishPrepareBlocks!: () => void;
         const prepareBlocks = jest.fn((
@@ -424,21 +397,6 @@ describe("ShareCardModal", () => {
             finishPrepareBlocks = resolve;
         }));
         Object.assign(renderer, { createPreparedFitPredicate, prepareBlocks });
-        const exporter = createExporter();
-        const createExporterForAppearance = jest.fn((
-            _app: App,
-            _ownerDocument: Document,
-            _renderer: ShareCardRenderer,
-            _appearance: { sharerName?: string },
-        ) => exporter);
-        const prepareMarkdown = jest.fn(() => ({ markdown: "one", blocks: ["one"] }));
-        const paginate = jest.fn(async () => createPages(2));
-        const modal = createModal(document, {
-            prepareMarkdown,
-            paginate,
-            createRenderer: () => renderer,
-            createExporter: createExporterForAppearance,
-        });
 
         modal.onOpen();
         await flushShareCardTasks();
@@ -480,28 +438,14 @@ describe("ShareCardModal", () => {
         expectedName,
         expectedDisplay,
     }) => {
-        const document = new ShareCardTestDocument();
-        const renderer = createRenderer(document, []);
+        const {
+            document, renderer, createExporterForAppearance, prepareMarkdown, paginate, modal,
+        } = createSharerModalFixture(2);
         const prepareBlocks = jest.fn(async () => undefined);
         const createPreparedFitPredicate = jest.fn(() => jest.fn(async () => true));
         Object.assign(renderer, { prepareBlocks, createPreparedFitPredicate });
         renderer.updateCardSharer.mockImplementation((cardEl: HTMLElement, name?: string) => {
             cardEl.dataset.sharer = name || "EZ";
-        });
-        const exporter = createExporter();
-        const createExporterForAppearance = jest.fn((
-            _app: App,
-            _ownerDocument: Document,
-            _renderer: ShareCardRenderer,
-            _appearance: { sharerName?: string },
-        ) => exporter);
-        const prepareMarkdown = jest.fn(() => ({ markdown: "one\n\ntwo", blocks: ["one", "two"] }));
-        const paginate = jest.fn(async () => createPages(2));
-        const modal = createModal(document, {
-            prepareMarkdown,
-            paginate,
-            createRenderer: () => renderer,
-            createExporter: createExporterForAppearance,
         });
 
         modal.onOpen();
@@ -1674,6 +1618,46 @@ describe("ShareCardModal", () => {
         modal.onClose();
     });
 });
+
+function createSharerModalFixture(pageCount: number) {
+    const document = new ShareCardTestDocument();
+    const renderer = createRenderer(document, []);
+    const exporter = createExporter();
+    const createExporterForAppearance = jest.fn((
+        _app: App,
+        _ownerDocument: Document,
+        _renderer: ShareCardRenderer,
+        _appearance: { sharerName?: string },
+    ) => exporter);
+    const pages = createPages(pageCount);
+    const blocks = pages.map((page) => page.content);
+    const markdown = blocks.join("\n\n");
+    const localizeResources = jest.fn(async (): Promise<LocalizedShareCardResources> => ({
+        markdown,
+        report: {
+            complete: true,
+            resolvedCount: 0,
+            placeholderCount: 0,
+            failedCount: 0,
+            uniqueResourceCount: 0,
+            totalResolvedBytes: 0,
+            resources: [],
+        },
+    }));
+    const prepareMarkdown = jest.fn(() => ({ markdown, blocks }));
+    const paginate = jest.fn(async () => pages);
+    const modal = createModal(document, {
+        localizeResources,
+        prepareMarkdown,
+        paginate,
+        createRenderer: () => renderer,
+        createExporter: createExporterForAppearance,
+    });
+    return {
+        document, renderer, exporter, createExporterForAppearance,
+        localizeResources, prepareMarkdown, paginate, modal,
+    };
+}
 
 function createModal(
     document: ShareCardTestDocument,

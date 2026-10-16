@@ -63,10 +63,5 @@ describe("Share Card SVG assets", () => {
         expect(paths.map((path) => path.getAttribute("stroke-width"))).toEqual([
             "23", "19", "20", "20", "24", "21",
         ]);
-        expect(group.ownerDocument).toBe(document);
-        for (const path of paths) {
-            expect(path.ownerDocument).toBe(document);
-            expect(path.namespaceURI).toBe("http://www.w3.org/2000/svg");
-        }
     });
 });

@@ -111,62 +111,34 @@ function createMeasuredRangeDocument(capacity: number): ShareCardTestDocument {
     return document;
 }
 
-function createTableGeometryDocument(
-    naturalWidth: number,
-    naturalHeight: number,
-): ShareCardTestDocument {
+function tableBounds(width: number, height: number, left = 0, top = 0): DOMRect {
+    return { left, top, width, height, right: left + width, bottom: top + height,
+        x: left, y: top, toJSON: () => ({}) } as DOMRect;
+}
+
+function createTableMeasurementDocument(measurements: {
+    table: DOMRect;
+    text?: DOMRect;
+}): ShareCardTestDocument {
     const document = new ShareCardTestDocument();
     enableShareCardTestRanges(document);
+    const bodyBounds = tableBounds(452, 585);
+    const emptyBounds = tableBounds(0, 0);
+    // The browser supplies final geometry; these tests verify the chosen scale,
+    // independent text bounds and lifecycle, not a second implementation of CSS.
+    const fittedBounds = tableBounds(400, 400, 8, 8);
     const createElement = document.createElement.bind(document);
     document.createElement = ((tagName: string) => {
         const element = createElement(tagName);
-        const ancestor = (className: string): ShareCardTestElement | null => {
-            let current: ShareCardTestElement | null = element;
-            while (current && !current.classList.contains(className)) current = current.parentElement;
-            return current;
-        };
-        const geometry = (): DOMRect => {
-            let ancestorNode: ShareCardTestElement | null = element;
-            while (ancestorNode) {
-                if (ancestorNode.hidden) {
-                    return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0,
-                        x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
-                }
-                ancestorNode = ancestorNode.parentElement;
+        Object.assign(element, { getBoundingClientRect: (): DOMRect => {
+            let scaled = false;
+            for (let parent: ShareCardTestElement | null = element; parent; parent = parent.parentElement) {
+                if (parent.hidden) return emptyBounds;
+                scaled ||= parent.classList.contains("is-scaled");
             }
-            const card = ancestor("pa-share-card");
-            const fontSize = Number.parseFloat(
-                card?.style.values.get("--pa-share-card-font-size") ?? "24",
-            );
-            const wrapper = ancestor("pa-share-card-table-fit");
-            const scaled = wrapper?.classList.contains("is-scaled") ?? false;
-            const scale = scaled
-                ? Number(wrapper?.style.values.get("--pa-share-card-table-scale"))
-                : 1;
-            const translateX = scaled
-                ? Number.parseFloat(wrapper?.style.values.get("--pa-share-card-table-x") ?? "0")
-                : 0;
-            const translateY = scaled
-                ? Number.parseFloat(wrapper?.style.values.get("--pa-share-card-table-y") ?? "0")
-                : 0;
-            let width = 452;
-            let height = 585;
-            let left = 0;
-            let top = 0;
-            if (element.classList.contains("pa-share-card-table-fit")) {
-                width = Number.parseFloat(element.style.values.get("--pa-share-card-table-width") ?? "452");
-                height = Number.parseFloat(element.style.values.get("--pa-share-card-table-height")
-                    ?? String(naturalHeight * fontSize / 24));
-            } else if (element.tagName === "table" || ancestor("pa-share-card-table-fit-content")) {
-                width = naturalWidth * fontSize / 24 * scale;
-                height = naturalHeight * fontSize / 24 * scale;
-                left = translateX;
-                top = translateY;
-            }
-            return { left, top, width, height, right: left + width, bottom: top + height,
-                x: left, y: top, toJSON: () => ({}) } as DOMRect;
-        };
-        Object.assign(element, { getBoundingClientRect: geometry });
+            if (element.tagName === "table") return scaled ? fittedBounds : measurements.table;
+            return element.tagName === "div" ? bodyBounds : emptyBounds;
+        } });
         Object.defineProperties(element, {
             clientWidth: { configurable: true, get: () => 452 },
             clientHeight: { configurable: true, get: () => 585 },
@@ -176,8 +148,7 @@ function createTableGeometryDocument(
                     if (!element.classList.contains("pa-share-card-body")) return 585;
                     const wrapper = element.querySelector(".pa-share-card-table-fit");
                     return wrapper?.classList.contains("is-contained")
-                        ? Number.parseFloat(wrapper.style.values.get("--pa-share-card-table-height") ?? "585")
-                        : naturalHeight;
+                        ? 585 : measurements.table.height;
                 },
             },
         });
@@ -190,7 +161,10 @@ function createTableGeometryDocument(
             let selected: HTMLElement | null = null;
             Object.assign(range, {
                 selectNodeContents: (element: HTMLElement) => { selected = element; },
-                getBoundingClientRect: () => selected!.getBoundingClientRect(),
+                // Script browser measurements instead of recomputing CSS transforms.
+                // Text may extend beyond the table's own border box before fitting.
+                getBoundingClientRect: () => selected!.getBoundingClientRect() === fittedBounds
+                    ? fittedBounds : measurements.text ?? measurements.table,
             });
             return range;
         },
@@ -824,10 +798,12 @@ describe("ShareCardRenderer", () => {
     });
 
     it.each([
-        [420, 941],
-        [1_400, 420],
-    ])("fits an isolated nested table intact at natural size %s × %s", async (width, height) => {
-        const document = createTableGeometryDocument(width, height);
+        { label: "height overflow", table: tableBounds(420, 941), scale: 569 / 941 },
+        { label: "width overflow", table: tableBounds(1_400, 420), scale: 436 / 1_400 },
+        { label: "already fitting", table: tableBounds(300, 400), scale: 1 },
+        { label: "text outside cells", table: tableBounds(420, 420), text: tableBounds(900, 420), scale: 436 / 900 },
+    ])("chooses the table scale from measured $label", async (measurements) => {
+        const document = createTableMeasurementDocument(measurements);
         renderMock.mockImplementation(async (_app, _markdown, element) => {
             appendSyntheticTable(document, element as unknown as ShareCardTestElement);
         });
@@ -838,51 +814,34 @@ describe("ShareCardRenderer", () => {
         const options = { theme: "light" as const, fontSize: 24 };
         await renderer.prepareBlocks([source], options);
         await expect(renderer.createPreparedFitPredicate(options)(source, 0)).resolves.toBe(true);
-
-        for (const host of [document.createElement("div"), undefined]) {
-            if (host) {
-                host.hidden = true;
-                document.body.appendChild(host);
-            }
-            const rendered = await renderer.renderPage({
-                content: source, pageIndex: 0, totalPages: 1,
-            }, { ...options, host: host ? asElement(host) : undefined });
-            if (host) {
-                expect(rendered.cardEl.parentElement).toBe(host);
-                expect(document.body.querySelector(".pa-share-card-capture-host")).toBeNull();
-                host.hidden = false;
-            }
-            const wrapper = rendered.bodyEl.querySelector<HTMLElement>(".pa-share-card-table-fit")!;
-            expect(wrapper).not.toBeNull();
-            const fixtureWrapper = wrapper as unknown as ShareCardTestElement;
-            const scale = Number(fixtureWrapper.style.values.get("--pa-share-card-table-scale"));
-            expect(scale).toBeGreaterThan(0);
-            expect(scale).toBeLessThan(1);
-            expect(rendered.fits(0)).toBe(true);
-            const table = rendered.bodyEl.querySelector("table")!;
-            const bounds = table.getBoundingClientRect();
-            const wrapperBounds = wrapper.getBoundingClientRect();
-            expect(bounds.left).toBeGreaterThanOrEqual(wrapperBounds.left);
-            expect(bounds.top).toBeGreaterThanOrEqual(wrapperBounds.top);
-            expect(bounds.right).toBeLessThanOrEqual(wrapperBounds.right);
-            expect(bounds.bottom).toBeLessThanOrEqual(wrapperBounds.bottom);
-            expect(wrapperBounds.width).toBeLessThanOrEqual(rendered.bodyEl.clientWidth);
-            expect(wrapperBounds.height).toBeLessThanOrEqual(rendered.bodyEl.clientHeight);
+        const host = document.createElement("div");
+        host.hidden = true;
+        document.body.appendChild(host);
+        const rendered = await renderer.renderPage({
+            content: source, pageIndex: 0, totalPages: 1,
+        }, { ...options, host: asElement(host) });
+        expect(rendered.cardEl.parentElement).toBe(host);
+        expect(document.body.querySelector(".pa-share-card-capture-host")).toBeNull();
+        const wrapper = rendered.bodyEl.querySelector(".pa-share-card-table-fit") as unknown as ShareCardTestElement;
+        expect(Number(wrapper.style.values.get("--pa-share-card-table-scale"))).toBeCloseTo(measurements.scale);
+        expect(rendered.fits(0)).toBe(true);
+        if (measurements.label === "height overflow") {
             expect(rendered.bodyEl.querySelectorAll("table")).toHaveLength(2);
             expect(rendered.bodyEl.querySelectorAll("img")).toHaveLength(1);
             expect(rendered.bodyEl.textContent).toBe("RootBranch alphaBranch betaBranch gamma");
             expect((rendered.cardEl as unknown as ShareCardTestElement).style.values.get(
                 "--pa-share-card-font-size",
             )).toBe("24px");
-            expect(fixtureWrapper.style.values.has("font-size")).toBe(false);
-            rendered.cleanup();
+            expect(wrapper.style.values.has("font-size")).toBe(false);
         }
+        rendered.cleanup();
         expect(renderMock).toHaveBeenCalledTimes(1);
         renderer.cleanup();
     });
 
     it("remeasures isolated tables for each final font size without sharing scale", async () => {
-        const document = createTableGeometryDocument(420, 941);
+        const measurements = { table: tableBounds(420, 941) };
+        const document = createTableMeasurementDocument(measurements);
         renderMock.mockImplementation(async (_app, _markdown, element) => {
             appendSyntheticTable(document, element as unknown as ShareCardTestElement);
         });
@@ -891,25 +850,23 @@ describe("ShareCardRenderer", () => {
         });
         const source = "<table><tr><td>Complete tree</td></tr></table>";
         await renderer.prepareBlocks([source], { theme: "dark", fontSize: 24 });
-        const scales: number[] = [];
-        for (const fontSize of [24, 16, 24]) {
+        for (const [fontSize, width, height] of [[24, 420, 941], [16, 280, 627], [24, 420, 941]]) {
+            measurements.table = tableBounds(width, height);
             const rendered = await renderer.renderPage({
                 content: source, pageIndex: 0, totalPages: 1,
             }, { theme: "dark", fontSize });
             const wrapper = rendered.bodyEl.querySelector(".pa-share-card-table-fit") as unknown as ShareCardTestElement;
             expect(wrapper).not.toBeNull();
-            scales.push(Number(wrapper.style.values.get("--pa-share-card-table-scale")));
+            expect(Number(wrapper.style.values.get("--pa-share-card-table-scale"))).toBeCloseTo(569 / height);
             expect(rendered.fits()).toBe(true);
             rendered.cleanup();
         }
-        expect(scales[1]).toBeGreaterThan(scales[0]!);
-        expect(scales[2]).toBe(scales[0]);
         expect(renderMock).toHaveBeenCalledTimes(1);
         renderer.cleanup();
     });
 
     it("does not scale a table when its prepared block also contains body text", async () => {
-        const document = createTableGeometryDocument(420, 941);
+        const document = createTableMeasurementDocument({ table: tableBounds(420, 941) });
         renderMock.mockImplementation(async (_app, _markdown, element) => {
             const body = element as unknown as ShareCardTestElement;
             const paragraph = document.createElement("p");
@@ -932,7 +889,7 @@ describe("ShareCardRenderer", () => {
     });
 
     it("cleans up an isolated table closed while its final mounted frame is pending", async () => {
-        const document = createTableGeometryDocument(420, 941);
+        const document = createTableMeasurementDocument({ table: tableBounds(420, 941) });
         renderMock.mockImplementation(async (_app, _markdown, element) => {
             appendSyntheticTable(document, element as unknown as ShareCardTestElement);
         });

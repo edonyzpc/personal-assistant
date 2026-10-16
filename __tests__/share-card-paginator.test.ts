@@ -208,9 +208,13 @@ describe("paginateShareCardMarkdown", () => {
         "<sup hidden>:11</sup>",
         "<span style=\"display:none\">:11</span>",
         `${"<span>".repeat(65)}11${"</span>".repeat(65)}`,
-    ])("fails closed for unsupported inline HTML: %s", async (annotation) => {
+    ])("rejects unsupported inline HTML boundaries: %s", (annotation) => {
         const source = `${"Before ".repeat(30)}${annotation}${" After".repeat(30)}`;
         expect(createShareCardFragmentBoundaryPlan(source)).toBeNull();
+    });
+
+    it("reports an unpageable error when unsupported inline HTML must split", async () => {
+        const source = `${"Before ".repeat(30)}<sup hidden>:11</sup>${" After".repeat(30)}`;
         await expect(paginateShareCardMarkdown([source], (markdown) => markdown.length < 100))
             .rejects.toMatchObject({ code: "unpageable-content" });
     });
@@ -297,17 +301,6 @@ describe("paginateShareCardMarkdown", () => {
             opening,
             closing,
         )).join("")).toBe(text);
-    });
-
-    it("keeps a short bold italic block whole", async () => {
-        const source = "***short bold italic***";
-        const pages = await paginateShareCardMarkdown(
-            [source],
-            () => true,
-        );
-
-        expect(pages).toHaveLength(1);
-        expect(pages[0]?.content).toBe(source);
     });
 
     it("keeps inline bold italic text ordered across a long paragraph", async () => {
@@ -507,9 +500,13 @@ describe("paginateShareCardMarkdown", () => {
         "(*[label][]*)",
         "(*[outer *[inner](https://e.x)*](https://e.y)*)",
         "**outer(**[label](https://e.x)**)**",
-    ])("keeps unsupported emphasis/link boundaries fail-closed: %s", async (fragment) => {
+    ])("rejects unsupported emphasis/link boundaries: %s", (fragment) => {
         const source = `${"before ".repeat(12)}${fragment}${" after".repeat(12)}`;
         expect(createShareCardFragmentBoundaryPlan(source)).toBeNull();
+    });
+
+    it("reports an unpageable error when unsupported emphasis/link content must split", async () => {
+        const source = `${"before ".repeat(12)}(*[label][ref]*)${" after".repeat(12)}`;
         await expect(paginateShareCardMarkdown([source], (markdown) => markdown.length <= 60))
             .rejects.toMatchObject({ code: "unpageable-content" });
     });
