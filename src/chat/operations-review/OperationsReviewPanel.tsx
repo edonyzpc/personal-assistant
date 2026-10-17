@@ -39,8 +39,19 @@ export function OperationsReviewPanel({ session }: OperationsReviewPanelProps): 
         );
     }
 
-    const groupCount = snapshot.model.groups.length;
+    const hasUndoHistory = snapshot.scope === 'request' && snapshot.historicalModel !== null
+        && snapshot.undoResults.some(result => result.status === 'undone');
+    const model = hasUndoHistory && snapshot.status === 'undone' && snapshot.historicalModel
+        ? snapshot.historicalModel
+        : snapshot.model;
+    const groupCount = model.groups.length;
     const activeIndex = Math.min(activeGroupIndex, Math.max(0, groupCount - 1));
+    const isRequestScope = snapshot.scope === 'request';
+    const previewGroups = isRequestScope ? snapshot.model.previewGroups ?? [] : [];
+    const previewAttachments = isRequestScope ? snapshot.model.previewAttachments ?? [] : [];
+    const hasRequestPreview = previewGroups.length > 0 || previewAttachments.length > 0;
+    const requestBlocking = [...snapshot.undoResults].reverse().find(result => result.status !== 'undone');
+    const requestRemaining = isRequestScope ? session.activeReceiptIds().length : 0;
 
     return (
         <div className="pa-operations-review-view">
@@ -74,25 +85,58 @@ export function OperationsReviewPanel({ session }: OperationsReviewPanelProps): 
             )}
 
             <main className="pa-operations-review-view__content">
-                <OperationsDiff model={snapshot.model} mode="full" activeGroupIndex={activeIndex} />
-                {(snapshot.model.attachments?.length ?? 0) > 0 && (
+                <OperationsDiff model={model} mode="full" activeGroupIndex={activeIndex} />
+                {(model.attachments?.length ?? 0) > 0 && (
                     <section className="pa-operations-review-results">
-                        {(snapshot.model.attachments ?? []).map(attachment => (
+                        {(model.attachments ?? []).map(attachment => (
                             <div key={attachment.id} className="pa-operations-review-result">
                                 <div className="pa-operations-review-result__target">
                                     <span>{t('plugin.chat.operations.intent.image')}</span>
                                     <code>{attachment.path}</code>
                                 </div>
                                 <span>
-                                    {attachment.blocked
-                                        ? t('plugin.chat.operations.intent.attachmentDeleteBlocked')
-                                        : attachment.action === 'delete'
-                                        ? t('plugin.chat.operations.intent.attachmentDelete')
-                                        : t('plugin.chat.operations.intent.attachmentKeep')}
+                                    {attachment.outcome === 'unknown'
+                                        ? t('plugin.chat.operations.intent.unknown')
+                                        : attachment.blocked
+                                            ? t('plugin.chat.operations.intent.attachmentDeleteBlocked')
+                                            : attachment.action === 'delete'
+                                            ? t('plugin.chat.operations.intent.attachmentDelete')
+                                            : t('plugin.chat.operations.intent.attachmentKeep')}
                                 </span>
-                                <span>{t('plugin.chat.operations.intent.temporaryUndo')}</span>
                             </div>
                         ))}
+                    </section>
+                )}
+                {hasRequestPreview && (
+                    <section
+                        className="pa-operations-review-results"
+                        aria-label={t('plugin.chat.operations.request.preview')}
+                    >
+                        <div className="pa-operations-review-result">
+                            <span>{t('plugin.chat.operations.request.preview')}</span>
+                        </div>
+                        {previewGroups.length > 0 && (
+                            <OperationsDiff model={{ ...snapshot.model, groups: previewGroups }} mode="request" />
+                        )}
+                        {previewAttachments.length > 0 && (
+                            <div className="pa-operations-review-results">
+                                {previewAttachments.map(attachment => (
+                                    <div key={attachment.id} className="pa-operations-review-result">
+                                        <div className="pa-operations-review-result__target">
+                                            <span>{t('plugin.chat.operations.intent.image')}</span>
+                                            <code>{attachment.path}</code>
+                                        </div>
+                                        <span>
+                                            {attachment.blocked
+                                                ? t('plugin.chat.operations.intent.attachmentDeleteBlocked')
+                                                : attachment.action === 'delete'
+                                                ? t('plugin.chat.operations.intent.attachmentDelete')
+                                                : t('plugin.chat.operations.intent.attachmentKeep')}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </section>
                 )}
                 {snapshot.operationResults.length > 0 && (
@@ -110,7 +154,8 @@ export function OperationsReviewPanel({ session }: OperationsReviewPanelProps): 
                                         : row.operationResult.path}</code>
                                 </div>
                                 <span>{row.message}</span>
-                                {row.operationResult.receiptId
+                                {!isRequestScope
+                                    && row.operationResult.receiptId
                                     && row.operationResult.undoAvailable !== false
                                     && row.undoResult?.status !== "undone" && (
                                     <button
@@ -126,10 +171,29 @@ export function OperationsReviewPanel({ session }: OperationsReviewPanelProps): 
                         ))}
                     </section>
                 )}
+                {hasUndoHistory && snapshot.status !== 'undone' && snapshot.historicalModel && (
+                    <section className="pa-operations-review-results" aria-label={t('plugin.chat.operations.request.history')}>
+                        <div className="pa-operations-review-result">
+                            <span>{t('plugin.chat.operations.request.history')}</span>
+                        </div>
+                        <OperationsDiff model={snapshot.historicalModel} mode="request" />
+                    </section>
+                )}
             </main>
 
             <footer className="pa-operations-review-view__actions">
-                {session.canUndo() && (
+                {isRequestScope ? (snapshot.status !== 'preview' && (
+                    <button
+                        type="button"
+                        className="pa-operations-review-secondary-button"
+                        disabled={!session.canUndo() || snapshot.actionInFlight !== null}
+                        onClick={() => { void session.undoRequest(); }}
+                    >
+                        {snapshot.actionInFlight !== null
+                            ? t('plugin.chat.operations.request.undoing')
+                            : t('plugin.chat.operations.request.undo')}
+                    </button>
+                )) : session.canUndo() && (
                     <button
                         type="button"
                         className="pa-operations-review-secondary-button"
@@ -140,6 +204,26 @@ export function OperationsReviewPanel({ session }: OperationsReviewPanelProps): 
                     </button>
                 )}
             </footer>
+            {isRequestScope && snapshot.status === 'undone' && (
+                <div className="pa-operations-review-result" role="status">
+                    {t('plugin.chat.operations.request.undoneAll')}
+                </div>
+            )}
+            {isRequestScope && requestBlocking && (
+                <div className="pa-operations-review-error" role="alert">
+                    {[
+                        requestBlocking.failureCategory === 'stale_target'
+                            ? t('plugin.chat.operations.request.conflict')
+                            : requestBlocking.failureCategory === 'expired'
+                                ? t('plugin.chat.operations.request.recoveryExpired')
+                                : requestBlocking.failureCategory === 'unknown'
+                                    ? t('plugin.chat.operations.request.confirming')
+                                    : t('plugin.chat.operations.intent.undoFailed'),
+                        ...(requestRemaining > 0
+                            ? [t('plugin.chat.operations.request.remaining', { count: requestRemaining })] : []),
+                    ].join(' · ')}
+                </div>
+            )}
             {snapshot.error && <div className="pa-operations-review-error" role="alert">{snapshot.error}</div>}
         </div>
     );
@@ -197,21 +281,35 @@ export function projectOperationsReviewResultRows(
             .filter(candidate => candidate.path === result.path)
             .findIndex(candidate => candidate.operationId === result.operationId) + 1;
         const effects = undoResult?.effects ?? result.effects;
+        const failedCategoryText = result.failureCategory
+            && result.status !== 'succeeded' && result.status !== 'unchanged'
+            ? operationFailureText(result)
+            : undefined;
+        // A successful restore never carries failure text; the category map
+        // applies only to a non-undone recovery result.
+        const undoFailure = undoResult && undoResult.status !== 'undone'
+            ? undoFailureText(undoResult)
+            : undefined;
+        // A restored compound effect must not retain the original failure
+        // prose; the restore facts above already describe the outcome.
+        const resultDetail = undoResult?.status === 'undone'
+            ? undefined
+            : undoFailure ?? failedCategoryText ?? result.message;
         const message = effects?.length
             ? [
                 effects.map(effect => effectText(effect)).join('; '),
-                undoResult?.message ?? (undoResult ? undefined : result.message),
+                resultDetail,
                 undoResult?.checkpoint ? t('plugin.chat.operations.intent.attachmentRestored') : undefined,
             ].filter(Boolean).join('; ')
             : undoResult
                 ? undoResult.status === 'undone'
                     ? t('plugin.chat.operations.intent.undone')
                     : [
-                        undoResult.message ?? t('plugin.chat.operations.intent.undoFailed'),
+                        undoFailure ?? t('plugin.chat.operations.intent.undoFailed'),
                         ...(undoResult.checkpoint
                             ? [t('plugin.chat.operations.intent.attachmentRestored')] : []),
                     ].join(' ')
-                : result.message ?? operationStatusText(result.status);
+                : failedCategoryText ?? result.message ?? operationStatusText(result.status);
         return {
             operationResult: result,
             ...(undoResult ? { undoResult } : {}),
@@ -220,6 +318,35 @@ export function projectOperationsReviewResultRows(
             pathOperationNumber,
         };
     });
+}
+
+function undoFailureText(undoResult: OperationsReviewSnapshot["undoResults"][number]): string {
+    switch (undoResult.failureCategory) {
+        case 'stale_target': return t('plugin.chat.operations.request.conflict');
+        case 'expired': return t('plugin.chat.operations.request.recoveryExpired');
+        case 'unknown': return t('plugin.chat.operations.request.confirming');
+        default: return t('plugin.chat.operations.intent.undoFailed');
+    }
+}
+
+function operationFailureText(result: OperationsReviewSnapshot["operationResults"][number]): string {
+    // An attempted restoration is never a zero-write preview fact; expired or
+    // cancelled SDK Undo keeps recovery semantics.
+    if (result.resourceEffect?.kind === 'undo'
+        && (result.failureCategory === 'expired' || result.failureCategory === 'cancelled')) {
+        return result.failureCategory === 'expired'
+            ? t('plugin.chat.operations.request.recoveryExpired')
+            : t('plugin.chat.operations.intent.undoFailed');
+    }
+    const category = result.failureCategory;
+    switch (category) {
+        case 'stale_target': return t('plugin.chat.operations.intent.stale');
+        case 'expired': return t('plugin.chat.operations.intent.expired');
+        case 'cancelled': return t('plugin.chat.operations.intent.cancelled');
+        case 'unknown': return t('plugin.chat.operations.intent.unknown');
+        case 'undo_unavailable': return t('plugin.chat.operations.intent.undoFailed');
+        default: return t('plugin.chat.operations.intent.failed');
+    }
 }
 
 function effectText(effect: NonNullable<OperationsReviewSnapshot["operationResults"][number]["effects"]>[number]): string {

@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-10-17
+Updated: 2026-10-18
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-068 | Chat 本次修改单卡汇总与整次撤销 | Accepted | 当前请求跨批次结果、完整展开与整次「撤销 / Undo」；双语且保留来源/临时恢复边界 | [Record](./dec-068-chat-request-change-summary.md) |
 | DEC-067 | Pagelet 按笔记独立 Detail 与阅读布局 | Accepted | Pet 直达当前笔记 Detail、独立阅读与提示；保留全部 view/graph，只优化已批准 UI/UX | [Record](./dec-067-pagelet-note-detail-tabs.md) |
 | DEC-066 | Pagelet 入口与阅读闭环 | Accepted | 独立第二轮：短点内容、已看复访、稳定阅读及完整 Agent 交接；来源与权限保持，不扩大 B-175 | [Record](./dec-066-pagelet-reading-loop.md) |
 | DEC-065 | Pagelet 自主发现闭环 | Accepted | 第一轮模型自主探索、可选完整暂存、来源/权限与真实交付；不将旧约束搬入提示词，不扩大后续轮次 | [Record](./dec-065-pagelet-autonomous-discovery.md) |

@@ -5,7 +5,7 @@ import { OperationsDiff } from './OperationsDiff';
 
 export function mountOperationsDiff(
     container: HTMLElement,
-    options: { model: OperationsReviewModel; mode: 'compact' | 'full' },
+    options: { model: OperationsReviewModel; mode: 'compact' | 'full' | 'request' },
 ): () => void {
     const root: Root = createRoot(container);
     root.render(<OperationsDiff {...options} />);

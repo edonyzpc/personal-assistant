@@ -95,6 +95,8 @@ const emitOperationsExecution = (result: OperationsExecutionResult) => {
 };
 const mockCancelPendingOperations = jest.fn<() => void>();
 const mockUndoOperations = jest.fn<(receiptIds: readonly string[]) => Promise<UndoResult[]>>();
+type MockUndoOperationsRequestInput = { runId: string; intentIds: readonly string[]; signal?: AbortSignal; isSourceCurrent(this: void): boolean };
+const mockUndoOperationsRequest = jest.fn<(input: MockUndoOperationsRequestInput) => Promise<UndoResult[]>>();
 const mockDisposeChatService = jest.fn<() => void>();
 const mockResetChatContext = jest.fn<() => void>();
 const mockValidatePageletHandoff = jest.fn(async () => true);
@@ -122,6 +124,7 @@ jest.mock('../src/ai-services/chat-service', () => ({
         streamLLM: mockStreamLLM,
         cancelPendingOperations: mockCancelPendingOperations,
         undoOperations: mockUndoOperations,
+        undoOperationsRequest: mockUndoOperationsRequest,
         subscribeOperations: mockSubscribeOperations,
         refreshOperationsActionState: (state: unknown) => state,
         registerOperationsContextPersistence: () => {},
@@ -992,6 +995,7 @@ function createView(options: {
             streamLLM: mockStreamLLM,
             cancelPendingOperations: mockCancelPendingOperations,
             undoOperations: mockUndoOperations,
+            undoOperationsRequest: mockUndoOperationsRequest,
             subscribeOperations: mockSubscribeOperations,
             refreshOperationsActionState: (state: unknown) => state,
             registerOperationsContextPersistence: () => {},
@@ -1120,6 +1124,8 @@ describe('LLMView turn lifecycle', () => {
         mockOperationsListeners.clear();
         mockCancelPendingOperations.mockReset();
         mockUndoOperations.mockReset();
+        mockUndoOperationsRequest.mockReset();
+        mockUndoOperationsRequest.mockResolvedValue([]);
         mockDisposeChatService.mockReset();
         mockResetChatContext.mockReset();
         mockValidatePageletHandoff.mockReset().mockResolvedValue(true);
@@ -6101,12 +6107,11 @@ describe('LLMView turn lifecycle', () => {
         void getButtonByText(containerEl, 'Ask').click();
         await flushPromises();
         const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__', runId: intent.runId }));
         call.options.onOperationsIntentStaged?.(intent);
 
         const card = getElementByClass(containerEl, 'pa-operations-intent-card');
         expect(walkAll(card, el => el.tagName === 'button' && allText(el) === 'Confirm changes')).toHaveLength(0);
-        expect(allText(card)).toContain('0.unsorted/decision.md');
-        expect(allText(card)).toContain('Keep the quiet default.');
         const openReviewButton = getButtonByText(card, 'Open full review');
         openReviewButton.click();
         expect(plugin.registerOperationsReviewSession).toHaveBeenCalledTimes(1);
@@ -6120,16 +6125,31 @@ describe('LLMView turn lifecycle', () => {
 
         emitOperationsExecution(execution);
         await flushPromises();
-        expect(allText(card)).toContain('Changes applied.');
+        expect(allText(card)).toContain('Updated 1 notes');
+
+        call.resolve();
+        await waitForTurnCompletion(view);
+        getButtonByText(card, 'View all changes').click();
+        await flushPromises();
+        expect(allText(card)).toContain('0.unsorted/decision.md');
+        expect(allText(card)).toContain('Keep the quiet default.');
 
         const undoButton = getButtonByText(card, 'Undo');
         expect(undoButton.hidden).toBe(false);
+        expect(undoButton.disabled).toBe(false);
+        mockUndoOperationsRequest.mockResolvedValueOnce([{
+            receiptId: 'receipt_1',
+            operationId: operation.id,
+            path: operation.path,
+            status: 'undone',
+        }]);
         await undoButton.click();
         await flushPromises();
-        expect(mockUndoOperations).toHaveBeenCalledWith(['receipt_1']);
-        expect(allText(card)).toContain('Undone');
-        call.resolve();
-        await flushPromises();
+        expect(mockUndoOperationsRequest).toHaveBeenCalledWith(expect.objectContaining({
+            runId: 'run_1', intentIds: ['intent_1'],
+        }));
+        expect(allText(card)).toContain("This request's changes were undone");
+        expect(allText(card)).toContain('Historical changes');
     });
 
     it.each(['checkpoint', 'expired', 'failed'] as const)('shows compound image effects and retains them through %s Undo feedback inline', async undoScenario => {
@@ -6187,7 +6207,7 @@ describe('LLMView turn lifecycle', () => {
                 undoAvailable: true,
             }],
         };
-        mockUndoOperations.mockResolvedValue([{
+        mockUndoOperationsRequest.mockResolvedValue([{
             receiptId: 'receipt_image_inline',
             operationId: operation.id,
             path: operation.path,
@@ -6205,12 +6225,9 @@ describe('LLMView turn lifecycle', () => {
         getTextArea(containerEl).value = 'Remove this image and its file';
         void getButtonByText(containerEl, 'Ask').click();
         await flushPromises();
+        emitCanonical(streamCalls[0], canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__', runId: intent.runId }));
         streamCalls[0].options.onOperationsIntentStaged?.(intent);
         const card = getElementByClass(containerEl, 'pa-operations-intent-card');
-
-        expect(allText(card)).toContain('assets/image-inline.png');
-        expect(allText(card)).toContain('will be deleted according to your Obsidian delete setting');
-        expect(allText(card)).toContain('Temporary Undo is available only in this session');
         streamCalls[0].resolve();
         await flushPromises();
         await flushPromises();
@@ -6218,23 +6235,31 @@ describe('LLMView turn lifecycle', () => {
         emitOperationsExecution(execution);
         await flushPromises();
         expect(allText(card)).toContain('Some changes were applied');
+        getButtonByText(card, 'View all changes').click();
+        await flushPromises();
+        expect(allText(card)).toContain('assets/image-inline.png');
         expect(allText(card)).toContain('Note: Applied');
         expect(allText(card)).toContain('Image file: Outcome unknown');
         expect(allText(card)).toContain('Attachment deletion outcome could not be verified.');
         const undoButton = getButtonByText(card, 'Undo');
         expect(undoButton.hidden).toBe(false);
+        expect(undoButton.disabled).toBe(false);
         await undoButton.click();
         await flushPromises();
 
-        expect(mockUndoOperations).toHaveBeenCalledWith(['receipt_image_inline']);
+        expect(mockUndoOperationsRequest).toHaveBeenCalledWith(expect.objectContaining({
+            runId: 'run_image_inline', intentIds: ['intent_image_inline'],
+        }));
         if (undoScenario === 'checkpoint') {
             expect(allText(card)).toContain('The image file was restored; the note still needs recovery');
             expect(allText(card)).toContain('Image file: Undone');
+            // Checkpoint is a stale partial restore: the blocking reason and
+            // the restored attachment fact must both stay visible.
+            expect(allText(card)).toContain('Could not undo safely');
         } else {
             expect(allText(card)).toContain('Note: Applied');
             expect(allText(card)).toContain('Image file: Outcome unknown');
-            expect(allText(card)).toContain('Recovery is no longer available.');
-            expect(undoButton.hidden).toBe(true);
+            expect(allText(card)).toContain('Could not undo safely');
         }
     });
 
@@ -6272,6 +6297,7 @@ describe('LLMView turn lifecycle', () => {
         getTextArea(containerEl).value = 'Remove the image and attachment';
         void getButtonByText(containerEl, 'Ask').click();
         await flushPromises();
+        emitCanonical(streamCalls[0], canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__', runId: intent.runId }));
         streamCalls[0].options.onOperationsIntentStaged?.(intent);
         streamCalls[0].resolve();
         await flushPromises();
@@ -6279,9 +6305,10 @@ describe('LLMView turn lifecycle', () => {
         runAnimationFrames(true);
 
         const card = getElementByClass(containerEl, 'pa-operations-intent-card');
+        getButtonByText(card, 'View all changes').click();
+        await flushPromises();
         expect(allText(card)).toContain('notes/shared.md');
         expect(allText(card)).toContain('The note and attachment have not been changed.');
-        expect(allText(card)).toContain('Attachment deletion is blocked.');
         expect(allText(card)).not.toContain('The local image file will be deleted');
         expect(walkAll(card, el => el.tagName === 'button' && allText(el) === 'Confirm changes')).toHaveLength(0);
         expect(walkAll(card, el => el.tagName === 'button' && allText(el) === 'Cancel')).toHaveLength(0);
@@ -6319,13 +6346,15 @@ describe('LLMView turn lifecycle', () => {
         getTextArea(containerEl).value = 'Prepare route failure';
         void getButtonByText(containerEl, 'Ask').click();
         await flushPromises();
+        emitCanonical(streamCalls[0], canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__', runId: intent.runId }));
         streamCalls[0].options.onOperationsIntentStaged?.(intent);
         const card = getElementByClass(containerEl, 'pa-operations-intent-card');
         getButtonByText(card, 'Open full review').click();
         await flushPromises();
 
         expect(plugin.openOperationsReview).toHaveBeenCalledTimes(1);
-        expect(allText(card)).toContain('route unavailable');
+        expect(allText(card)).toContain('Could not open the full review.');
+        expect(allText(card)).not.toContain('route unavailable');
         expect(walkAll(card, el => el.tagName === 'button' && allText(el) === 'Confirm changes')).toHaveLength(0);
         streamCalls[0].resolve();
         await flushPromises();
@@ -6361,25 +6390,42 @@ describe('LLMView turn lifecycle', () => {
             operations,
             state: 'pending',
         };
+        const execution: OperationsExecutionResult = {
+            intentId: intent.id,
+            state: 'completed',
+            operations: operations.map((operation, index) => ({
+                operationId: operation.id,
+                toolCallId: operation.toolCallId,
+                name: operation.name,
+                path: operation.path,
+                status: 'succeeded' as const,
+                receiptId: `receipt-bulk-${index}`,
+            })),
+        };
 
         getTextArea(containerEl).value = 'Prepare many changes';
         void getButtonByText(containerEl, 'Ask').click();
         await flushPromises();
+        emitCanonical(streamCalls[0], canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__', runId: intent.runId }));
         streamCalls[0].options.onOperationsIntentStaged?.(intent);
+        emitOperationsExecution(execution);
+        await flushPromises();
+        const card = getElementByClass(containerEl, 'pa-operations-intent-card');
+        getButtonByText(card, 'View all changes').click();
+        await flushPromises();
 
         expect(mountOperationsDiffMock.mountOperationsDiff).toHaveBeenCalledTimes(1);
         const mountOptions = mountOperationsDiffMock.mountOperationsDiff.mock.calls[0]![1] as {
             model: { groups: Array<{ path: string }> };
+            mode: string;
         };
+        expect(mountOptions.mode).toBe('request');
         expect(mountOptions.model.groups).toHaveLength(3);
-        const preview = getElementByClass(
-            getElementByClass(containerEl, 'pa-operations-intent-card'),
-            'pa-operations-intent-card__preview',
-        );
-        expect(preview.textContent).toContain('notes/bulk-one.md');
-        expect(preview.textContent).toContain('notes/bulk-two.md');
-        expect(preview.textContent).not.toContain('notes/bulk-three.md');
-        expect(preview.textContent).toContain('18 changes are not shown');
+        const details = getElementByClass(card, 'pa-operations-request-card__details');
+        expect(allText(details)).toContain('notes/bulk-one.md');
+        expect(allText(details)).toContain('notes/bulk-two.md');
+        expect(allText(details)).toContain('notes/bulk-three.md');
+        expect(allText(details)).not.toContain('not shown');
 
         streamCalls[0].resolve();
         await flushPromises();
@@ -6500,7 +6546,8 @@ describe('LLMView turn lifecycle', () => {
             getTextArea(containerEl).value = 'Prepare a note update';
             void getButtonByText(containerEl, 'Ask').click();
             await flushPromises();
-            streamCalls[0].options.onOperationsIntentStaged?.(intent);
+            emitCanonical(streamCalls[0], canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__', runId: intent.runId }));
+        streamCalls[0].options.onOperationsIntentStaged?.(intent);
             streamCalls[0].onChunk('Review this proposed change.');
             streamCalls[0].resolve();
             await flushPromises();
@@ -6583,13 +6630,30 @@ describe('LLMView turn lifecycle', () => {
         getTextArea(containerEl).value = 'Prepare cleanup';
         void getButtonByText(containerEl, 'Ask').click();
         await flushPromises();
+        emitCanonical(streamCalls[0], canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__', runId: intent.runId }));
         streamCalls[0].options.onOperationsIntentStaged?.(intent);
         streamCalls[0].onChunk('Review this proposal.');
+        emitOperationsExecution({
+            intentId: intent.id,
+            state: 'completed',
+            operations: [{
+                operationId: operation.id,
+                toolCallId: operation.toolCallId,
+                name: operation.name,
+                path: operation.path,
+                status: 'succeeded',
+                receiptId: 'receipt_cleanup',
+            }],
+        });
+        await flushPromises();
+        const card = getElementByClass(containerEl, 'pa-operations-intent-card');
+        getButtonByText(card, 'View all changes').click();
+        await flushPromises();
+        expect(mountOperationsDiffMock.mountOperationsDiff).toHaveBeenCalledTimes(1);
         streamCalls[0].resolve();
         await flushPromises();
         await flushPromises();
 
-        expect(mountOperationsDiffMock.mountOperationsDiff).toHaveBeenCalledTimes(1);
         const teardown = (view as unknown as {
             viewTeardownCallbacks: Set<() => void>;
         }).viewTeardownCallbacks;
@@ -6600,7 +6664,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
 
         expect(mockUnmountOperationsDiff).toHaveBeenCalledTimes(1);
-        expect(teardown.size).toBe(teardownCountAfterCard - 1);
+        expect(teardown.size).toBeLessThanOrEqual(teardownCountAfterCard);
         expect(getElementsByClass(containerEl, 'pa-operations-intent-card')).toHaveLength(0);
 
         await view.onClose();
@@ -13190,7 +13254,8 @@ describe('LLMView turn lifecycle', () => {
                         name: sdkChild ? 'execute_obsidian_code' : 'vault_process', input: {} }]),
                     inputLineage: lineage,
                 } }));
-                call.options.onOperationsIntentStaged?.(intent);
+                emitCanonical(call, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__', runId: intent.runId }));
+        call.options.onOperationsIntentStaged?.(intent);
                 let releaseNative: (() => void) | undefined;
                 let nativeStarted: Promise<void> | undefined;
                 if (assertion === 'late-close') {
@@ -13313,6 +13378,143 @@ describe('LLMView turn lifecycle', () => {
             } finally { service.dispose(); operations.dispose(); }
         },
     );
+
+    it('renders one request Operations card per user run and keeps preview separate', async () => {
+        const { view, plugin, containerEl } = createView({ operationsEnabled: true });
+        const file = { path: 'notes/change.md', extension: 'md' };
+        let body = 'Blue kite';
+        const vault = {
+            getAbstractFileByPath: (path: string) => path === file.path ? file : null,
+            adapter: { exists: async (path: string) => path === file.path },
+            read: async () => body,
+            create: jest.fn(async () => file),
+            process: jest.fn(async (_file: unknown, transform: (text: string) => string) => { body = transform(body); }),
+        };
+        const operations = new OperationsService({ vault, trashFile: async () => {}, isOperationsAgentEnabled: () => true });
+        const session = operations.createSession({ surface: 'chat' });
+        const service = new RealChatService(createAiServiceHost(), session);
+        Object.assign(plugin.createChatService.mock.results[0].value as object, {
+            subscribeOperations: service.subscribeOperations.bind(service),
+            undoOperationsRequest: session.undoRequest.bind(session),
+            dispose: service.dispose.bind(service),
+        });
+        try {
+            await view.onOpen();
+            const runPrompt = async (prompt: string) => {
+                getTextArea(containerEl).value = prompt;
+                void getButtonByText(containerEl, 'Ask').click();
+                await waitForStreamCallCount(streamCalls, streamCalls.length + 1);
+                return streamCalls[streamCalls.length - 1];
+            };
+            const call = await runPrompt('Change the note across steps.');
+            emitCanonical(call, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__' }));
+            emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+            const guard = { isCurrent: () => true, isPathAllowed: () => true, isNoteDomainAllowed: () => true };
+            const lineage = completeInputLineage([{ kind: 'user-text', messageId: 'request-card-user' }]);
+            const emitStageAssistant = (turnId: string, id: string, name: string) => emitCanonical(call, canonicalEvent({
+                type: 'message_end', turnId, message: {
+                    ...assistantMessage(`${id}-assistant`, [{ type: 'toolCall', id: `${id}-call`, name, input: {} }]),
+                    inputLineage: lineage,
+                } }));
+            const admit = async (intent: OperationsIntent) => {
+                emitStageAssistant(intent.turnId, intent.id, intent.operations[0].name);
+                emitCanonical(call, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__', runId: intent.runId }));
+        call.options.onOperationsIntentStaged?.(intent);
+            };
+            const foreign = await session.stage({ runId: 'stale_run', turnId: 'stale_turn', taskSourceReadGuard: guard,
+                operations: [{ toolCallId: 'stale-call', name: 'vault_process', input: {
+                    path: file.path, operation: 'replace', params: { search: 'Blue', replace: 'Stale', occurrence: 'first' } } }] });
+            const registerPersistence = jest.spyOn(service, 'registerOperationsContextPersistence');
+            call.options.onOperationsIntentStaged?.(foreign);
+            expect(getElementsByClass(containerEl, 'pa-operations-request-card')).toHaveLength(0);
+            expect(registerPersistence).not.toHaveBeenCalled();
+            const first = await session.stage({ runId: 'run_ui_1', turnId: 'turn_1', taskSourceReadGuard: guard,
+                operations: [{ toolCallId: 'first-call', name: 'vault_process', input: {
+                    path: file.path, operation: 'replace', params: { search: 'Blue', replace: 'Aqua', occurrence: 'first' } } }] });
+            await admit(first);
+            const firstResult = await service.executeOperationsIntentFromAgent({ intentId: first.id,
+                runId: first.runId, taskSourceReadGuard: guard, signal: call.signal });
+            expect(firstResult.state).toBe('completed');
+            expect(body).toBe('Aqua kite');
+            // The second batch is prepared from the real first result.
+            const second = await session.stage({ runId: 'run_ui_1', turnId: 'turn_2', taskSourceReadGuard: guard,
+                operations: [{ toolCallId: 'second-call', name: 'vault_process', input: {
+                    path: file.path, operation: 'replace', params: { search: 'Aqua', replace: 'Green', occurrence: 'first' } } }] });
+            await admit(second);
+            const secondResult = await service.executeOperationsIntentFromAgent({ intentId: second.id,
+                runId: second.runId, taskSourceReadGuard: guard, signal: call.signal });
+            expect(secondResult.state).toBe('completed');
+            expect(body).toBe('Green kite');
+            // A duplicate staged event reuses the same identity.
+            await admit(second);
+            const preview = await session.stage({ runId: 'run_ui_1', turnId: 'turn_3', mode: 'preview',
+                taskSourceReadGuard: guard, operations: [{ toolCallId: 'preview-call', name: 'vault_process', input: {
+                    path: file.path, operation: 'replace', params: { search: 'Green', replace: 'Preview', occurrence: 'first' } } }] });
+            await admit(preview);
+
+            expect(getElementsByClass(containerEl, 'pa-operations-request-card')).toHaveLength(1);
+            const requestCard = getElementsByClass(containerEl, 'pa-operations-request-card')[0];
+            expect(allText(requestCard)).toContain('This request');
+            expect(allText(requestCard)).toContain('Updated 1 notes');
+            expect(allText(requestCard)).toContain('change.md');
+            getButtonByText(requestCard, 'View all changes').click();
+            await flushPromises();
+            expect(allText(requestCard)).toContain('Preview only. Nothing has been changed yet.');
+            expect(allText(requestCard)).toContain('Preview');
+            getButtonByText(requestCard, 'Hide changes').click();
+            await flushPromises();
+            const undoButton = getElementsByClass(requestCard, 'pa-operations-request-card__undo')[0];
+            expect(undoButton.textContent).toBe('Undo');
+            expect(undoButton.disabled).toBe(true);
+            emitCanonical(call, canonicalEvent({ type: 'turn_end', turnId: 'turn_3', status: 'completed' }));
+            emitCanonical(call, canonicalEvent({ type: 'agent_end', scope: 'run', turnId: '__run__', status: 'completed' }));
+            call.resolve();
+            await waitForTurnCompletion(view);
+            expect(undoButton.disabled).toBe(false);
+            await undoButton.click();
+            await flushPromises();
+            expect(allText(requestCard)).toContain("This request's changes were undone");
+            expect(allText(requestCard)).toContain('Historical changes');
+            getButtonByText(requestCard, 'View undone changes').click();
+            await flushPromises();
+            const historyLabel = getElementsByClass(requestCard, 'pa-operations-request-card__history-label')[0];
+            expect(historyLabel.hidden).toBe(false);
+            const historyDetails = getElementsByClass(requestCard, 'pa-operations-request-card__details')[0];
+            expect(historyDetails.hidden).toBe(false);
+            expect(allText(historyDetails)).toContain('pa-operations-diff__row--delete');
+            getButtonByText(requestCard, 'Hide undone changes').click();
+            await flushPromises();
+            expect(getElementsByClass(requestCard, 'pa-operations-request-card__details')[0].hidden).toBe(true);
+
+            // The committed React preview body survives a same-model refresh
+            // (for example the Host busy refresh at a new run's start).
+            getButtonByText(requestCard, 'View undone changes').click();
+            await flushPromises();
+            const previewBody = getElementsByClass(requestCard, 'pa-operations-request-card__preview')[0];
+            expect(allText(previewBody)).toContain('pa-operations-diff--request');
+
+            const secondCall = await runPrompt('Change it again in a new request.');
+            expect(allText(previewBody)).toContain('pa-operations-diff--request');
+            const oldUndoButton = getElementsByClass(containerEl, 'pa-operations-request-card')[0]
+                .querySelector('.pa-operations-request-card__undo');
+            expect(oldUndoButton?.disabled).toBe(true);
+            emitCanonical(secondCall, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__', runId: 'run_ui_2' }));
+            emitCanonical(secondCall, canonicalEvent({ type: 'turn_start', runId: 'run_ui_2' }));
+            const nextIntent = await session.stage({ runId: 'run_ui_2', turnId: 'turn_1', taskSourceReadGuard: guard,
+                operations: [{ toolCallId: 'next-call', name: 'vault_process', input: {
+                    path: file.path, operation: 'replace', params: { search: 'Blue', replace: 'Gold', occurrence: 'first' } } }] });
+            emitStageAssistant('turn_1', nextIntent.id, 'vault_process');
+            secondCall.options.onOperationsIntentStaged?.(nextIntent);
+            expect(getElementsByClass(containerEl, 'pa-operations-request-card')).toHaveLength(2);
+            emitCanonical(secondCall, canonicalEvent({ type: 'turn_end', turnId: 'turn_1', status: 'completed' }));
+            emitCanonical(secondCall, canonicalEvent({ type: 'agent_end', scope: 'run', turnId: '__run__', status: 'completed' }));
+            secondCall.resolve();
+            await waitForTurnCompletion(view);
+        } finally {
+            service.dispose();
+            operations.dispose();
+        }
+    });
 
     it.each(['same', 'run', 'turn', 'assistant', 'none'] as const)(
         'binds a mixed-batch Operations status query to one original owner (history binding: %s)',

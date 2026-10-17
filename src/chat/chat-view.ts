@@ -97,14 +97,13 @@ import {
     type OperationsSaveSuggestionState,
 } from '../ai-services/operations/save-suggestion-policy';
 import type {
-    OperationExecutionResult,
     OperationsIntent,
-    UndoResult,
 } from '../ai-services/operations/types';
 import { OperationsReviewSession } from '../ai-services/operations/operations-review-session';
 import type { OperationsStatusObservation } from '../ai-services/operations-status-tool';
 import { formatOperationsPreview } from '../ai-services/operations/operations-presentation';
 import { mountOperationsDiff } from './operations-review/mount';
+import { projectOperationsReviewResultRows } from './operations-review/OperationsReviewPanel';
 import { ShareCardModal } from '../share-card/share-card-modal';
 import {
     captureComposerImageTextSource,
@@ -340,10 +339,6 @@ type MemoryChipState = {
     visualState: "ready" | "needs-update" | "needs-setup" | "unavailable";
     actionLabel?: string;
     actionKind?: "prepare" | "update";
-};
-
-type OperationsIntentCardHandle = {
-    discard(): void;
 };
 
 function createMessageActionButton(
@@ -3970,295 +3965,424 @@ export class LLMView extends ItemView {
             return rendered;
         };
 
-        const pendingOperationsIntentIds = new Set<string>();
-        const pendingOperationsCardHandles = new Map<string, OperationsIntentCardHandle>();
         const discardPendingOperations = () => {
             for (const session of [...this.operationsReviewSessions.values()]) session.discard();
             this.operationsReviewSessions.clear();
-            for (const handle of [...pendingOperationsCardHandles.values()]) handle.discard();
-            pendingOperationsCardHandles.clear();
-            pendingOperationsIntentIds.clear();
             this.chatService.cancelPendingOperations?.();
         };
-        const renderOperationsIntentCard = (
-            rendered: RenderedMessage,
-            intent: OperationsIntent,
-        ): OperationsIntentCardHandle | undefined => {
-            if (!isCurrentSession() || rendered.messageDiv.parentElement !== this.responseDiv) return undefined;
-            const intentId = intent.id;
-            pendingOperationsIntentIds.add(intent.id);
+        interface OperationsRequestReviewState {
+            session: OperationsReviewSession | null;
+            runId: string | null;
+            discarded: boolean;
+            discard: (() => void) | null;
+        }
 
-            const reviewSession = new OperationsReviewSession({
-                intent,
+        const requestStateText = (status: string): string => {
+            if (status === 'executing' || status === 'pending') return t('plugin.chat.operations.intent.executing');
+            if (status === 'completed') return t('plugin.chat.operations.intent.completed');
+            if (status === 'partial') return t('plugin.chat.operations.intent.partial');
+            if (status === 'failed') return t('plugin.chat.operations.intent.failed');
+            if (status === 'undone') return t('plugin.chat.operations.request.undoneAll');
+            if (status === 'preview') return t('plugin.chat.operations.request.preview');
+            if (status === 'cancelled') return t('plugin.chat.operations.intent.cancelled');
+            if (status === 'expired') return t('plugin.chat.operations.intent.expired');
+            if (status === 'unavailable') return t('plugin.chat.operations.review.unavailable');
+            return t('plugin.chat.operations.request.confirming');
+        };
+
+        const requestStatusText = (snapshot: ReturnType<OperationsReviewSession['getSnapshot']>): string => {
+            if (snapshot.terminalCause === 'stopped' && snapshot.status !== 'undone') {
+                return `${t('plugin.chat.operations.request.stopped')} ${requestStateText(snapshot.status)}`;
+            }
+            if (snapshot.status === 'unknown') return t('plugin.chat.operations.request.confirming');
+            if (snapshot.status === 'undone') return t('plugin.chat.operations.request.undoneAll');
+            return requestStateText(snapshot.status);
+        };
+
+        const requestUndoFailureText = (
+            snapshot: ReturnType<OperationsReviewSession['getSnapshot']>,
+        ): string => {
+            const blocking = [...snapshot.undoResults].reverse().find(result => result.status !== 'undone');
+            if (!blocking) {
+                if (snapshot.status === 'unknown') return t('plugin.chat.operations.request.confirming');
+                if (snapshot.terminalCause === undefined && snapshot.status !== 'undone') {
+                    return t('plugin.chat.operations.request.confirming');
+                }
+                return '';
+            }
+            const category = blocking.failureCategory;
+            const base = category === 'stale_target'
+                ? t('plugin.chat.operations.request.conflict')
+                : category === 'expired'
+                    ? t('plugin.chat.operations.request.recoveryExpired')
+                    : category === 'unknown'
+                        ? t('plugin.chat.operations.request.confirming')
+                        : t('plugin.chat.operations.intent.undoFailed');
+            return base;
+        };
+
+        const createOperationsRequestCard = (
+            rendered: RenderedMessage,
+            runId: string,
+            state: OperationsRequestReviewState,
+        ): OperationsReviewSession | null => {
+            if (!isCurrentSession() || rendered.messageDiv.parentElement !== this.responseDiv) return null;
+            const session = new OperationsReviewSession({
+                scope: 'request',
+                runId,
                 controller: {
-                    undoMany: async (receiptIds) => await this.chatService.undoOperations(receiptIds),
+                    undoRequest: async input => await this.chatService.undoOperationsRequest(input),
                     ...(this.chatService.subscribeOperations ? {
                         subscribe: (listener) => this.chatService.subscribeOperations?.(listener),
                     } : {}),
                 },
                 sessionIdentity: sessionId,
                 isSourceCurrent: () => isCurrentSession(),
+                isHostBusy: () => isGenerating(),
                 onInvalidate: (reviewId) => this.host.invalidateOperationsReviewSession?.(reviewId),
             });
-            this.operationsReviewSessions.set(intentId, reviewSession);
-            this.host.registerOperationsReviewSession?.(reviewSession);
+            this.operationsReviewSessions.set(`request:${runId}`, session);
+            this.host.registerOperationsReviewSession?.(session);
 
             const card = rendered.messageDiv.createDiv({
-                cls: 'pa-operations-intent-card',
+                cls: 'pa-operations-intent-card pa-operations-request-card',
                 attr: {
                     role: 'region',
-                    'aria-label': t('plugin.chat.operations.intent.ariaLabel'),
+                    'aria-label': t('plugin.chat.operations.request.title'),
                 },
             });
             rendered.messageDiv.insertBefore(card, rendered.actionDiv);
             const header = card.createDiv({ cls: 'pa-operations-intent-card__header' });
             header.createDiv({
                 cls: 'pa-operations-intent-card__title',
-                text: t('plugin.chat.operations.intent.title'),
+                text: t('plugin.chat.operations.request.title'),
             });
             const status = header.createDiv({
                 cls: 'pa-operations-intent-card__status',
-                text: t('plugin.chat.operations.intent.pending'),
                 attr: { role: 'status', 'aria-live': 'polite' },
             });
-            const list = card.createDiv({ cls: 'pa-operations-intent-card__list' });
-            const rows = new Map<string, {
-                row: HTMLElement;
-                status: HTMLElement;
-                undo: HTMLButtonElement;
-            }>();
-            const initialModel = reviewSession.getSnapshot().model;
-            let displayedModel = initialModel;
-            let unmountDiff: (() => void) | undefined;
-            const preview = list.createDiv({ cls: 'pa-operations-intent-card__preview' });
-            if (initialModel) {
-                unmountDiff = mountOperationsDiff(preview, {
-                    model: initialModel,
-                    mode: 'compact',
-                });
-                for (const attachment of initialModel.attachments ?? []) {
-                    const attachmentRow = list.createDiv({
-                        cls: 'pa-operations-intent-card__operation',
-                    });
-                    attachmentRow.createEl('code', {
-                        cls: 'pa-operations-intent-card__path',
-                        text: attachment.path,
-                    });
-                    attachmentRow.createSpan({
-                        cls: 'pa-operations-intent-card__operation-status',
-                        text: attachment.blocked
-                            ? t('plugin.chat.operations.intent.attachmentDeleteBlocked')
-                            : attachment.action === 'delete'
-                            ? t('plugin.chat.operations.intent.attachmentDelete')
-                            : t('plugin.chat.operations.intent.attachmentKeep'),
-                    });
-                    attachmentRow.createSpan({
-                        cls: 'pa-operations-intent-card__undo',
-                        text: t('plugin.chat.operations.intent.temporaryUndo'),
-                    });
-                }
-                for (const operation of intent.operations) {
-                    const row = list.createDiv({ cls: 'pa-operations-intent-card__operation' });
-                    row.hidden = true;
-                    const rowHeader = row.createDiv({ cls: 'pa-operations-intent-card__operation-header' });
-                    rowHeader.createEl('code', {
-                        cls: 'pa-operations-intent-card__path',
-                        text: operation.kind === 'move' ? `${operation.sourcePath} → ${operation.targetPath}` : operation.path,
-                    });
-                    const rowFooter = row.createDiv({ cls: 'pa-operations-intent-card__operation-footer' });
-                    const resultStatus = rowFooter.createSpan({
-                        cls: 'pa-operations-intent-card__operation-status',
-                        attr: { 'aria-live': 'polite' },
-                    });
-                    resultStatus.hidden = true;
-                    const undoButton = rowFooter.createEl('button', {
-                        cls: 'pa-operations-intent-card__undo',
-                        text: t('plugin.chat.operations.intent.undo'),
-                        attr: { type: 'button' },
-                    });
-                    undoButton.hidden = true;
-                    rows.set(operation.id, { row, status: resultStatus, undo: undoButton });
-                }
-            }
-
+            const summary = card.createDiv({ cls: 'pa-operations-request-card__summary' });
+            const historyLabel = card.createDiv({
+                cls: 'pa-operations-request-card__history-label',
+                text: t('plugin.chat.operations.request.history'),
+            });
+            historyLabel.hidden = true;
+            const details = card.createDiv({ cls: 'pa-operations-request-card__details' });
+            details.hidden = true;
+            const actualChanges = details.createDiv({ cls: 'pa-operations-request-card__actual' });
+            const factRows = details.createDiv({ cls: 'pa-operations-intent-card__list' });
+            const previewPartition = details.createDiv({ cls: 'pa-operations-request-card__preview' });
+            const previewHeader = previewPartition.createDiv({
+                cls: 'pa-operations-request-card__preview-header',
+                text: t('plugin.chat.operations.request.preview'),
+            });
+            previewHeader.hidden = true;
+            const previewBody = previewPartition.createDiv();
+            // React owns previewBody through mount/unmount only; attachment
+            // facts live in their own host so a refresh never drops the
+            // committed preview body.
+            const previewFacts = previewPartition.createDiv({ cls: 'pa-operations-intent-card__list' });
+            let unmountActualDiff: (() => void) | undefined;
+            let unmountPreviewDiff: (() => void) | undefined;
+            let displayedActualModel: ReturnType<OperationsReviewSession['getSnapshot']>['model'] = null;
+            let displayedPreviewModel: ReturnType<OperationsReviewSession['getSnapshot']>['model'] = null;
             const actions = card.createDiv({ cls: 'pa-operations-intent-card__actions' });
+            const viewAllButton = actions.createEl('button', {
+                cls: 'pa-operations-review-secondary-button',
+                text: t('plugin.chat.operations.request.viewAll'),
+                attr: { type: 'button', 'aria-expanded': 'false' },
+            });
             const openReviewButton = actions.createEl('button', {
                 cls: 'pa-operations-review-secondary-button',
                 text: t('plugin.chat.operations.review.open'),
                 attr: { type: 'button' },
             });
-            const undoAllButton = actions.createEl('button', {
-                cls: 'pa-operations-review-secondary-button',
-                text: t('plugin.chat.operations.intent.undoAll'),
+            const undoButton = actions.createEl('button', {
+                cls: 'pa-operations-request-card__undo',
+                text: t('plugin.chat.operations.request.undo'),
                 attr: { type: 'button' },
             });
-            undoAllButton.hidden = true;
-            const openReviewError = card.createDiv({
+            const undoReason = card.createDiv({
                 cls: 'pa-operations-review-error',
                 attr: { role: 'alert' },
             });
-            openReviewError.hidden = true;
+            undoReason.hidden = true;
+            let undoReasonText = '';
 
-            const completePendingState = () => {
-                pendingOperationsIntentIds.delete(intentId);
-                pendingOperationsCardHandles.delete(intentId);
-            };
-            let cardCleaned = false;
-            let unregisterCardTeardown: () => void = () => undefined;
-            let unsubscribeReviewSession: (() => void) | null = null;
-            const cleanupCard = () => {
-                if (cardCleaned) return;
-                cardCleaned = true;
-                status.setText(t('plugin.chat.operations.review.unavailable'));
-                undoAllButton.disabled = true;
-                openReviewButton.disabled = true;
-                undoAllButton.hidden = true;
-                openReviewError.hidden = true;
-                unmountDiff?.();
-                unmountDiff = undefined;
-                displayedModel = null;
-                unsubscribeReviewSession?.();
-                reviewSession.invalidate('unavailable');
-                this.operationsReviewSessions.delete(intentId);
-                completePendingState();
-                unregisterCardTeardown();
-            };
-            unregisterCardTeardown = this.registerViewTeardown(cleanupCard);
-            const effectsText = (effects: NonNullable<OperationExecutionResult['effects']>) => effects.map(effect => {
-                const target = effect.key === 'note'
-                    ? t('plugin.chat.operations.intent.noteEffect')
-                    : t('plugin.chat.operations.intent.attachmentEffect');
-                const status = effect.status === 'applied' || effect.status === 'removed'
-                    ? t('plugin.chat.operations.intent.succeeded')
-                    : effect.status === 'restored'
-                        ? t('plugin.chat.operations.intent.undone')
-                        : effect.status === 'unknown'
-                            ? t('plugin.chat.operations.intent.unknown')
-                            : effect.status === 'not_started'
-                                ? t('plugin.chat.operations.intent.effectNotStarted')
-                                : t('plugin.chat.operations.intent.failed');
-                return `${target}: ${status}`;
-            }).join('; ');
-            const resultText = (result: OperationExecutionResult) => {
-                if (result.effects?.length) {
-                    return [effectsText(result.effects), result.message].filter(Boolean).join('; ');
+            const summarize = (snapshot: ReturnType<OperationsReviewSession['getSnapshot']>): string => {
+                const model = snapshot.model;
+                if (!model) return requestStatusText(snapshot);
+                const savedGroups = model.groups.filter(group => !group.resourceKind && !group.targetPath);
+                const hasResourceEffects = model.groups.some(group => !!group.resourceKind || !!group.targetPath);
+                // A reliable note count exists only without resource/move
+                // mixing; otherwise the real paths below carry the scope.
+                if (!hasResourceEffects) {
+                    const savedPaths = new Set(savedGroups
+                        .filter(group => group.changeCount > 0)
+                        .map(group => group.normalizedPath));
+                    if (savedPaths.size > 0) return t('plugin.chat.operations.request.summary', { count: savedPaths.size });
                 }
-                if (result.status === 'succeeded') return t('plugin.chat.operations.intent.succeeded');
-                if (result.status === 'unchanged') return t('plugin.chat.operations.intent.unchanged');
-                if (result.status === 'stale') return t('plugin.chat.operations.intent.stale');
-                if (result.status === 'skipped') return t('plugin.chat.operations.intent.skipped');
-                if (result.status === 'unknown') return t('plugin.chat.operations.intent.unknown');
-                return result.message || t('plugin.chat.operations.intent.failed');
+                return hasResourceEffects || savedGroups.some(group => group.changeCount > 0)
+                    ? t('plugin.chat.operations.request.filesChanged')
+                    : requestStatusText(snapshot);
             };
-            const undoText = (result: UndoResult, operation: OperationExecutionResult) => {
-                const effects = result.effects ?? operation.effects;
-                if (effects?.length) {
-                    return [
-                        effectsText(effects),
-                        result.message,
-                        result.checkpoint === 'attachment-restored'
-                            ? t('plugin.chat.operations.intent.attachmentRestored') : undefined,
-                    ].filter(Boolean).join('; ');
+
+            type RequestAttachmentFact = NonNullable<
+                NonNullable<ReturnType<OperationsReviewSession['getSnapshot']>['model']>['attachments']>[number];
+
+            const targetSummary = (snapshot: ReturnType<OperationsReviewSession['getSnapshot']>): string => {
+                const model = snapshot.model;
+                if (!model) return '';
+                const names: string[] = [];
+                for (const group of model.groups) {
+                    const name = group.path.split('/').pop() || group.path;
+                    if (!names.includes(name)) names.push(name);
                 }
-                if (result.status === 'undone') return t('plugin.chat.operations.intent.undone');
-                if (result.checkpoint === 'attachment-restored') return t('plugin.chat.operations.intent.attachmentRestored');
-                return result.message || t('plugin.chat.operations.intent.undoFailed');
+                for (const attachment of model.attachments ?? []) {
+                    const name = attachment.path.split('/').pop() || attachment.path;
+                    if (!names.includes(name)) names.push(name);
+                }
+                return names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3}` : '');
             };
-            const statusText = (status: string) => {
-                if (status === 'preview') return t('plugin.chat.operations.intent.preview');
-                if (status === 'executing') return t('plugin.chat.operations.intent.executing');
-                if (status === 'completed') return t('plugin.chat.operations.intent.completed');
-                if (status === 'partial') return t('plugin.chat.operations.intent.partial');
-                if (status === 'failed') return t('plugin.chat.operations.intent.failed');
-                if (status === 'unknown') return t('plugin.chat.operations.intent.unknown');
-                if (status === 'undone') return t('plugin.chat.operations.intent.undone');
-                if (status === 'cancelled') return t('plugin.chat.operations.intent.cancelled');
-                if (status === 'discarded') return t('plugin.chat.operations.intent.discarded');
-                if (status === 'expired') return t('plugin.chat.operations.intent.expired');
-                if (status === 'unavailable') return t('plugin.chat.operations.review.unavailable');
-                return t('plugin.chat.operations.intent.pending');
+
+            const attachmentText = (attachment: RequestAttachmentFact, planned: boolean): string => {
+                if (planned) return t('plugin.chat.operations.request.preview');
+                if (attachment.blocked) return t('plugin.chat.operations.intent.attachmentDeleteBlocked');
+                if (attachment.outcome === 'unknown') return t('plugin.chat.operations.intent.unknown');
+                return attachment.action === 'delete'
+                    ? t('plugin.chat.operations.intent.attachmentDelete')
+                    : t('plugin.chat.operations.intent.attachmentKeep');
+            };
+
+            const renderAttachmentRow = (
+                container: HTMLElement,
+                attachment: RequestAttachmentFact,
+                planned: boolean,
+            ): void => {
+                const rowEl = container.createDiv({ cls: 'pa-operations-intent-card__operation' });
+                rowEl.createEl('code', { cls: 'pa-operations-intent-card__path', text: attachment.path });
+                rowEl.createSpan({
+                    cls: 'pa-operations-intent-card__operation-status',
+                    text: attachmentText(attachment, planned),
+                });
+                void planned;
+            };
+
+            const clearChildren = (element: HTMLElement): void => {
+                while (element.firstChild) element.removeChild(element.firstChild);
+            };
+
+            let cleanupCard: () => void = () => undefined;
+            let expanded = false;
+            let historyMode = false;
+            const collapseCard = (): void => {
+                expanded = false;
+                historyMode = false;
+                details.hidden = true;
+                viewAllButton.setAttribute('aria-expanded', 'false');
+                unmountActualDiff?.();
+                unmountActualDiff = undefined;
+                unmountPreviewDiff?.();
+                unmountPreviewDiff = undefined;
+                displayedActualModel = null;
+                displayedPreviewModel = null;
             };
             const renderSnapshot = () => {
-                const snapshot = reviewSession.getSnapshot();
-                if (!snapshot.model) {
+                if (state.discarded) return;
+                const snapshot = session.getSnapshot();
+                if (snapshot.status === 'unavailable') {
                     cleanupCard();
                     return;
                 }
-                status.setText(snapshot.status === 'completed' && snapshot.operationResults.length > 0
-                    && snapshot.operationResults.every(result => result.status === 'unchanged')
-                    ? t('plugin.chat.operations.intent.unchanged') : statusText(snapshot.status));
-                if (displayedModel !== snapshot.model) {
-                    unmountDiff?.();
-                    unmountDiff = mountOperationsDiff(preview, { model: snapshot.model, mode: 'compact' });
-                    displayedModel = snapshot.model;
+                if (snapshot.status === 'undone' && expanded && !historyMode) {
+                    // All-recovered resets expansion; history stays behind its
+                    // explicit labeled entry.
+                    collapseCard();
                 }
-                const pendingVisible = snapshot.status === 'pending';
-                undoAllButton.hidden = !reviewSession.canUndo();
-                undoAllButton.disabled = snapshot.actionInFlight !== null;
-                openReviewButton.disabled = !this.host.openOperationsReview;
-                if (!pendingVisible) completePendingState();
-
-                const undoByReceipt = new Map(snapshot.undoResults.map(result => [result.receiptId, result]));
-                const undoByOperation = new Map(snapshot.undoResults.map(result => [
-                    result.operationId,
-                    result,
-                ]));
-                for (const result of snapshot.operationResults) {
-                    const row = rows.get(result.operationId);
-                    if (!row) continue;
-                    row.row.hidden = false;
-                    row.status.hidden = false;
-                    row.status.setText(resultText(result));
-                    row.status.dataset.status = result.status;
-                    row.undo.hidden = !result.receiptId || result.undoAvailable === false;
-                    row.undo.disabled = !reviewSession.canUndo() || snapshot.actionInFlight !== null;
-                    const receiptId = result.receiptId;
-                    const undoResult = (receiptId ? undoByReceipt.get(receiptId) : undefined)
-                        ?? undoByOperation.get(result.operationId);
-                    if (!receiptId && !undoResult) continue;
-                    if (undoResult) {
-                        row.status.setText(undoText(undoResult, result));
-                        row.status.dataset.status = undoResult.status;
-                        row.undo.hidden = undoResult.status === 'undone' || undoResult.undoAvailable === false;
+                status.setText(requestStatusText(snapshot));
+                summary.setText([summarize(snapshot), targetSummary(snapshot)]
+                    .filter(Boolean).join(' · '));
+                if (historyMode && !snapshot.historicalModel) {
+                    // The snapshot no longer projects history; return the card
+                    // to current changes instead of a residual history label.
+                    historyMode = false;
+                }
+                const hasUndoHistory = snapshot.historicalModel !== null
+                    && snapshot.undoResults.some(result => result.status === 'undone');
+                const model = historyMode && snapshot.historicalModel ? snapshot.historicalModel : snapshot.model;
+                const changedCount = snapshot.model?.groups.length ?? 0;
+                const showHistory = snapshot.status === 'undone' || hasUndoHistory;
+                historyLabel.hidden = !(showHistory && historyMode);
+                if (showHistory && !historyMode) {
+                    viewAllButton.setText(t('plugin.chat.operations.request.viewHistory'));
+                } else if (historyMode) {
+                    viewAllButton.setText(t('plugin.chat.operations.request.hideHistory'));
+                } else {
+                    viewAllButton.setText(expanded
+                        ? t('plugin.chat.operations.request.hideAll')
+                        : t('plugin.chat.operations.request.viewAll'));
+                }
+                const hasReviewableFacts = changedCount > 0
+                    || (snapshot.model?.blockers?.length ?? 0) > 0
+                    || (snapshot.model?.attachments?.length ?? 0) > 0
+                    || (snapshot.model?.previewAttachments?.length ?? 0) > 0
+                    || (snapshot.model?.previewGroups?.length ?? 0) > 0;
+                viewAllButton.hidden = !hasReviewableFacts
+                    && !(showHistory && snapshot.historicalModel);
+                if (expanded && displayedActualModel !== model) {
+                    unmountActualDiff?.();
+                    unmountActualDiff = model
+                        && (model.groups.length > 0 || (model.blockers?.length ?? 0) > 0)
+                        ? mountOperationsDiff(actualChanges, { model, mode: 'request' })
+                        : undefined;
+                    displayedActualModel = model;
+                }
+                if (expanded && displayedPreviewModel !== snapshot.model) {
+                    const previewModel = snapshot.model
+                        && ((snapshot.model.previewGroups?.length ?? 0) > 0
+                            || (snapshot.model.previewAttachments?.length ?? 0) > 0)
+                        ? snapshot.model
+                        : null;
+                    unmountPreviewDiff?.();
+                    unmountPreviewDiff = previewModel
+                        ? mountOperationsDiff(previewBody, {
+                            model: { ...previewModel, groups: previewModel.previewGroups ?? [] },
+                            mode: 'request',
+                        })
+                        : undefined;
+                    displayedPreviewModel = snapshot.model;
+                    previewHeader.hidden = !previewModel;
+                }
+                if (expanded) {
+                    // Facts describe the current snapshot only; stale rows are
+                    // replaced, never accumulated beside newer outcomes.
+                    clearChildren(factRows);
+                    for (const row of projectOperationsReviewResultRows(snapshot)) {
+                        // A plain successful write is already represented by
+                        // the net diff; only failure/unknown/partial/recovery
+                        // facts need an explicit row in the request card.
+                        if (row.status === 'succeeded' && !row.undoResult) continue;
+                        const rowEl = factRows.createDiv({ cls: 'pa-operations-intent-card__operation' });
+                        const rowHeader = rowEl.createDiv({ cls: 'pa-operations-intent-card__operation-header' });
+                        rowHeader.createEl('code', {
+                            cls: 'pa-operations-intent-card__path',
+                            text: row.operationResult.targetPath
+                                ? `${row.operationResult.path} → ${row.operationResult.targetPath}`
+                                : row.operationResult.path,
+                        });
+                        rowEl.createSpan({
+                            cls: 'pa-operations-intent-card__operation-status',
+                            text: row.message,
+                            attr: { 'data-status': row.status },
+                        });
                     }
-                    row.undo.onclick = () => {
-                        if (row.undo.disabled || !receiptId) return;
-                        void reviewSession.undo([receiptId]);
-                    };
+                    for (const attachment of snapshot.model?.attachments ?? []) {
+                        renderAttachmentRow(factRows, attachment, false);
+                    }
+                    clearChildren(previewFacts);
+                    for (const attachment of snapshot.model?.previewAttachments ?? []) {
+                        renderAttachmentRow(previewFacts, attachment, true);
+                    }
                 }
+                const undoInFlight = snapshot.actionInFlight !== null;
+                undoButton.setText(undoInFlight
+                    ? t('plugin.chat.operations.request.undoing')
+                    : t('plugin.chat.operations.request.undo'));
+                const undoAllowed = session.canUndo();
+                undoButton.disabled = !undoAllowed || undoInFlight;
+                undoButton.hidden = snapshot.status === 'undone' || snapshot.status === 'preview';
+                const blockingReason = requestUndoFailureText(snapshot);
+                const remaining = session.activeReceiptIds().length;
+                undoReasonText = snapshot.status === 'undone' || snapshot.status === 'preview'
+                    ? ''
+                    : blockingReason
+                        ? (remaining > 0
+                            ? `${blockingReason} · ${t('plugin.chat.operations.request.remaining', { count: remaining })}`
+                            : blockingReason)
+                        : !undoAllowed && snapshot.terminalCause !== undefined
+                            ? t('plugin.chat.operations.request.undoUnavailable')
+                            : snapshot.error ?? '';
+                undoReason.setText(undoReasonText);
+                undoReason.hidden = undoButton.hidden || !undoReasonText;
+                openReviewButton.disabled = !this.host.openOperationsReview || !model;
             };
-            unsubscribeReviewSession = reviewSession.subscribe(renderSnapshot);
-            renderSnapshot();
-
+            viewAllButton.onclick = () => {
+                if (state.discarded) return;
+                const snapshot = session.getSnapshot();
+                const hasUndoHistory = snapshot.historicalModel !== null
+                    && snapshot.undoResults.some(result => result.status === 'undone');
+                if ((snapshot.status === 'undone' || hasUndoHistory) && snapshot.historicalModel && !historyMode) {
+                    historyMode = true;
+                    expanded = true;
+                } else if (historyMode) {
+                    historyMode = false;
+                    expanded = false;
+                } else {
+                    expanded = !expanded;
+                }
+                details.hidden = !expanded;
+                viewAllButton.setAttribute('aria-expanded', String(expanded));
+                if (!expanded) {
+                    unmountActualDiff?.();
+                    unmountActualDiff = undefined;
+                    unmountPreviewDiff?.();
+                    unmountPreviewDiff = undefined;
+                    displayedActualModel = null;
+                    displayedPreviewModel = null;
+                }
+                renderSnapshot();
+            };
             openReviewButton.onclick = async () => {
-                if (cardCleaned || openReviewButton.disabled) return;
+                if (state.discarded || openReviewButton.disabled) return;
                 openReviewButton.disabled = true;
-                openReviewError.hidden = true;
+                undoReason.hidden = true;
                 try {
-                    await this.host.openOperationsReview?.(reviewSession.reviewId);
-                } catch (error) {
-                    openReviewError.setText(error instanceof Error && error.message
-                        ? error.message
-                        : t('plugin.chat.operations.review.openFailed'));
-                    openReviewError.hidden = false;
+                    await this.host.openOperationsReview?.(session.reviewId);
+                } catch {
+                    undoReason.setText(t('plugin.chat.operations.review.openFailed'));
+                    undoReason.hidden = false;
                 } finally {
-                    if (!cardCleaned) openReviewButton.disabled = !this.host.openOperationsReview;
+                    if (!state.discarded) openReviewButton.disabled = !this.host.openOperationsReview;
                 }
             };
-            undoAllButton.onclick = () => {
-                if (cardCleaned || undoAllButton.disabled) return;
-                void reviewSession.undoAll();
+            undoButton.onclick = () => {
+                if (state.discarded || undoButton.disabled || isGenerating() || !session.canUndo()) return;
+                void session.undoRequest();
             };
+            const unsubscribe = session.subscribe(() => renderSnapshot());
+            const unregisterTeardown = this.registerViewTeardown(() => cleanupCard());
+            cleanupCard = () => {
+                if (state.discarded) return;
+                state.discarded = true;
+                unmountActualDiff?.();
+                unmountActualDiff = undefined;
+                unmountPreviewDiff?.();
+                unmountPreviewDiff = undefined;
+                displayedActualModel = null;
+                displayedPreviewModel = null;
+                unsubscribe();
+                session.invalidate('unavailable');
+                this.operationsReviewSessions.delete(`request:${runId}`);
+                unregisterTeardown();
+            };
+            state.discard = cleanupCard;
+            renderSnapshot();
             scrollToBottom({ force: true });
-            const handle: OperationsIntentCardHandle = {
-                discard: () => {
-                    if (cardCleaned || !pendingOperationsIntentIds.has(intentId)) return;
-                    reviewSession.discard();
-                    completePendingState();
-                },
-            };
-            pendingOperationsCardHandles.set(intentId, handle);
-            return handle;
+            return session;
+        };
+
+        const upsertRequestOperationsCard = (
+            state: OperationsRequestReviewState,
+            rendered: RenderedMessage,
+            intent: OperationsIntent,
+        ): OperationsReviewSession | null => {
+            if (state.session && state.runId !== intent.runId) return state.session;
+            state.runId = intent.runId;
+            if (!state.session) {
+                state.session = createOperationsRequestCard(rendered, intent.runId, state);
+            }
+            state.session?.addIntent(intent);
+            return state.session;
         };
 
         const deleteHistoryPairForMessages = async (expectedUser: ChatMessage, expectedAssistant: ChatMessage) => {
@@ -6548,7 +6672,10 @@ export class LLMView extends ItemView {
                     || explicitImageIntent.promptLineage || explicitImageIntent.reusePreparedPrompt)
                 ? explicitImageIntent.generationOptions.count : undefined;
             const acceptedImageCounts = new Map<string, number>();
-            const operationsCardHandles: OperationsIntentCardHandle[] = [];
+            const requestReview: OperationsRequestReviewState = {
+                session: null, runId: null, discarded: false, discard: null,
+            };
+            for (const liveReview of this.operationsReviewSessions.values()) liveReview.refresh?.();
             let sawLegacyPartialFailure = false;
             let responseContent = '';
             const isUiTurnVisible = () => isCurrentSession()
@@ -7161,6 +7288,12 @@ export class LLMView extends ItemView {
                         pageletHandoff: turnPageletHandoff ?? undefined,
                         onOperationsIntentStaged: (intent) => {
                             if (!acceptingStreamEvents || !isLiveTurn()) return;
+                            // Host-owned identity comes first: only the current
+                            // canonical user run may enter this turn's action
+                            // persistence or request card. Foreign/old staged
+                            // events never register observers here.
+                            if (!turn.canonicalLifecycle.runId
+                                || turn.canonicalLifecycle.runId !== intent.runId) return;
                             if (!turn.assistantMessage) updateResponseContent(responseContent);
                             const prepared = persistCanonicalTurnFromLifecycle(turn, responseContent);
                             // The retained snapshot may still project the last ended turn;
@@ -7216,8 +7349,9 @@ export class LLMView extends ItemView {
                                     }
                                 });
                             }
-                            const handle = turn.assistantMessage ? renderOperationsIntentCard(turn.assistantMessage, intent) : undefined;
-                            if (handle) operationsCardHandles.push(handle);
+                            if (turn.assistantMessage) {
+                                upsertRequestOperationsCard(requestReview, turn.assistantMessage, intent);
+                            }
                         },
                         onDebugReference: reference => {
                             if (!acceptingStreamEvents || !isLiveTurn()) return;
@@ -7336,14 +7470,11 @@ export class LLMView extends ItemView {
                 );
 
                 if (!isLiveTurn()) {
-                    for (const handle of operationsCardHandles) handle.discard();
+                    requestReview.discard?.();
                     return;
                 }
                 if (imageOperationRecord.plan && [...acceptedImageCounts.values()].reduce((sum, count) => sum + count, 0) !== imageOperationRecord.plan.total) {
                     throw new Error('image_generation:separate_request_incomplete');
-                }
-                if (operationsCardHandles.length > 0 && responseContent.trim().length === 0) {
-                    updateResponseContent(t('plugin.chat.operations.intent.acknowledgement'));
                 }
                 isFinalizing = true;
                 syncComposerControls();
@@ -7371,7 +7502,6 @@ export class LLMView extends ItemView {
                 }
 
             } catch (error) {
-                for (const handle of operationsCardHandles) handle.discard();
                 if (!isSameTurn()) return;
                 // Recovery may await rendering and persistence. Close callbacks
                 // now, while isSameTurn still permits that recovery to finish.
@@ -7469,6 +7599,11 @@ export class LLMView extends ItemView {
                     }
                 }
             } finally {
+                requestReview.session?.finishRun(
+                    controller.signal.aborted ? 'stopped'
+                        : turn.canonicalLifecycle.terminalStatus === 'error' ? 'failed'
+                        : 'completed',
+                );
                 if (!isSameTurn() && turn.statusView?.timerId !== undefined && turn.chatDeliveredAt === undefined) {
                     turn.chatDeliveredAt = Date.now();
                     turn.statusView.timerFrozenAt ??= turn.chatDeliveredAt;
@@ -7499,6 +7634,8 @@ export class LLMView extends ItemView {
                         );
                     }
                     this.abortController = null;
+                    requestReview.session?.refresh?.();
+                    for (const liveReview of this.operationsReviewSessions.values()) liveReview.refresh?.();
                     this.activeTurnCancelled = false;
                     isStopping = false;
                     isFinalizing = false;

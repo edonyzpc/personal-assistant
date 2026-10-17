@@ -13,6 +13,7 @@
 
 ## Capture、Recall 与 Context
 
+- [Chat 本次修改单卡汇总](./specs/pa-chat-request-change-summary-product-spec.md) — B-178：本次请求的完整变化与整次「撤销 / Undo」、中英文 UI；[架构](../architecture/pa-agent-architecture-plan.md#operations-agent-providers)、[验证与边界](../archive/2026/b178-chat-request-change-summary-validation.md)。
 - [Obsidian 内部通用执行与资源 SDK](./specs/pa-obsidian-resource-sdk-product-spec.md) — B-174：核心资源SDK、可组合执行与现有owner；[架构](../architecture/obsidian-resource-sdk.md)、[验证与边界](../archive/2026/b174-obsidian-resource-sdk-validation.md)。
 - [单次写入与原生移动](./specs/pa-direct-operations-product-spec.md) — B-173：直接写入、review/现有 Undo、结果连续性与能力不足收敛；[验证与边界](../archive/2026/b173-direct-operations-validation.md)。
 - [工具混合披露](./specs/pa-agent-tool-disclosure-product-spec.md) — B-172：基础直供、完整短目录与批量加载；[验证与边界](../archive/2026/b172-agent-tool-disclosure-validation.md)。

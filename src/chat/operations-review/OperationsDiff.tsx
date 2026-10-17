@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 
 import type {
     OperationsReviewDiffLine,
@@ -9,7 +9,7 @@ import { pluginT, getPluginUiLanguage } from '../../locales/plugin';
 
 export interface OperationsDiffProps {
     model: OperationsReviewModel;
-    mode: 'compact' | 'full';
+    mode: 'compact' | 'full' | 'request';
     activeGroupIndex?: number;
 }
 
@@ -20,6 +20,8 @@ export function OperationsDiff({ model, mode, activeGroupIndex }: OperationsDiff
     const compactVisibility = mode === 'compact' ? getOperationsCompactVisibility(model) : null;
     const groups = mode === 'compact'
         ? model.groups.slice(0, 2)
+        : mode === 'request'
+            ? model.groups
         : activeGroupIndex === undefined
             ? model.groups
             : model.groups.slice(activeGroupIndex, activeGroupIndex + 1);
@@ -30,6 +32,7 @@ export function OperationsDiff({ model, mode, activeGroupIndex }: OperationsDiff
                 key={group.id}
                 group={group}
                 mode={mode}
+                allBlocks={mode === 'request'}
                 maxChangedRows={compactVisibility?.limits[index] ?? shownLimit}
             />
         );
@@ -73,11 +76,12 @@ export function OperationsDiff({ model, mode, activeGroupIndex }: OperationsDiff
 
 interface OperationsGroupDiffProps {
     group: OperationsReviewFileGroup;
-    mode: 'compact' | 'full';
+    mode: 'compact' | 'full' | 'request';
+    allBlocks?: boolean;
     maxChangedRows: number;
 }
 
-function OperationsGroupDiff({ group, mode, maxChangedRows }: OperationsGroupDiffProps): ReactNode {
+function OperationsGroupDiff({ group, mode, allBlocks, maxChangedRows }: OperationsGroupDiffProps): ReactNode {
     const [activeBlock, setActiveBlock] = useState(0);
     const [showAllContext, setShowAllContext] = useState(false);
     const [showCompleteBefore, setShowCompleteBefore] = useState(false);
@@ -107,11 +111,20 @@ function OperationsGroupDiff({ group, mode, maxChangedRows }: OperationsGroupDif
             </section>
         );
     }
-    const block = group.blocks[Math.min(activeBlock, Math.max(0, group.blocks.length - 1))];
     const compactLimitReached = mode === 'compact' && maxChangedRows <= 0;
+    const block = group.blocks[Math.min(activeBlock, Math.max(0, group.blocks.length - 1))];
     let rows: readonly OperationsReviewDiffLine[] = [];
+    // The all-blocks gap is presentation-only. It never becomes a diff line,
+    // so it cannot inherit row facts such as a missing final newline.
+    let allBlockParts: Array<{ key: string; lines: readonly OperationsReviewDiffLine[] }> | null = null;
     if (!compactLimitReached) {
-        if (showAllContext && mode === 'full') rows = group.lines;
+        if (showAllContext && mode !== 'compact') rows = group.lines;
+        else if (allBlocks) {
+            allBlockParts = group.blocks.map(part => ({
+                key: part.id,
+                lines: group.lines.slice(part.startIndex, part.endIndex + 1),
+            }));
+        }
         else if (block) rows = group.lines.slice(block.startIndex, block.endIndex + 1);
         else rows = group.lines.slice(0, mode === 'compact' ? 12 : group.lines.length);
         if (mode === 'compact' && maxChangedRows < Number.POSITIVE_INFINITY) {
@@ -172,19 +185,44 @@ function OperationsGroupDiff({ group, mode, maxChangedRows }: OperationsGroupDif
 
             {!compactLimitReached && (
                 <div className="pa-operations-diff__rows" role="table" aria-label={group.path}>
-                    {rows.map((row, index) => (
-                        <OperationsDiffRow
-                            key={row.id}
-                            row={row}
-                            mode={mode}
-                            eolChangeLabel={getOperationsEolChangeLabel(row, rows[index + 1])
-                                ?? getOperationsEolChangeLabel(row, rows[index - 1])}
-                        />
-                    ))}
+                    {allBlockParts
+                        ? allBlockParts.map((part, partIndex) => (
+                            <Fragment key={part.key}>
+                                {partIndex > 0 && (
+                                    <div className="pa-operations-diff__block-gap" role="presentation">
+                                        {t('plugin.chat.operations.review.blockSeparator')}
+                                    </div>
+                                )}
+                                {part.lines.map((row, index) => (
+                                    <OperationsDiffRow
+                                        key={row.id}
+                                        row={row}
+                                        mode={mode}
+                                        eolChangeLabel={getOperationsEolChangeLabel(row, part.lines[index + 1])
+                                            ?? getOperationsEolChangeLabel(row, part.lines[index - 1])}
+                                    />
+                                ))}
+                            </Fragment>
+                        ))
+                        : rows.map((row, index) => (
+                            <OperationsDiffRow
+                                key={row.id}
+                                row={row}
+                                mode={mode}
+                                eolChangeLabel={getOperationsEolChangeLabel(row, rows[index + 1])
+                                    ?? getOperationsEolChangeLabel(row, rows[index - 1])}
+                            />
+                        ))}
                 </div>
             )}
 
-            {mode === 'full' && (
+            {allBlocks && group.hasSnapshotBreakpoint && (
+                <p className="pa-operations-diff__breakpoint" role="note">
+                    {t('plugin.chat.operations.review.snapshotBreakpoint')}
+                </p>
+            )}
+
+            {mode !== 'compact' && (
                 <div className="pa-operations-diff__full-controls">
                     {!showAllContext && (
                         <button
@@ -233,7 +271,7 @@ function OperationsDiffRow({
     eolChangeLabel,
 }: {
     row: OperationsReviewDiffLine;
-    mode: 'compact' | 'full';
+    mode: 'compact' | 'full' | 'request';
     eolChangeLabel: string | null;
 }): ReactNode {
     const marker = row.kind === 'delete' ? '-' : row.kind === 'insert' ? '+' : '';

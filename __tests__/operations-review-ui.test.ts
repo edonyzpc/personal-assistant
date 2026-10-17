@@ -69,6 +69,36 @@ function group(id: string, changeCount: number, firstBlockChanges = changeCount)
 }
 
 describe("OperationsDiff presentation calculations", () => {
+    it("renders every changed block of a request diff without per-block navigation", () => {
+        const model: OperationsReviewModel = { intentId: "request", groups: [group("request", 8, 2)] };
+        const html = renderToStaticMarkup(createElement(OperationsDiff, { model, mode: "request" }));
+        expect(html.match(/request-</g)).toHaveLength(8);
+        expect(html.match(/<mark class="pa-operations-diff__highlight">[1-8]<\/mark>/g)).toHaveLength(8);
+        expect(html).toContain("position gap");
+        expect(html).toContain("pa-operations-diff__block-gap");
+        // Every input row ends with a newline; the synthetic presentation gap
+        // must not claim a real missing final newline.
+        expect(html).not.toContain("No newline at end");
+        expect(html).not.toContain("\\n?");
+        expect(html).not.toContain("Show block");
+    });
+
+    it("keeps the missing-final-newline marker for a genuine note line", () => {
+        const model = createOperationsReviewModel({
+            id: "no-newline-intent", runId: "run", turnId: "turn", createdAt: 1, expiresAt: 2,
+            state: "pending",
+            operations: [{
+                id: "op", toolCallId: "call", name: "vault_process",
+                input: { path: "notes/no-newline.md", operation: "replace",
+                    params: { search: "before", replace: "after" } },
+                path: "notes/no-newline.md", expectedBefore: "before", expectedAfter: "after",
+            }],
+        });
+        const html = renderToStaticMarkup(createElement(OperationsDiff, { model, mode: "request" }));
+        expect(html).toContain("No newline at end");
+        expect(html).toContain("\\n?");
+    });
+
     it.each(["preview", "unavailable", "available"] as const)("uses the actual mkdir result for the %s Undo explanation", state => {
         const intent: OperationsIntent = { id: "mkdir-intent", runId: "run", turnId: "turn", createdAt: 1, expiresAt: 2,
             state: "pending", mode: state === "preview" ? "preview" : "apply", operations: [{ kind: "resource", id: "mkdir-op",
@@ -225,6 +255,13 @@ describe("OperationsDiff presentation calculations", () => {
         expect(projectOperationsReviewResultRows(snapshot)[0]?.message).toContain("restored");
         expect(projectOperationsReviewResultRows(snapshot)[0]?.message).toContain("Note: Applied");
         expect(projectOperationsReviewResultRows(snapshot)[0]?.message).toContain("Image file: Undone");
+        const fullyUndoneSnapshot = {
+            ...snapshot,
+            undoResults: [{ ...undoResult, status: "undone" as const }],
+        };
+        const fullyUndoneMessage = projectOperationsReviewResultRows(fullyUndoneSnapshot)[0]?.message ?? "";
+        expect(fullyUndoneMessage).toContain("Image file: Undone");
+        expect(fullyUndoneMessage).not.toContain("Could not undo safely");
     });
 
     it("preserves known note effects alongside an unknown attachment outcome and its error in full review", () => {
@@ -233,7 +270,18 @@ describe("OperationsDiff presentation calculations", () => {
             intentId: "unknown-intent",
             status: "partial",
             actionInFlight: null,
-            model: { intentId: "unknown-intent", groups: [group("unknown", 2)] },
+            model: {
+                intentId: "unknown-intent",
+                groups: [group("unknown", 2)],
+                attachments: [{
+                    id: "unknown-image:attachment",
+                    path: "assets/image-inline.png",
+                    action: "keep",
+                    plannedAction: "remove",
+                    undoLimitation: "temporary-attachment-and-note",
+                    outcome: "unknown",
+                }],
+            },
             execution: null,
             operationResults: [{
                 operationId: "unknown-image",
@@ -255,6 +303,9 @@ describe("OperationsDiff presentation calculations", () => {
         const session = { getSnapshot: () => snapshot, subscribe: () => () => undefined, canUndo: () => false };
         const html = renderToStaticMarkup(createElement(OperationsReviewPanel, { session: session as never }));
         expect(html).toContain("Note: Applied; Image file: Outcome unknown; Attachment deletion outcome could not be verified.");
+        expect(html).toContain("assets/image-inline.png");
+        expect(html).toContain("Outcome unknown");
+        expect(html).not.toContain("The local image file will stay in your vault");
         snapshot.operationResults = [{ ...snapshot.operationResults[0]!, effects: [{ key: "note", status: "not_started" }, { key: "attachment", status: "not_started" }] }];
         expect(projectOperationsReviewResultRows(snapshot)[0]?.message).toContain("Note: Not started; Image file: Not started");
     });
@@ -288,11 +339,11 @@ describe("OperationsDiff presentation calculations", () => {
             error: null,
         };
         expect(projectOperationsReviewResultRows(snapshot)[0]?.message).toBe(
-            "Note: Applied; Image file: Outcome unknown; Recovery is no longer available.",
+            "Note: Applied; Image file: Outcome unknown; Could not undo safely",
         );
         const session = { getSnapshot: () => snapshot, subscribe: () => () => undefined, canUndo: () => false };
         const html = renderToStaticMarkup(createElement(OperationsReviewPanel, { session: session as never }));
-        expect(html).toContain("Note: Applied; Image file: Outcome unknown; Recovery is no longer available.");
+        expect(html).toContain("Note: Applied; Image file: Outcome unknown; Could not undo safely");
     });
 
     it("hides an already undone row while leaving another valid row Undo-able", () => {
@@ -471,6 +522,15 @@ describe("Operations full-review result projection", () => {
             failureCategory: "stale_target",
             message: "note changed",
         };
+        const fsError: OperationExecutionResult = {
+            operationId: "operation-fs",
+            toolCallId: "call-fs",
+            name: "vault_append",
+            path: "notes/other.md",
+            status: "failed",
+            failureCategory: "fs_error",
+            message: "owner diagnostic english text",
+        };
         const undo: UndoResult = {
             receiptId: "receipt-create",
             operationId: "operation-create",
@@ -486,7 +546,7 @@ describe("Operations full-review result projection", () => {
             actionInFlight: null,
             model: null,
             execution: null,
-            operationResults: [succeeded, stale],
+            operationResults: [succeeded, stale, fsError],
             undoResults: [undo],
             error: null,
         };
@@ -499,9 +559,39 @@ describe("Operations full-review result projection", () => {
         ])).toEqual([
             ["operation-create", "stale", 1],
             ["operation-stale", "stale", 2],
+            ["operation-fs", "failed", 1],
         ]);
-        expect(rows[0]?.message).toContain("cannot undo safely");
-        expect(rows[1]?.message).toContain("note changed");
+        expect(rows[0]?.message).toContain("Target changed; recovery stopped");
+        expect(rows[1]?.message).toBe("Stopped: note changed after preview");
+        expect(rows[2]?.message).toBe("No further changes were applied.");
+        expect(rows[2]?.message).not.toContain("owner diagnostic english text");
+    });
+
+    it("maps an expired SDK Undo result to recovery expiry, not preview expiry", () => {
+        const sdkUndoExpired: OperationExecutionResult = {
+            operationId: "sdk-undo-expired",
+            toolCallId: "call-sdk-undo-expired",
+            name: "obsidian.operations.undo",
+            path: "notes/a.md",
+            status: "failed",
+            failureCategory: "expired",
+            message: "Undo receipt is expired.",
+            undoAvailable: false,
+            resourceEffect: { kind: "undo", undoStatus: "expired" },
+        };
+        const snapshot: OperationsReviewSnapshot = {
+            reviewId: "opr-sdk-undo-expired",
+            intentId: "intent-sdk-undo-expired",
+            status: "partial",
+            actionInFlight: null,
+            model: null,
+            execution: null,
+            operationResults: [sdkUndoExpired],
+            undoResults: [],
+            error: null,
+        };
+        expect(projectOperationsReviewResultRows(snapshot)[0]?.message)
+            .toBe("The recovery window for this change has expired.");
     });
 
     it("maps a controller receipt-only expired Undo result by receipt before operation identity", () => {
@@ -536,9 +626,104 @@ describe("Operations full-review result projection", () => {
                 operationResult: succeeded,
                 undoResult: expired,
                 status: "expired",
-                message: "Undo receipt is expired.",
+                message: "The recovery window for this change has expired.",
                 pathOperationNumber: 1,
             }),
         ]);
+    });
+});
+
+describe("OperationsReviewPanel request scope", () => {
+    it("offers one whole-request Undo entry and keeps blocked recovery facts visible", () => {
+        const model = createOperationsReviewModel({
+            id: "request-intent", runId: "request-run", turnId: "turn", createdAt: 1, expiresAt: 2,
+            state: "pending",
+            operations: [{
+                id: "op", toolCallId: "call", name: "vault_append",
+                input: { path: "notes/a.md", content: "\nB" },
+                path: "notes/a.md", expectedBefore: "A", expectedAfter: "A\nB",
+            }],
+        });
+        const snapshot: OperationsReviewSnapshot = {
+            reviewId: "opr-request", intentId: "request-run", scope: "request", runId: "request-run",
+            status: "partial", actionInFlight: null, model, execution: null,
+            operationResults: [{
+                operationId: "op", toolCallId: "call", name: "vault_append",
+                path: "notes/a.md", status: "succeeded", receiptId: "receipt",
+            }],
+            undoResults: [{ receiptId: "receipt", operationId: "op", status: "stale",
+                failureCategory: "stale_target" }],
+            error: null,
+        };
+        const historicalSnapshot = {
+            ...snapshot,
+            status: "partial" as const,
+            undoResults: [
+                ...snapshot.undoResults,
+                { receiptId: "receipt-2", operationId: "op-2", status: "undone" as const },
+            ],
+            historicalModel: model,
+        };
+        const historicalHtml = renderToStaticMarkup(createElement(OperationsReviewPanel, {
+            session: {
+                getSnapshot: () => historicalSnapshot,
+                subscribe: () => () => {},
+                canUndo: () => true,
+                activeReceiptIds: () => ["receipt"],
+                undoRequest: () => Promise.resolve([]),
+            } as never,
+        }));
+        expect(historicalHtml).toContain("Historical changes");
+        expect(historicalHtml).toContain("pa-operations-diff--request");
+        let undone = false;
+        const session = {
+            getSnapshot: () => snapshot,
+            subscribe: () => () => {},
+            canUndo: () => undone === false,
+            activeReceiptIds: () => undone ? [] : ["receipt"],
+            undoRequest: () => { undone = true; return Promise.resolve([]); },
+        };
+        const html = renderToStaticMarkup(createElement(OperationsReviewPanel, { session: session as never }));
+        expect(html).toContain(">Undo<");
+        expect(html).not.toContain("Undo all");
+        expect(html.match(/<button[^>]*>Undo<\/button>/g)).toHaveLength(1);
+        expect(html).toContain("Target changed; recovery stopped");
+        expect(html).toContain("1 changes remain");
+    });
+
+    it("shows the request preview partition without granting Undo", () => {
+        const plannedGroup = group("request-preview", 2);
+        const model: OperationsReviewModel = {
+            intentId: "request-run",
+            groups: [],
+            previewGroups: [plannedGroup],
+            previewAttachments: [{
+                id: "preview-image:attachment",
+                path: "assets/preview-image.png",
+                action: "delete",
+                plannedAction: "remove",
+                undoLimitation: "temporary-attachment-and-note",
+            }],
+        };
+        const snapshot: OperationsReviewSnapshot = {
+            reviewId: "opr-request-preview", intentId: "request-run", scope: "request", runId: "request-run",
+            status: "preview", actionInFlight: null, model, execution: null,
+            operationResults: [], undoResults: [], error: null,
+        };
+        const undoRequest = jest.fn(() => Promise.resolve([]));
+        const session = {
+            getSnapshot: () => snapshot,
+            subscribe: () => () => {},
+            canUndo: () => false,
+            activeReceiptIds: () => [],
+            undoRequest,
+        };
+        const html = renderToStaticMarkup(createElement(OperationsReviewPanel, { session: session as never }));
+        expect(html).toContain("Preview only. Nothing has been changed yet.");
+        expect(html.match(/request-preview-</g)).toHaveLength(2);
+        expect(html).toContain("assets/preview-image.png");
+        expect(html).toContain("The local image file will be deleted according to your Obsidian delete setting");
+        expect(html).not.toContain(">Undo<");
+        expect(undoRequest).not.toHaveBeenCalled();
     });
 });

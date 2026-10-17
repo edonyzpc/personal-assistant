@@ -1,6 +1,7 @@
 import type { CapabilityProvider } from "../capability-types";
 import {
     OperationsControllerError,
+    type OperationsUndoRequestOptions,
     OperationsIntentController,
 } from "./operations-intent-controller";
 import { OperationsToolProvider } from "./operations-tool-provider";
@@ -228,7 +229,7 @@ export class OperationsSession {
                 "The pending Operations intent is unavailable or belongs to another user request.",
             );
         }
-        if (intent.mode !== "apply") {
+        if (intent.mode === "preview") {
             throw new OperationsControllerError("boundary_denied", "Only a freshly prepared apply call can execute through the Agent port.");
         }
 
@@ -310,6 +311,10 @@ export class OperationsSession {
 
     async undoMany(receiptIds: readonly string[]): Promise<UndoResult[]> {
         return await this.controller.undoMany(receiptIds);
+    }
+
+    async undoRequest(options: OperationsUndoRequestOptions): Promise<UndoResult[]> {
+        return await this.controller.undoRequest(options);
     }
 
     subscribe(listener: OperationsEventListener): () => void {

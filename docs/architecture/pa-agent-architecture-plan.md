@@ -576,15 +576,28 @@ owner does not regain UI or Undo. `mode: preview` only prepares a visible propos
 without execution or a recovery receipt; a later apply call prepares and validates
 current state again. Optional full review and drift-safe Undo remain available.
 
-Chat groups the immutable intent by normalized note path and shows the first
-frozen baseline to the actual last applied result, or the planned result for
-preview, while retaining the controller's original operation order. The
-compact diff states its omissions; the user can open one reusable full-review
-tab per batch. Chat and the tab share one in-memory review session and expose
-review and Undo/Undo all, without Confirm, pending Cancel or activation after
-generation ends. Controller concurrency and drift checks still govern Undo;
-model generation alone does not disable a completed operation's review or Undo.
-No write occurs merely by opening or reviewing a tab.
+Chat binds one in-memory review scope to the Host's real user run across model
+phases, native intents and SDK children. One initially collapsed card summarizes
+the request's actual changes. Expanding it displays every changed block; the
+optional reusable full-review tab shares the same session and whole-request
+Undo state. Preview proposals remain in a separate, explicitly unchanged section
+within the same request and never gain a receipt or executable Undo. Pure reads
+produce no change card. Existing batch adapters and Pagelet retain their own scope.
+The UI uses the plugin's existing English/Chinese resolver and the short localized
+Undo label. While the source Chat is generating, all its request cards and open
+review tabs disable Undo through shared state and a recovery-entry recheck.
+Opening or reviewing a card or tab has no write effect.
+
+The controller serializes native effects and restoration with one narrow effect
+slot that remains occupied until the actual native promise settles, including
+after tool timeout or model Stop. Internal SDK restoration does not re-enter that
+slot. Whole-request Undo follows the actual effect order in reverse, retaining
+unknown, missing or unrecoverable effects as barriers. It stops at the first
+effect that cannot be restored and reports the real remaining/partial outcome;
+it does not fabricate an executable combined intent. Each restoration retains
+the original live Data Boundary, object identity, CAS and checkpoint checks.
+The Host supplies a separate review lifetime, checked at queued admission and
+before each restoration step. Model completion or Stop alone does not revoke it.
 
 `vault_move` uses the current vault's Markdown source and an existing target
 parent, never overwriting another object. It rechecks source identity/version/body
@@ -615,24 +628,45 @@ Finite current-run state can remain as context without restoring read/write auth
 The original move follow-up, post-move dispatch, natural termination and review/Undo
 evidence are retained in [B-173 validation](../archive/2026/b173-direct-operations-validation.md).
 
-`operations-review-model.ts` projects immutable snapshots without executing or
-reordering operations. It uses bounded line-level Myers diff and Unicode-safe
+`operations-review-model.ts` projects owner facts and immutable snapshots without
+executing or reordering operations. Request projection folds continuous A→B→C
+snapshots to A→C, segments discontinuities, separates editor and saved-file
+representations, and tracks actual resource/move identity rather than equating
+paths with objects. It uses bounded line-level Myers diff and Unicode-safe
 character refinement; exhausted work budgets fall back to complete deletion and
 insertion of the affected span, never truncated bodies. Raw Markdown, whitespace
 and line endings remain inspectable. `operations-review-session.ts` is a pure
 UI state adapter in the Operations module, with the existing controller as the
 sole write owner. React components, ItemView and the router live in
-`src/chat/operations-review/`; Chat mounts one batch model so preview budgets and
-the leading omission message apply across notes.
+`src/chat/operations-review/`. Request views render all blocks and partition actual
+changes, previews and truthful resource outcomes; the legacy compact batch view
+retains its explicit omission message and existing full-review navigation.
+
+The first user whole-request Undo freezes the then-current final diff for later
+historical viewing; retries retain that snapshot. An earlier SDK-local restore
+is a separate owner fact and must not freeze out later writes in the same run.
+A fully SDK-restored request may still expose its clearly labeled historical
+changes. After complete restoration the card defaults to collapsed; history
+remains inspectable without suggesting that it is still the live content.
+Each operation-result updates the request projection immediately, including while
+a later native write is unresolved. An all-restored verdict requires terminal
+facts for every non-preview member; queued or executing members keep Undo closed.
+The SDK Undo member's final result cannot overwrite a fully restored verdict or
+hide its history, while later writes remain current until user recovery freezes them.
 
 Existing-note changes revalidate their frozen baseline inside `vault.process()`,
 create rechecks collisions, and Undo fails closed after drift. Actual operation
 and Undo receipts determine both interfaces' result feedback, matched first by
-receipt ID and then by operation ID. The shared adapter guards in-flight actions
+receipt ID and then by operation ID.
+Known failure categories use localized product feedback; a recovery expiry is
+distinct from a zero-write preview expiry, and successful restoration clears old
+failure prose. Raw diagnostics remain available through their existing channel.
+The shared adapter guards in-flight actions
 and late callbacks after source invalidation, releases models and subscriptions,
 and does not restore disposed capabilities. Closing a review
-tab only hides it; source Chat termination/switch, expiry and plugin unload
-invalidate its capability. Workspace state stores only an opaque review ID,
+tab only hides it; actual source Chat switch/discard/close, expiry and plugin unload
+invalidate its capability. Ending model generation does not close the source Chat.
+Workspace state stores only an opaque review ID,
 without note bodies or authority that survives reload.
 
 The vertical review wraps long lines and paths without dropping text. Desktop
@@ -651,6 +685,10 @@ not trigger a save solely to remove these keys. In-memory Undo and other systems
 separate history/logging contracts remain unchanged. See
 [DEC-046](../product/decisions/dec-046-note-change-review-and-audit-retirement.md)
 and the [Product Spec](../product/specs/pa-note-change-review-product-spec.md).
+Chat request scope is governed by [DEC-068](../product/decisions/dec-068-chat-request-change-summary.md)
+and its [Product Spec](../product/specs/pa-chat-request-change-summary-product-spec.md);
+historical acceptance and evidence limits are recorded in
+[B-178 validation](../archive/2026/b178-chat-request-change-summary-validation.md).
 The [B-154 validation record](../archive/2026/b154-note-change-review-validation.md)
 retains local acceptance, build identity and device-evidence limits; it does not
 prove Git integration or release.

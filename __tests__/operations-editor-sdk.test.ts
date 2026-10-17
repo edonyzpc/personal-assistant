@@ -154,4 +154,63 @@ describe("Operations editor SDK", () => {
             expect(h.open).toHaveBeenCalledTimes(1);
         } finally { h.service.dispose(); }
     });
+
+    it("keeps navigation and explicit SDK Undo facts out of whole-request recovery barriers", async () => {
+        const write = fixture("A");
+        const undoCase = fixture("A");
+        try {
+            const edited = await write.stage("obsidian.workspace.applyEdits", { snapshotId: "snapshot", edits: [{ from: 0, to: 1, text: "B" }] });
+            await write.execute(edited.id);
+            const opened = await write.stage("obsidian.workspace.open", { target: { path: "assets/note.md" } });
+            const openResult = await write.execute(opened.id);
+            expect(openResult.operations[0]).toMatchObject({ status: "succeeded", undoAvailable: false,
+                resourceEffect: { kind: "open", opened: true } });
+            expect(write.read()).toBe("B");
+
+            const recovered = await write.session.undoRequest({ runId: "run", intentIds: [edited.id, opened.id],
+                isSourceCurrent: () => true });
+            expect(recovered.map(result => result.status)).toEqual(["undone"]);
+            expect(write.read()).toBe("A");
+            expect(write.transaction).toHaveBeenCalledTimes(2);
+
+            const editIntent = await undoCase.stage("obsidian.workspace.applyEdits", { snapshotId: "snapshot", edits: [{ from: 0, to: 1, text: "B" }] });
+            const editResult = await undoCase.execute(editIntent.id);
+            const receiptId = editResult.operations[0].receiptId!;
+            const explicitUndo = await undoCase.stage("obsidian.operations.undo", { receiptId });
+            const undoResult = await undoCase.execute(explicitUndo.id);
+            expect(undoResult.operations[0]).toMatchObject({ resourceEffect: { kind: "undo", undoStatus: "undone" } });
+            expect(undoCase.read()).toBe("A");
+
+            const replay = await undoCase.session.undoRequest({ runId: "run", intentIds: [editIntent.id, explicitUndo.id],
+                isSourceCurrent: () => true });
+            expect(replay).toEqual([]);
+            expect(undoCase.read()).toBe("A");
+            expect(undoCase.transaction).toHaveBeenCalledTimes(2);
+        } finally {
+            write.service.dispose();
+            undoCase.service.dispose();
+        }
+    });
+
+    it("treats an unknown explicit SDK Undo outcome as a request recovery barrier", async () => {
+        const h = fixture("A");
+        try {
+            const first = await h.stage("obsidian.workspace.applyEdits", { snapshotId: "snapshot", edits: [{ from: 0, to: 1, text: "B" }] });
+            await h.execute(first.id);
+            const firstResult = await h.execute(first.id);
+            // The native restore's own verification cannot confirm its result.
+            h.transaction.mockImplementationOnce(() => { h.write("X"); });
+            const explicitUndo = await h.stage("obsidian.operations.undo", { receiptId: firstResult.operations[0].receiptId! });
+            const undoResult = await h.execute(explicitUndo.id);
+            expect(undoResult.operations[0]).toMatchObject({ status: "unknown",
+                resourceEffect: { kind: "undo", undoStatus: "unknown" } });
+
+            const recovered = await h.session.undoRequest({ runId: "run",
+                intentIds: [first.id, explicitUndo.id], isSourceCurrent: () => true });
+            expect(recovered).toHaveLength(1);
+            expect(recovered[0]).toMatchObject({ status: "unknown", failureCategory: "unknown" });
+            expect(h.read()).toBe("X");
+            expect(h.transaction).toHaveBeenCalledTimes(2);
+        } finally { h.service.dispose(); }
+    });
 });

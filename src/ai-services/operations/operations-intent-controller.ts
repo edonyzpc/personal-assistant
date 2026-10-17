@@ -116,6 +116,14 @@ type MarkdownWriteTool =
     | { name: "vault_process"; input: VaultProcessInput }
     | { name: "frontmatter_update"; input: FrontmatterUpdateInput };
 
+export interface OperationsUndoRequestOptions {
+    runId: string;
+    intentIds: readonly string[];
+    /** Host-owned review lifetime; the controller never infers it from text. */
+    signal?: AbortSignal;
+    isSourceCurrent(this: void): boolean;
+}
+
 /**
  * Memory-only staging/execution boundary used by both the runtime wrapper and
  * Chat inline card. No method except executeIntent/undo can mutate the vault.
@@ -149,6 +157,16 @@ export class OperationsIntentController {
     private readonly expirationTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private disposed = false;
     private lifecycleEpoch = 0;
+    /**
+     * Narrow per-owner effect placeholder shared by every external execution
+     * and recovery entry. It is held until the original native promise truly
+     * settles, so a dispatcher timeout or Stop cannot release a call that the
+     * domain owner is still awaiting. Reads and status stay unblocked.
+     */
+    private effectChain: Promise<unknown> = Promise.resolve();
+    private effectChainIdle = true;
+    /** Admitted executions keyed by intent; duplicates observe, never requeue. */
+    private readonly admittedExecutions = new Map<string, Promise<OperationsExecutionResult>>();
 
     constructor(options: OperationsIntentControllerOptions) {
         this.vault = options.vault;
@@ -174,6 +192,21 @@ export class OperationsIntentController {
         this.assertUsable();
         this.listeners.add(listener);
         return () => this.listeners.delete(listener);
+    }
+
+    private runExclusiveEffect<T>(operation: () => Promise<T>): Promise<T> {
+        // Keep the original synchronous admission/start semantics when no
+        // other effect is in flight; only a busy owner defers the next entry.
+        const run = this.effectChainIdle ? operation() : this.effectChain.then(operation, operation);
+        const tail = run.then(() => undefined, () => undefined);
+        this.effectChainIdle = false;
+        this.effectChain = tail;
+        void tail.finally(() => {
+            // Only the current queue tail may report the owner idle again; an
+            // older finish must not let a later queued effect interleave.
+            if (this.effectChain === tail) this.effectChainIdle = true;
+        });
+        return run;
     }
 
     async stageIntent(input: StageOperationsIntentInput, signal?: AbortSignal): Promise<OperationsIntent> {
@@ -506,6 +539,8 @@ export class OperationsIntentController {
         resourceBoundary?: { guard: TaskSourceReadGuard; signal?: AbortSignal },
     ): Promise<OperationsExecutionResult> {
         this.assertUsable();
+        const admitted = this.admittedExecutions.get(intentId);
+        if (admitted) return await admitted;
         const lifecycleEpoch = this.lifecycleEpoch;
         const pending = this.requirePendingIntent(intentId);
         if (pending.mode === "preview") throw new OperationsControllerError("boundary_denied", "A preview cannot be executed. Prepare a new apply call against current files.");
@@ -517,6 +552,28 @@ export class OperationsIntentController {
         const executing = replaceIntentState(pending, "executing");
         this.intents.set(intentId, executing);
         this.emit({ type: "intent-state-changed", intent: executing });
+        const run = this.runExclusiveEffect(() => this.executeIntentAfterAdmission(
+            intentId,
+            executing,
+            lifecycleEpoch,
+            assertOperationAllowed,
+            resourceBoundary,
+        ));
+        const tracked = run.finally(() => {
+            if (this.admittedExecutions.get(intentId) === tracked) this.admittedExecutions.delete(intentId);
+        });
+        this.admittedExecutions.set(intentId, tracked);
+        return await tracked;
+    }
+
+    private async executeIntentAfterAdmission(
+        intentId: string,
+        executing: OperationsIntent,
+        lifecycleEpoch: number,
+        assertOperationAllowed?: (operation: PreparedOperation, afterSelfWrite: boolean) => void,
+        resourceBoundary?: { guard: TaskSourceReadGuard; signal?: AbortSignal },
+    ): Promise<OperationsExecutionResult> {
+        this.assertUsable();
 
         const results: OperationExecutionResult[] = [];
         const imageRecovery = new Map<string, PreparedImageRecovery>();
@@ -596,7 +653,9 @@ export class OperationsIntentController {
                         throw new OperationsControllerError("boundary_denied", "The resource path is outside the current source scope.");
                     }
                 }, resourceBoundary?.guard, resourceBoundary?.signal);
-                resourceHost.undo = receiptId => this.undo(receiptId, path => resourceHost.assertAllowed(path, true));
+                // Internal recovery while executeIntent holds the shared effect
+                // placeholder; it must not re-enter the same owner lock.
+                resourceHost.undo = receiptId => this.undoInternal(receiptId, path => resourceHost.assertAllowed(path, true));
                 const resourcePrepared = resourceRecovery.get(operation.id); resourceRecovery.delete(operation.id);
                 result = await executeResourceOperation(resourceHost, executing, operation, resourcePrepared);
             } else result = await this.executeOperation(executing, operation, lifecycleEpoch, assertBeforeEffect, recovery);
@@ -656,6 +715,10 @@ export class OperationsIntentController {
     }
 
     async undo(receiptId: string, assertResourceAllowed?: (path: string) => void): Promise<UndoResult> {
+        return await this.runExclusiveEffect(() => this.undoInternal(receiptId, assertResourceAllowed));
+    }
+
+    private async undoInternal(receiptId: string, assertResourceAllowed?: (path: string) => void): Promise<UndoResult> {
         this.assertUsable();
         const lookup = this.undoStore.get(receiptId);
         if (!lookup.ok) {
@@ -967,9 +1030,88 @@ export class OperationsIntentController {
     }
 
     async undoMany(receiptIds: readonly string[]): Promise<UndoResult[]> {
-        const results: UndoResult[] = [];
-        for (const receiptId of [...receiptIds].reverse()) results.push(await this.undo(receiptId));
-        return results;
+        return await this.runExclusiveEffect(async () => {
+            const results: UndoResult[] = [];
+            for (const receiptId of [...receiptIds].reverse()) {
+                results.push(await this.undoInternal(receiptId));
+            }
+            return results;
+        });
+    }
+
+    /**
+     * Whole-request recovery. The sequence uses only completion order already
+     * recorded by this owner plus each intent's operation order; UI ordering is
+     * not authority. A non-undone step is a barrier: earlier effects stay.
+     */
+    async undoRequest(options: OperationsUndoRequestOptions): Promise<UndoResult[]> {
+        return await this.runExclusiveEffect(async () => {
+            this.assertUsable();
+            const memberIds = new Set(options.intentIds);
+            const sequence: Array<{
+                intentId: string;
+                operation: OperationExecutionResult;
+                barrier: UndoResult | null;
+            }> = [];
+            for (const [intentId, entry] of this.contextResults) {
+                if (!memberIds.has(intentId) || entry.runId !== options.runId) continue;
+                for (const operation of entry.result.operations) {
+                    const resourceKind = operation.resourceEffect?.kind;
+                    if (resourceKind === "open") {
+                        // A successful workspace.open is navigation, not a
+                        // modification; it stays visible in review facts and
+                        // never blocks recovery of real writes.
+                        continue;
+                    }
+                    if (resourceKind === "undo") {
+                        // Only an owner-confirmed restore is a settled fact.
+                        // An unknown native recovery result stays a barrier:
+                        // earlier effects must not be restored past it, and
+                        // the original receipt must not be re-attempted.
+                        if (operation.resourceEffect?.undoStatus === "undone") continue;
+                    }
+                    const mayHaveEffect = operation.status === "succeeded" || operation.status === "unknown"
+                        || operation.effects?.some(effect => effect.status === "applied" || effect.status === "removed") === true
+                        || (operation.resourceEffect?.paths?.length ?? 0) > 0;
+                    if (!mayHaveEffect) continue;
+                    const unknown = operation.status === "unknown"
+                        || operation.effects?.some(effect => effect.status === "unknown") === true;
+                    const restorable = !!operation.receiptId
+                        && operation.undoAvailable !== false
+                        && !unknown;
+                    sequence.push({
+                        intentId,
+                        operation,
+                        barrier: restorable ? null : {
+                            receiptId: operation.receiptId ?? `${intentId}:${operation.operationId}:request-undo-barrier`,
+                            operationId: operation.operationId,
+                            path: operation.path,
+                            status: unknown ? "unknown" : "unavailable",
+                            ...(unknown ? { failureCategory: "unknown" as const } : {
+                                failureCategory: "undo_unavailable" as const,
+                                message: operation.message
+                                    ?? "This effect has no usable recovery receipt; earlier changes were kept.",
+                            }),
+                        },
+                    });
+                }
+            }
+
+            const results: UndoResult[] = [];
+            for (const { intentId, operation, barrier } of sequence.reverse()) {
+                if (options.signal?.aborted || !options.isSourceCurrent()) break;
+                if (barrier) {
+                    results.push(barrier);
+                    break;
+                }
+                const receiptId = operation.receiptId!;
+                if (this.contextUndone.get(intentId)?.has(receiptId)) continue;
+                const result = await this.undoInternal(receiptId);
+                results.push(result);
+                if (result.status !== "undone") break;
+            }
+            return results;
+        });
     }
 
     async undoCompleted(execution: OperationsExecutionResult): Promise<UndoResult[]> {

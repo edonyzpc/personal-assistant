@@ -15,6 +15,7 @@ import { formatOperationsPreview } from "../src/ai-services/operations/operation
 class MemoryVault implements OperationsVault {
     readonly files = new Map<string, string>();
     readonly folders = new Set<string>(["notes", "0.unsorted"]);
+    private readonly fileIdentities = new Map<string, OperationsVaultFile>();
 
     readonly adapter = {
         exists: jest.fn(async (path: string) => this.files.has(path) || this.folders.has(path)),
@@ -50,7 +51,13 @@ class MemoryVault implements OperationsVault {
     });
 
     getAbstractFileByPath(path: string): OperationsVaultFile | null {
-        if (this.files.has(path)) return { path, extension: "md" };
+        if (this.files.has(path)) {
+            const existing = this.fileIdentities.get(path);
+            if (existing) return existing;
+            const identity = { path, extension: "md" };
+            this.fileIdentities.set(path, identity);
+            return identity;
+        }
         if (this.folders.has(path)) return { path, children: [] };
         return null;
     }
@@ -780,4 +787,245 @@ describe("Operations task source reads", () => {
             controller.dispose();
         }
     });
+
+    it("undoes one user request's cross-intent effects once in reverse completion order", async () => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        vault.files.set("notes/b.md", "B0");
+        const controller = makeController(vault);
+        try {
+            const first = await controller.stageIntent({
+                runId: "request-run", turnId: "turn-1",
+                operations: [{ toolCallId: "a1", name: "vault_append", input: { path: "notes/a.md", content: "\nB" } }],
+            });
+            await controller.executeIntent(first.id);
+            const second = await controller.stageIntent({
+                runId: "request-run", turnId: "turn-2",
+                operations: [
+                    { toolCallId: "a2", name: "vault_process", input: { path: "notes/a.md", operation: "replace", params: { search: "\nB", replace: "\nC" } } },
+                    { toolCallId: "b1", name: "vault_append", input: { path: "notes/b.md", content: "\nB1" } },
+                ],
+            });
+            await controller.executeIntent(second.id);
+            expect(vault.files.get("notes/a.md")).toBe("A\nC");
+            expect(vault.files.get("notes/b.md")).toBe("B0\nB1");
+
+            const results = await controller.undoRequest({
+                runId: "request-run",
+                intentIds: [first.id, second.id],
+                isSourceCurrent: () => true,
+            });
+            expect(results.map(result => result.status)).toEqual(["undone", "undone", "undone"]);
+            expect(vault.files.get("notes/a.md")).toBe("A");
+            expect(vault.files.get("notes/b.md")).toBe("B0");
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    it("stops request Undo at the first non-undone barrier instead of restoring earlier steps", async () => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        vault.files.set("notes/b.md", "B0");
+        const controller = makeController(vault);
+        try {
+            const first = await controller.stageIntent({
+                runId: "request-run", turnId: "turn-1",
+                operations: [{ toolCallId: "a1", name: "vault_append", input: { path: "notes/a.md", content: "\nB" } }],
+            });
+            await controller.executeIntent(first.id);
+            const second = await controller.stageIntent({
+                runId: "request-run", turnId: "turn-2",
+                operations: [{ toolCallId: "b1", name: "vault_append", input: { path: "notes/b.md", content: "\nB1" } }],
+            });
+            await controller.executeIntent(second.id);
+            // A later human edit makes only the newest effect unrestorable.
+            vault.files.set("notes/b.md", "human edited");
+
+            const results = await controller.undoRequest({
+                runId: "request-run",
+                intentIds: [first.id, second.id],
+                isSourceCurrent: () => true,
+            });
+            expect(results).toHaveLength(1);
+            expect(results[0]?.status).toBe("stale");
+            expect(vault.files.get("notes/a.md")).toBe("A\nB");
+            expect(vault.files.get("notes/b.md")).toBe("human edited");
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    it("keeps the request Undo placeholder held while a native execution is still settling", async () => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        const controller = makeController(vault);
+        let releaseNativeWrite: (() => void) | undefined;
+        try {
+            const first = await controller.stageIntent({
+                runId: "request-run", turnId: "turn-1",
+                operations: [{ toolCallId: "a1", name: "vault_append", input: { path: "notes/a.md", content: "\nB" } }],
+            });
+            vault.process.mockImplementationOnce(async () => await new Promise<string>(resolve => {
+                releaseNativeWrite = () => {
+                    vault.files.set("notes/a.md", "A\nB");
+                    resolve("A\nB");
+                };
+            }));
+            const executing = controller.executeIntent(first.id);
+            const requestUndo = controller.undoRequest({
+                runId: "request-run",
+                intentIds: [first.id],
+                isSourceCurrent: () => true,
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(vault.files.get("notes/a.md")).toBe("A");
+
+            releaseNativeWrite?.();
+            const execution = await executing;
+            const undoResults = await requestUndo;
+            expect(execution.state).toBe("completed");
+            expect(undoResults.map(result => result.status)).toEqual(["undone"]);
+            expect(vault.files.get("notes/a.md")).toBe("A");
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    it("checks the review lifetime before every request Undo step", async () => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        vault.files.set("notes/b.md", "B0");
+        const controller = makeController(vault);
+        let sourceCurrent = true;
+        try {
+            const first = await controller.stageIntent({
+                runId: "request-run", turnId: "turn-1",
+                operations: [{ toolCallId: "a1", name: "vault_append", input: { path: "notes/a.md", content: "\nB" } }],
+            });
+            await controller.executeIntent(first.id);
+            const second = await controller.stageIntent({
+                runId: "request-run", turnId: "turn-2",
+                operations: [{ toolCallId: "b1", name: "vault_append", input: { path: "notes/b.md", content: "\nB1" } }],
+            });
+            await controller.executeIntent(second.id);
+            controller.subscribe(event => {
+                if (event.type === "undo-result" && event.result.status === "undone") sourceCurrent = false;
+            });
+
+            const results = await controller.undoRequest({
+                runId: "request-run",
+                intentIds: [first.id, second.id],
+                isSourceCurrent: () => sourceCurrent,
+            });
+            expect(results).toHaveLength(1);
+            expect(vault.process).toHaveBeenCalledTimes(3);
+            expect(vault.files.get("notes/a.md")).toBe("A\nB");
+            expect(vault.files.get("notes/b.md")).toBe("B0");
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    it("treats a latest unrecoverable or unknown effect as a request Undo barrier", async () => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        vault.files.set("notes/movable.md", "M");
+        const controller = makeController(vault, {
+            renameFile: async () => {
+                throw new Error("native move adapter failed after admission");
+            },
+        });
+        try {
+            const first = await controller.stageIntent({
+                runId: "request-run", turnId: "turn-1",
+                operations: [{ toolCallId: "a1", name: "vault_append", input: { path: "notes/a.md", content: "\nB" } }],
+            });
+            await controller.executeIntent(first.id);
+            expect(vault.files.get("notes/a.md")).toBe("A\nB");
+            const second = await controller.stageIntent({
+                runId: "request-run", turnId: "turn-2",
+                operations: [{
+                    toolCallId: "move", name: "vault_move",
+                    input: { sourcePath: "notes/movable.md", targetPath: "notes/moved.md" },
+                }],
+            });
+            const moveResult = await controller.executeIntent(second.id);
+            expect(moveResult.operations[0]).toMatchObject({ status: "unknown", undoAvailable: false });
+
+            const results = await controller.undoRequest({
+                runId: "request-run",
+                intentIds: [first.id, second.id],
+                isSourceCurrent: () => true,
+            });
+            expect(results).toHaveLength(1);
+            expect(results[0]).toMatchObject({ status: "unknown", failureCategory: "unknown" });
+            expect(vault.files.get("notes/a.md")).toBe("A\nB");
+            expect(vault.process).toHaveBeenCalledTimes(1);
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    it("keeps a queued effect waiting until the current tail settles", async () => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        vault.files.set("notes/b.md", "B");
+        const controller = makeController(vault);
+        let releaseA!: () => void;
+        const started: string[] = [];
+        let bStarted!: () => void;
+        const bNativeStarted = new Promise<void>(resolve => { bStarted = resolve; });
+        try {
+            const first = await controller.stageIntent({
+                runId: "request-run", turnId: "turn-1",
+                operations: [{ toolCallId: "a", name: "vault_append", input: { path: "notes/a.md", content: "\nA1" } }],
+            });
+            const second = await controller.stageIntent({
+                runId: "request-run", turnId: "turn-2",
+                operations: [{ toolCallId: "b", name: "vault_append", input: { path: "notes/b.md", content: "\nB1" } }],
+            });
+            vault.process.mockImplementationOnce(async () => await new Promise<string>(resolve => {
+                started.push("A");
+                releaseA = () => { vault.files.set("notes/a.md", "A\nA1"); resolve("A\nA1"); };
+            }));
+            vault.process.mockImplementationOnce(async () => {
+                started.push("B");
+                bStarted();
+                await new Promise<void>(resolveB => {
+                    releaseBHandlers.push(() => { vault.files.set("notes/b.md", "B\nB1"); resolveB(); });
+                });
+                return "B\nB1";
+            });
+            const releaseBHandlers: Array<() => void> = [];
+            const executingA = controller.executeIntent(first.id);
+            const executingB = controller.executeIntent(second.id);
+            releaseA();
+            await bNativeStarted;
+            // A settled while B is still inside its native await; a third
+            // effect must not interleave with B.
+            const writeProbe = vault.files.get("notes/b.md");
+            const undoing = controller.undoRequest({
+                runId: "request-run",
+                intentIds: [first.id, second.id],
+                isSourceCurrent: () => true,
+            });
+            const undoStarted = await Promise.race([undoing.then(() => true), Promise.resolve(false)]);
+            expect(started).toEqual(["A", "B"]);
+            expect(writeProbe).toBe("B");
+            expect(undoStarted).toBe(false);
+            for (const release of releaseBHandlers) release();
+            const executionB = await executingB;
+            await executingA;
+            const undoResults = await undoing;
+            expect(executionB.state).toBe("completed");
+            expect(undoResults.map(result => result.status)).toEqual(["undone", "undone"]);
+            expect(vault.files.get("notes/a.md")).toBe("A");
+            expect(vault.files.get("notes/b.md")).toBe("B");
+        } finally {
+            controller.dispose();
+        }
+    });
+
 });

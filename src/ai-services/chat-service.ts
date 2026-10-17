@@ -26,7 +26,7 @@ import {
 import type { CapabilityProvider } from './capability-types';
 import type { AgentEvent, ChatAgentStatus, ChatContextUsedItem, ChatMessage, ChatTurnMemoryMetadata, LegacyAgentEvent } from './chat-types';
 import { OperationsService, OperationsSession } from './operations/operations-service';
-import { OperationsControllerError } from './operations/operations-intent-controller';
+import { OperationsControllerError, type OperationsUndoRequestOptions } from './operations/operations-intent-controller';
 import { createObsidianNoteImageHost } from './operations/obsidian-note-image-host';
 import { PaAgentContextSummarizer } from './context/PaAgentContextSummarizer';
 import { createAbortError, throwIfAborted } from './chat-utils';
@@ -236,6 +236,16 @@ export class ChatService {
     async undoOperations(receiptIds: readonly string[]): Promise<UndoResult[]> {
         const persist = [...this.operationsContextObservers.values()];
         const result = await this.operationsSession.undoMany(receiptIds);
+        if (this.operationsSession.isDisposed) {
+            for (const sink of persist) await sink(undefined, result)
+                .catch(error => this.host.log('Could not persist Operations context state', error));
+        }
+        return result;
+    }
+
+    async undoOperationsRequest(options: OperationsUndoRequestOptions): Promise<UndoResult[]> {
+        const persist = [...this.operationsContextObservers.values()];
+        const result = await this.operationsSession.undoRequest(options);
         if (this.operationsSession.isDisposed) {
             for (const sink of persist) await sink(undefined, result)
                 .catch(error => this.host.log('Could not persist Operations context state', error));

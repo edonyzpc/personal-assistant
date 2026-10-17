@@ -53,11 +53,16 @@ export interface OperationsReviewFileGroup {
     diffDegraded: boolean;
     /** Native movement is a path change; the host owns any link updates. */
     targetPath?: string;
+    /** A newer snapshot did not continue the previous final state. */
+    hasSnapshotBreakpoint?: boolean;
 }
 
 export interface OperationsReviewModel {
     intentId: string;
     groups: readonly OperationsReviewFileGroup[];
+    /** Request-scope preview partition; absent for batch models. */
+    previewGroups?: readonly OperationsReviewFileGroup[];
+    previewAttachments?: NonNullable<OperationsReviewModel["attachments"]>;
     blockers?: readonly (NonNullable<PreparedNoteImageRemovalOperation["block"]> & {
         operationId: string;
         attachmentPath: string;
@@ -69,6 +74,8 @@ export interface OperationsReviewModel {
         plannedAction: "retain" | "remove";
         undoLimitation: "markdown-only" | "temporary-attachment-and-note";
         blocked?: true;
+        /** Request projection: the owner effect outcome, when known. */
+        outcome?: "deleted" | "kept" | "unknown";
     }[];
 }
 
@@ -167,6 +174,324 @@ export function normalizeOperationsReviewPath(path: string): string {
     normalized = normalized.replace(/\/+/g, "/");
     if (normalized.length > 1 && normalized.endsWith("/")) normalized = normalized.slice(0, -1);
     return normalized;
+}
+
+export interface OperationsRequestReviewIntentFacts {
+    intent: OperationsIntent;
+    results?: readonly OperationExecutionResult[];
+}
+
+export interface OperationsRequestReviewModelInput {
+    runId: string;
+    intents: readonly OperationsRequestReviewIntentFacts[];
+    /** Receipts whose latest owner fact is a completed restore. */
+    undoneReceiptIds?: readonly string[];
+}
+
+export interface OperationsRequestReviewModel extends Omit<OperationsReviewModel, "intentId"> {
+    runId: string;
+    intentIds: readonly string[];
+    /** Explicit preview partition; never mixed into actual changes. */
+    previewGroups?: readonly OperationsReviewFileGroup[];
+    previewAttachments?: NonNullable<OperationsReviewModel["attachments"]>;
+}
+
+interface RequestTextGroupState {
+    operations: PreparedOperation[];
+    segments: Array<{ before: string; after: string; breakpoint: boolean }>;
+    identity?: unknown;
+}
+
+interface EditorIdentity {
+    file: unknown;
+    editor: unknown;
+    viewId: unknown;
+}
+
+function editorIdentity(binding: unknown): EditorIdentity | null {
+    if (!binding || typeof binding !== "object") return null;
+    const candidate = binding as { file?: unknown; editor?: unknown; viewId?: unknown };
+    return { file: candidate.file, editor: candidate.editor, viewId: candidate.viewId };
+}
+
+function sameEditorIdentity(left: EditorIdentity | null, right: EditorIdentity | null): boolean {
+    if (!left || !right) return false;
+    return left.file === right.file && left.editor === right.editor && left.viewId === right.viewId;
+}
+
+/**
+ * Pure request-level projection. It folds only owner-confirmed continuous
+ * snapshots (A→B→C becomes A→C), keeps breakpoint segments when a newer
+ * snapshot did not continue the previous final state, and never reads current
+ * vault contents to reconstruct execution facts.
+ */
+export function createOperationsRequestReviewModel(
+    input: OperationsRequestReviewModelInput,
+): OperationsRequestReviewModel {
+    const undone = new Set(input.undoneReceiptIds ?? []);
+    const savedGroups = new Map<string, RequestTextGroupState>();
+    const editorGroups = new Map<string, RequestTextGroupState>();
+    const resourceGroups: OperationsReviewFileGroup[] = [];
+    const previewGroups: OperationsReviewFileGroup[] = [];
+    const blockers: Array<NonNullable<OperationsReviewModel["blockers"]>[number]> = [];
+    const attachments: Array<NonNullable<OperationsReviewModel["attachments"]>[number]> = [];
+    const previewAttachments: Array<NonNullable<OperationsReviewModel["attachments"]>[number]> = [];
+    const intentIds: string[] = [];
+    const moveChains = new Map<string, { originalPath: string; identity: unknown }>();
+
+    for (const { intent, results } of input.intents) {
+        intentIds.push(intent.id);
+        const isPreview = intent.mode === "preview";
+        const latestResult = new Map((results ?? []).map(result => [result.operationId, result]));
+        for (const operation of intent.operations) {
+            const result = latestResult.get(operation.id);
+            const applied = isAppliedOperation(result);
+            const receiptUndone = !!result?.receiptId && undone.has(result.receiptId);
+            if (operation.kind === "note_image_removal") {
+                if (operation.block) {
+                    blockers.push(Object.freeze({
+                        operationId: operation.id,
+                        attachmentPath: operation.effects.attachment.path,
+                        reason: operation.block.reason,
+                        conflicts: operation.block.conflicts,
+                    }));
+                }
+                const attachmentEffect = result?.effects?.find(effect => effect.key === "attachment");
+                const attachmentOutcome = !result
+                    ? undefined
+                    : attachmentEffect?.status === "removed" && !receiptUndone
+                        ? "deleted" as const
+                        : attachmentEffect?.status === "unknown"
+                            || attachmentEffect?.status === undefined && result.status === "unknown"
+                            ? "unknown" as const
+                            : "kept" as const;
+                const attachmentFact = Object.freeze({
+                    id: `${operation.id}:attachment`,
+                    path: operation.effects.attachment.path,
+                    action: attachmentEffect?.status === "removed" && !receiptUndone
+                        ? "delete"
+                        : result ? "keep" : operation.effects.attachment.action,
+                    plannedAction: operation.effects.attachment.plannedAction,
+                    undoLimitation: operation.undoLimitation,
+                    ...(attachmentOutcome ? { outcome: attachmentOutcome } : {}),
+                    ...(operation.block ? { blocked: true as const } : {}),
+                });
+                if (isPreview) previewAttachments.push(attachmentFact);
+                else if (result) attachments.push(attachmentFact);
+            }
+
+            const normalizedPath = normalizeOperationsReviewPath(operation.path);
+            const representation = operationRepresentation(operation);
+            if (isPreview) {
+                previewGroups.push(createPreviewGroup(operation, normalizedPath, representation));
+                continue;
+            }
+            if (!applied || receiptUndone) continue;
+
+            if (representation === "editor") {
+                const before = operation.expectedBefore ?? "";
+                const after = operation.expectedAfter ?? before;
+                // Each capture creates a fresh binding object. The stable
+                // editor facts are its live file/editor/view identity; the
+                // snapshotId and whole binding object are never identity.
+                const identity = operation.kind === "resource" && "binding" in operation.resource
+                    ? editorIdentity(operation.resource.binding)
+                    : null;
+                const state = editorGroups.get(normalizedPath) ?? { operations: [], segments: [] };
+                const last = state.segments[state.segments.length - 1];
+                // A different binding or a non-continuous snapshot starts a
+                // new editor segment; saved text stays a separate representation.
+                if (!last || !sameEditorIdentity(state.identity as EditorIdentity | null, identity) || before !== last.after) {
+                    state.identity = identity;
+                    state.segments.push({ before, after, breakpoint: last !== undefined });
+                } else last.after = after;
+                state.operations.push(operation);
+                editorGroups.set(normalizedPath, state);
+                continue;
+            }
+            if (representation === "move") {
+                const fromPath = operation.kind === "move" ? operation.sourcePath : operation.path;
+                const toPath = operation.kind === "move" ? operation.targetPath
+                    : operation.kind === "resource" && operation.resource.action === "move" ? operation.resource.to
+                    : operation.path;
+                const identity = operation.kind === "move" ? operation.fileIdentity
+                    : operation.kind === "resource" && "file" in operation.resource ? operation.resource.file
+                    : undefined;
+                const chain = moveChains.get(fromPath);
+                const chained = chain && chain.identity === identity;
+                const originalPath = chained ? chain.originalPath : fromPath;
+                moveChains.delete(fromPath);
+                moveChains.set(toPath, { originalPath, identity });
+                const chainedIndex = chained
+                    ? resourceGroups.findIndex(group => group.targetPath === fromPath && group.path === originalPath)
+                    : -1;
+                const moveGroup = {
+                    id: `request-move:${intent.id}:${operation.id}`,
+                    path: originalPath,
+                    normalizedPath: normalizeOperationsReviewPath(originalPath),
+                    before: "",
+                    after: "",
+                    beforeExists: true,
+                    created: false,
+                    netZeroTextChange: true,
+                    operationIds: Object.freeze([operation.id]),
+                    operations: Object.freeze([operation]),
+                    lines: Object.freeze([]),
+                    blocks: Object.freeze([]),
+                    changeCount: 0,
+                    diffDegraded: false,
+                    ...(operation.kind === "resource" ? { resourceKind: "move" as const } : {}),
+                    ...(toPath !== originalPath ? { targetPath: toPath } : {}),
+                };
+                if (chainedIndex >= 0) resourceGroups[chainedIndex] = moveGroup;
+                else resourceGroups.push(moveGroup);
+                continue;
+            }
+            if (representation === "resource-fact") {
+                const action = operation.kind === "resource" ? operation.resource.action : "open";
+                if (action === "trash") {
+                    for (const path of result?.resourceEffect?.paths ?? [operation.path]) moveChains.delete(path);
+                }
+                resourceGroups.push({
+                    id: `request-resource:${intent.id}:${operation.id}`,
+                    path: operation.path,
+                    normalizedPath,
+                    before: "",
+                    after: "",
+                    beforeExists: true,
+                    created: false,
+                    netZeroTextChange: true,
+                    operationIds: Object.freeze([operation.id]),
+                    operations: Object.freeze([operation]),
+                    lines: Object.freeze([]),
+                    blocks: Object.freeze([]),
+                    changeCount: 0,
+                    diffDegraded: false,
+                    resourceKind: action,
+                    resourcePaths: result?.resourceEffect?.paths
+                        ?? (operation.kind === "resource" && operation.resource.action === "mkdir"
+                            ? [...operation.resource.paths]
+                            : operation.kind === "resource" && operation.resource.action === "trash"
+                                ? operation.resource.tree.map(entry => entry.path)
+                                : [operation.path]),
+                });
+                continue;
+            }
+
+            const before = operation.expectedBefore ?? "";
+            const after = operation.expectedAfter ?? before;
+            if (operation.expectedBefore === null) moveChains.delete(normalizedPath);
+            const state = savedGroups.get(normalizedPath) ?? { operations: [], segments: [] };
+            savedGroups.set(normalizedPath, state);
+            state.operations.push(operation);
+            const last = state.segments[state.segments.length - 1];
+            if (!last) state.segments.push({ before, after, breakpoint: false });
+            // A created object never continues a prior object merely because
+            // both normalize to an empty snapshot.
+            else if (operation.expectedBefore !== null && before === last.after) last.after = after;
+            else state.segments.push({ before, after, breakpoint: true });
+        }
+    }
+
+    const groups: OperationsReviewFileGroup[] = [];
+    for (const [normalizedPath, state] of savedGroups) {
+        const first = state.operations[0];
+        for (const [index, segment] of state.segments.entries()) {
+            groups.push({
+                id: `request-${normalizedPath}:${index}`,
+                path: first.path,
+                normalizedPath,
+                before: segment.before,
+                after: segment.after,
+                beforeExists: segment.before !== "" || first.expectedBefore !== null,
+                created: first.expectedBefore === null,
+                netZeroTextChange: first.expectedBefore !== null && segment.before === segment.after,
+                operationIds: Object.freeze(state.operations.map(operation => operation.id)),
+                operations: Object.freeze([...state.operations]),
+                ...(segment.breakpoint ? { hasSnapshotBreakpoint: true } : {}),
+                ...createLineDiff(segment.before, segment.after, `${normalizedPath}:${index}`),
+            });
+        }
+    }
+    groups.push(...resourceGroups);
+    for (const [normalizedPath, state] of editorGroups) {
+        const first = state.operations[0];
+        for (const [index, segment] of state.segments.entries()) {
+            groups.push({
+                id: `request-editor-${normalizedPath}:${index}`,
+                path: first.path,
+                normalizedPath,
+                before: segment.before,
+                after: segment.after,
+                beforeExists: segment.before !== "" || first.expectedBefore !== null,
+                created: false,
+                netZeroTextChange: segment.before === segment.after,
+                operationIds: Object.freeze(state.operations.map(operation => operation.id)),
+                operations: Object.freeze([...state.operations]),
+                resourceKind: "editor",
+                ...(segment.breakpoint ? { hasSnapshotBreakpoint: true } : {}),
+                ...createLineDiff(segment.before, segment.after, `${normalizedPath}:editor:${index}`),
+            });
+        }
+    }
+
+    return {
+        runId: input.runId,
+        intentIds: Object.freeze(intentIds),
+        groups: Object.freeze(groups),
+        previewGroups: Object.freeze(previewGroups),
+        previewAttachments: Object.freeze(previewAttachments),
+        blockers: Object.freeze(blockers),
+        attachments: Object.freeze(attachments),
+    };
+}
+
+function isAppliedOperation(result: OperationExecutionResult | undefined): boolean {
+    if (!result) return false;
+    if (result.status === "succeeded") return true;
+    if (result.effects?.some(effect => effect.status === "applied" || effect.status === "removed") === true) return true;
+    if ((result.resourceEffect?.paths?.length ?? 0) > 0) return true;
+    if (result.resourceEffect?.opened === true) return true;
+    return result.resourceEffect?.kind === "undo" && result.resourceEffect.undoStatus !== undefined;
+}
+
+type RequestOperationRepresentation = "saved" | "editor" | "move" | "resource-fact";
+
+function operationRepresentation(operation: PreparedOperation): RequestOperationRepresentation {
+    if (operation.kind === "move") return "move";
+    if (operation.kind !== "resource") return "saved";
+    const action = operation.resource.action;
+    if (action === "create" || action === "replace") return "saved";
+    if (action === "move") return "move";
+    if (action === "editor") return "editor";
+    return "resource-fact";
+}
+
+function createPreviewGroup(
+    operation: PreparedOperation,
+    normalizedPath: string,
+    representation: RequestOperationRepresentation,
+): OperationsReviewFileGroup {
+    const before = operation.expectedBefore ?? "";
+    const after = operation.expectedAfter ?? before;
+    return {
+        id: `request-preview:${operation.id}`,
+        path: operation.path,
+        normalizedPath,
+        before,
+        after,
+        beforeExists: operation.expectedBefore !== null,
+        created: operation.expectedBefore === null,
+        netZeroTextChange: before === after,
+        operationIds: Object.freeze([operation.id]),
+        operations: Object.freeze([operation]),
+        ...(representation === "editor" ? { resourceKind: "editor" as const } : {}),
+        ...(operation.kind === "move" || representation === "move"
+            ? { targetPath: operation.kind === "move" ? operation.targetPath
+                : operation.kind === "resource" && "to" in operation.resource ? operation.resource.to : operation.path }
+            : {}),
+        ...createLineDiff(before, after, `${normalizedPath}:preview:${operation.id}`),
+    };
 }
 
 function createLineDiff(

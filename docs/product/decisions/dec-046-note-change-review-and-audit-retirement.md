@@ -2,7 +2,7 @@
 
 Decision ID: DEC-046
 Status: Accepted
-Updated: 2026-10-06
+Updated: 2026-10-18
 Authority: Owner 在本次对话逐项确认下述产品选择，并于 2026-09-30 授权文档、开发测试及文档收尾；本记录承载产品选择，不授予 Git 或发布权限。
 Work item: B-154
 
@@ -15,6 +15,11 @@ Work item: B-154
 不改写 B-154 原始验收范围，也不据此推定已发布。
 
 ## Context
+
+2026-10-17，Owner 已确认 [DEC-068](./dec-068-chat-request-change-summary.md) 的单卡预览：
+仅当前 Chat 用户请求内接续下文“不跨批次”、每批入口与逐操作 Undo 呈现，改为本次
+请求完整汇总与整次撤销；[B-178 Spec](../specs/pa-chat-request-change-summary-product-spec.md)
+承载当前行为，已完成范围与证据限度见 [B-178 验证](../../archive/2026/b178-chat-request-change-summary-validation.md)；非 Chat 范围、审计退役与临时恢复边界保持。
 
 Chat 的长篇 Edit 预览难以辨认具体变化，确认按钮过于突出，Operations 在插件目录
 持续生成用户不希望保留的 audit 文件。源码基线中预览将 Before/After 合并后截到

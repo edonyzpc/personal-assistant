@@ -1,7 +1,7 @@
 # Note Change Review Product Spec
 
 Document status: Current
-Updated: 2026-10-12
+Updated: 2026-10-18
 Work item: B-154
 Decision: [DEC-046](../decisions/dec-046-note-change-review-and-audit-retirement.md)
 Authority: Owner 已逐项确认的笔记审阅、按钮和 Operations 审计退役范围；实现已完成本地独立验收并获文档收尾授权。Current 表示当前产品契约，不表示 Git 集成或发布。
@@ -18,6 +18,12 @@ B-154 本地验收仍只证明修订前输入，新入口与结果收口由 [B-1
 [B-173 验证记录](../../archive/2026/b173-direct-operations-validation.md)保留新接线与真实双端证据，旧 B-154/B-161 结果仅证明各自历史输入。
 
 ## Problem And Product Outcome
+
+2026-10-18 已交付接续：[DEC-068](../decisions/dec-068-chat-request-change-summary.md) 与
+[B-178 Spec](./pa-chat-request-change-summary-product-spec.md) 将当前 Chat 用户请求内
+跨批次变化汇总为单卡、卡内完整展开和整次「撤销 / Undo」，含中英文状态。
+该范围接续下方 REQ-01/03/06/07 与 AC-01/03/06/07 的 Chat 呈现单位；已完成范围与
+证据限度见 [B-178 验证](../../archive/2026/b178-chat-request-change-summary-validation.md)。其他域的 batch 行为及 REQ-08/09 审计退役保持。
 
 让用户看清“哪些笔记、哪些文字、最终如何变化”，明确请求可直接完成，预览请求保留选择。小修改留在对话中，
 长文按需进入完整审阅；不产生新的文件管理负担。遵循[北极星](../pa-product-north-star.md)。
