@@ -118,6 +118,7 @@
     "pagelet.reading.newResults": "New results are available.",
     "pagelet.reading.showNew": "Show new results",
     "pagelet.reading.discover": "Start discovery",
+    "pagelet.reading.stale": "This reading is out of date. You can keep reading it, but start a new discovery before continuing in Chat.",
     "pagelet.bubble.agentInsight.view": "View insight",
     "pagelet.bubble.agentInsight.viewDescription": "Open the full source-backed insight in Pagelet.",
     "pagelet.bubble.agentInsight.whyNow.explicit": "You asked Pagelet to look deeper.",

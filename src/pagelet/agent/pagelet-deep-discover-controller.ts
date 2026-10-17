@@ -665,6 +665,12 @@ export class PageletDeepDiscoverController {
                     sources: input.quality.sources,
                     policyIdentity,
                 });
+                const inputEvidence = input.quality.inputEvidence;
+                const webSourceUrls = new Set(inputEvidence?.sourceRecords
+                    .filter(source => source.sourceBoundary === "web" && !source.redacted && !source.statusOnly
+                        && inputEvidence.lineage.dependencies.some(dependency => dependency.kind === "web"
+                            && dependency.providerId === source.providerId && dependency.resultKey === source.dedupKey))
+                    .map(source => source.url));
                 return {
                     insightId: input.insightId,
                     collectionId,
@@ -684,7 +690,9 @@ export class PageletDeepDiscoverController {
                     triggerReason: request.triggerReason,
                     preparedAt,
                     metrics: run.metrics,
-                    webObservations: run.webObservations,
+                    // Later exploration cannot add sources or a Web lifetime
+                    // to text that was already completed and staged.
+                    webObservations: run.webObservations.filter(observation => webSourceUrls.has(observation.url)),
                 };
             });
             const collection: PageletAgentVerifiedInsightCollection = {

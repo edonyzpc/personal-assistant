@@ -15,7 +15,18 @@ jest.mock("../src/pagelet/agent", () => {
     };
 });
 
-import { createPageletAgentRuntime, PageletDeepDiscoverController } from "../src/pagelet/agent";
+import {
+    capturePageletAnchorSnapshot,
+    createPageletAgentCacheIdentity,
+    createPageletAgentRuntime,
+    createPageletInsightId,
+    hashPageletAgentCacheIdentity,
+    normalizePageletInsightBody,
+    normalizePageletInsightClaim,
+    PageletDeepDiscoverController,
+    type PageletAgentValidationIdentity,
+} from "../src/pagelet/agent";
+import { completeInputLineage } from "../src/ai-services/input-lineage";
 import { getMemorySearchInvocation } from "../src/ai-services/memory-search-tool";
 import type { AiServiceHost } from "../src/ai-services/AiServiceHost";
 
@@ -99,6 +110,70 @@ const createDependencies = () => {
 };
 
 describe("DeepDiscoverPluginIntegration ownership", () => {
+    it("validates uncited authoring sources without AI setup and rejects missing proof or a reset owner", async () => {
+        const dependencies = createDependencies();
+        const contents = new Map([
+            ['notes/a.md', '# A\nCurrent anchor'],
+            ['notes/b.md', '# B\nRead during discovery but not cited'],
+        ]);
+        const files = new Map([...contents].map(([path, content]) => [path, {
+            path, stat: { mtime: 1, size: content.length },
+        }]));
+        const host = {
+            app: { vault: {
+                getAbstractFileByPath: (path: string) => files.get(path),
+                cachedRead: async (file: { path: string }) => contents.get(file.path)!,
+            } },
+            isDataBoundaryAllowedPath: () => true,
+            getMemoryEvidenceEpoch: () => 'chat-evidence-epoch',
+        } as unknown as AiServiceHost;
+        dependencies.createLiveHost = jest.fn(() => host);
+        dependencies.getAISetupIssue = jest.fn(() => 'not configured');
+        const owner = new DeepDiscoverPluginIntegration(dependencies);
+        const state = owner as unknown as OwnerState;
+        const validateInsight = jest.fn<PageletDeepDiscoverScheduler['validateInsight']>(async () => true);
+        state.scheduler = { validateInsight, dispose: jest.fn() } as unknown as PageletDeepDiscoverScheduler;
+        state.controllerPolicyIdentitySnapshot = owner.getPolicyIdentityKey();
+        const anchor = await capturePageletAnchorSnapshot({ host, path: 'notes/a.md' });
+        const other = await capturePageletAnchorSnapshot({ host, path: 'notes/b.md' });
+        if (!anchor || !other) throw new Error('Expected real source snapshots');
+        const cacheIdentity = createPageletAgentCacheIdentity({ anchor, sources: [anchor], policyIdentity: owner.getPolicyIdentity() });
+        const body = '`notes/a.md` has a completed finding.';
+        const normalizedBody = normalizePageletInsightBody(body);
+        const normalizedClaim = normalizePageletInsightClaim(body);
+        const identity: PageletAgentValidationIdentity = {
+            cacheIdentity,
+            cacheIdentityHash: hashPageletAgentCacheIdentity(cacheIdentity),
+            insightId: createPageletInsightId({ anchor, sources: [anchor], normalizedBody, normalizedClaim }),
+            normalizedBody,
+            normalizedClaim,
+            preparedAt: 1,
+            webObservations: [],
+            inputEvidence: {
+                lineage: completeInputLineage([
+                    { kind: 'vault', path: anchor.path, via: 'pagelet' },
+                    { kind: 'vault', path: other.path, via: 'note' },
+                    { kind: 'run-notes-observation', runId: 'pagelet-run', owner: 'vault', sourceEpoch: 'graph-epoch' },
+                ]),
+                sourceSnapshots: [anchor, other],
+                sourceRecords: [],
+                vaultObservations: [],
+            },
+        };
+
+        await expect(owner.validateInsight(identity)).resolves.toBe(true);
+        await expect(owner.validateInsight({ ...identity, inputEvidence: undefined })).resolves.toBe(false);
+        contents.set(other.path, '# B\nChanged after authoring');
+        files.get(other.path)!.stat.mtime += 1;
+        await expect(owner.validateInsight(identity)).resolves.toBe(false);
+        validateInsight.mockImplementationOnce(async () => { owner.resetController(); return true; });
+        await expect(owner.validateInsight(identity)).resolves.toBe(false);
+        expect(dependencies.ensureAIConfigured).not.toHaveBeenCalled();
+        expect(dependencies.getAISetupIssue).not.toHaveBeenCalled();
+        expect(dependencies.getAPIToken).not.toHaveBeenCalled();
+        expect(dependencies.getProviderCallAdmission).not.toHaveBeenCalled();
+    });
+
     it("keeps cold reading provider-free even when AI is unavailable", async () => {
         const dependencies = createDependencies();
         dependencies.getAISetupIssue = jest.fn(() => 'not configured');

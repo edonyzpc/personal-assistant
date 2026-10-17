@@ -17,7 +17,7 @@ import type { ScopeRecapRunResult } from "../../pa";
 import type { DeliveryReceipt } from "../attention";
 import type { PageletAgentDeliveryCandidate } from "../agent/delivery-adapter";
 import type { PageletChatHandoffPreparationResult } from "../../ai-services/pagelet-handoff";
-import type { PageletReadingPosition } from "../panel/types";
+import type { PageletReadingPosition, PageletReadingControls } from "../panel/types";
 
 /**
  * Pagelet -- Tab component types.
@@ -103,7 +103,7 @@ export interface PageletDetailReadingPayload {
     onPositionChange: (id: string, position: PageletReadingPosition) => void;
     validate: (candidate: PageletAgentDeliveryCandidate, signal: AbortSignal) => Promise<boolean>;
     discuss: (candidate: PageletAgentDeliveryCandidate, signal: AbortSignal) => Promise<PageletChatHandoffPreparationResult>;
-    getActivityLabel: () => string;
+    getReadingControls: () => PageletReadingControls;
     subscribe: (listener: () => void) => () => void;
     getLatestCandidates: () => readonly PageletAgentDeliveryCandidate[];
 }

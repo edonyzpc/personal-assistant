@@ -5456,6 +5456,13 @@ export class PluginManager extends Plugin {
             }),
             getMemoryEvidenceEpoch: () => this.getMemoryGraphTopologyEpoch("chat"),
             getPageletEvidenceEpoch: () => this.getMemoryGraphTopologyEpoch("pagelet"),
+            getPageletHistorySourcePolicyPaths: () => {
+                const resolver = this.createPageletProviderSourceResolver();
+                return this.app.vault.getMarkdownFiles()
+                    .filter(file => this.isPageletProviderSourceAllowedByResolver(file, resolver)
+                        && this.isMemoryProviderPathAllowed(file.path))
+                    .map(file => file.path);
+            },
             isPageletSourcePathAllowed: (path) => this.isPageletProviderPathAllowed(path),
             getTaskSourceAuthorityEpoch: () => this.getTaskSourceAuthorityEpoch(),
             getTaskSourceConfigurationEpoch: () => String(this.taskSourceConfigurationRevision),

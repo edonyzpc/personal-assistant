@@ -11,6 +11,8 @@ import { actionHistoryMessages, projectPaAgentActionHistory } from '../src/ai-se
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
 import { createPaAgentPersistedTurn } from '../src/ai-services/pa-agent-history';
 import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
+import type { PageletChatAttachment } from '../src/ai-services/pagelet-handoff';
+import { hashPageletContent } from '../src/pagelet/agent/anchor-snapshot';
 import {
     MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS,
     MAX_TASK_SOURCE_NOTE_HANDLES,
@@ -29,6 +31,74 @@ function imageState(lineage: InputLineage): PaAgentActionState {
 }
 
 describe('B157 independently admitted historical state', () => {
+    async function savedPageletHistory(path: string): Promise<ChatMessage[]> {
+        const lineage = completeInputLineage([{ kind: 'vault', path, via: 'pagelet' },
+            { kind: 'run-notes-observation', runId: 'original-run', owner: 'vault', sourceEpoch: 'old-epoch' }]);
+        const body = 'The original saved Pagelet finding.';
+        const anchor = { path, mtime: 1, size: 1, contentHash: 'original-note-hash' };
+        const attachment: PageletChatAttachment = { schemaVersion: 1, conversationId: 'conversation',
+            userMessageId: 'original-user', originRunId: 'original-run', inputLineage: lineage,
+            sourcePolicyPaths: [path, 'notes/b.md'], handoff: { version: 1, id: 'pagelet-original', body,
+                bodyHash: await hashPageletContent(body), anchor, sources: [anchor], sourceRefs: [{ path }],
+                webUrls: [], whyNow: [], triggerReason: 'related', preparedAt: 1, pipelineVersion: 'v1',
+                inputEvidence: { lineage, sourceRecords: [], sourceSnapshots: [anchor], vaultObservations: [] } } };
+        const answerLineage = completeInputLineage([{ kind: 'user-text', messageId: 'original-user' }, ...lineage.dependencies]);
+        const canonical = createPaAgentPersistedTurn({ runId: 'original-run', turnId: 'original-turn', status: 'completed',
+            committedFinalText: 'The answer.', messages: [{ role: 'assistant', id: 'answer', timestamp: 1,
+                content: [{ type: 'text', text: 'The answer.' }], inputLineage: answerLineage }] });
+        return [{ role: 'user', content: 'Discuss this finding.', pageletAttachment: attachment,
+            hostProvenance: { version: 1, kind: 'ordinary_user_statement', messageId: 'original-user' } },
+        { role: 'assistant', content: 'The answer.', canonicalTurn: canonical, inputLineage: answerLineage }];
+    }
+
+    it('rechecks saved Pagelet permissions and selected sources while ordinary source edits preserve its original body', async () => {
+        const h = fixture();
+        let allowed = true;
+        let policyPaths = [h.a.path, h.b.path];
+        const host = { ...h.host, conversationId: 'conversation', getPageletHistorySourcePolicyPaths: () => policyPaths,
+            isPageletSourcePathAllowed: () => allowed,
+            runSourceSelection: { schemaVersion: 1 as const, scope: 'notes' as const, selectionId: 'notes', userMessageId: 'user-1' } };
+        const history = await savedPageletHistory(h.a.path);
+        const run = new TaskSourceRun(host);
+        h.setSourceEpoch('ordinary-note-edit');
+        expect((await run.admitHistoricalPageletAttachment(history[0], history))?.attachment.handoff.body)
+            .toBe('The original saved Pagelet finding.');
+        allowed = false;
+        expect(await run.admitHistoricalPageletAttachment(history[0], history)).toBeUndefined();
+        expect((await run.projectHistoryAsync(history))[0]).toMatchObject({ content: 'Discuss this finding.' });
+        expect((await run.projectHistoryAsync(history))[0].pageletAttachment).toBeUndefined();
+        allowed = true;
+        // A metadata-driven withdrawal need not change settings or an explicitly cited anchor.
+        policyPaths = [h.a.path];
+        expect(await run.admitHistoricalPageletAttachment(history[0], history)).toBeUndefined();
+        policyPaths = [h.a.path, h.b.path, 'notes/newly-allowed.md'];
+        expect(await run.admitHistoricalPageletAttachment(history[0], history)).toBeDefined();
+        const web = new TaskSourceRun({ ...host, runSourceSelection: { ...host.runSourceSelection, scope: 'web' } });
+        expect(await web.admitHistoricalPageletAttachment(history[0], history)).toBeUndefined();
+    });
+
+    it('rejects saved Pagelet attachments with a foreign owner, changed body, or unknown ancestry without dropping user text', async () => {
+        const h = fixture();
+        const run = new TaskSourceRun({ ...h.host, conversationId: 'conversation',
+            getPageletHistorySourcePolicyPaths: () => [h.a.path, h.b.path],
+            runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'notes', userMessageId: 'user-1' } });
+        const original = await savedPageletHistory(h.a.path);
+        const variants = [
+            (attachment: PageletChatAttachment) => ({ ...attachment, conversationId: 'another-conversation' }),
+            (attachment: PageletChatAttachment) => ({ ...attachment, originRunId: 'another-run' }),
+            (attachment: PageletChatAttachment) => ({ ...attachment, handoff: { ...attachment.handoff, body: 'Unaccepted replacement' } }),
+            (attachment: PageletChatAttachment) => ({ ...attachment, inputLineage: unknownInputLineage() }),
+        ];
+        for (const alter of variants) {
+            const history = [{ ...original[0], pageletAttachment: alter(original[0].pageletAttachment!) }, original[1]];
+            expect(await run.admitHistoricalPageletAttachment(history[0], history)).toBeUndefined();
+            const projected = await run.projectHistoryAsync(history);
+            expect(projected[0].content).toBe('Discuss this finding.');
+            expect(projected[0].pageletAttachment).toBeUndefined();
+        }
+        expect(await run.admitHistoricalPageletAttachment(original[0], [original[0]])).toBeUndefined();
+    });
+
     it.each([false, true])('keeps only owner-bound Pagelet answer ancestry across requests; async=%s', async asynchronous => {
         const h = fixture();
         let allowed = true;

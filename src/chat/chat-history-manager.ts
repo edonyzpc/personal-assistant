@@ -26,6 +26,7 @@ import { cloneChatHostProvenance } from "../ai-services/chat-provenance";
 import { cloneGenerationInputSnapshot } from "../ai-services/generation-input-snapshot";
 import { cloneSourceRecord } from "../ai-services/source-store";
 import { cloneRecordedInputLineage } from "../ai-services/input-lineage";
+import { clonePageletChatAttachment } from "../ai-services/pagelet-handoff";
 import { cloneActionStateBinding, boundActionStates, type PaAgentActionState } from '../ai-services/pa-agent-result-facts';
 import { cloneMessageImages } from "./image-types";
 import {
@@ -466,6 +467,8 @@ export class ChatHistoryManager {
         const userMessage: PersistedChatMessage = {
             role: "user",
             content: entry.user.content,
+            ...(clonePageletChatAttachment(entry.user.pageletAttachment)
+                ? { pageletAttachment: clonePageletChatAttachment(entry.user.pageletAttachment) } : {}),
             ...(entry.user.images ? { images: cloneMessageImages(entry.user.images) } : {}),
             ...(entry.user.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(entry.user.hostProvenance) } : {}),
             ...(runSourceSelection ? { runSourceSelection } : {}),
@@ -567,6 +570,8 @@ export class ChatHistoryManager {
         const userMessage: ChatMessage = {
             role: "user",
             content: turn.user.content,
+            ...(clonePageletChatAttachment(turn.user.pageletAttachment)
+                ? { pageletAttachment: clonePageletChatAttachment(turn.user.pageletAttachment) } : {}),
             ...(turn.user.images ? { images: cloneMessageImages(turn.user.images) } : {}),
             ...(turn.user.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(turn.user.hostProvenance) } : {}),
             ...(runSourceSelection ? { runSourceSelection } : {}),

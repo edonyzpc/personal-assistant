@@ -56,6 +56,58 @@ export interface PageletChatHandoffContext {
     readonly inputEvidence?: PageletInputEvidence;
 }
 
+/** A successful Chat intake retained with its owning user turn, not user-authored authority. */
+export interface PageletChatAttachment {
+    readonly schemaVersion: 1;
+    readonly conversationId: string;
+    readonly userMessageId: string;
+    readonly originRunId: string;
+    readonly handoff: PageletChatHandoffContext;
+    readonly inputLineage: InputLineage;
+    /** Host-owned original scope of pathless aggregate reads; only needed for those reads. */
+    readonly sourcePolicyPaths?: readonly string[];
+}
+
+/** Invalid optional attachment data never makes the surrounding conversation unreadable. */
+export function clonePageletChatAttachment(value: unknown): PageletChatAttachment | undefined {
+    try {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+        const input = value as PageletChatAttachment;
+        if (input.schemaVersion !== 1) return undefined;
+        const conversationId = requireString(input.conversationId, "conversation id");
+        const userMessageId = requireString(input.userMessageId, "user message id");
+        const originRunId = requireString(input.originRunId, "origin run id");
+        const handoff = createPageletChatHandoffContext(input.handoff);
+        const inputLineage = cloneInputLineage(input.inputLineage);
+        if (!handoff.bodyHash || !/^[a-f0-9]{64}$/u.test(handoff.bodyHash)
+            || handoff.inputEvidence?.lineage.completeness !== "complete"
+            || inputLineage?.completeness !== "complete") return undefined;
+        const sourceKey = (dependency: InputLineage['dependencies'][number]) => JSON.stringify(
+            dependency.kind === "run-notes-observation" ? { kind: dependency.kind, owner: dependency.owner,
+                memoryEnabled: dependency.memoryEnabled } : dependency);
+        const authoringSources = new Set(handoff.inputEvidence.lineage.dependencies.map(sourceKey));
+        const acceptedSources = new Set(inputLineage.dependencies.map(sourceKey));
+        if (authoringSources.size !== acceptedSources.size
+            || [...authoringSources].some(key => !acceptedSources.has(key))
+            || !inputLineage.dependencies.some(dependency => dependency.kind === "vault"
+                && dependency.path === handoff.anchor.path && dependency.via === "pagelet")
+            || inputLineage.dependencies.some(dependency => dependency.kind !== "vault"
+                && dependency.kind !== "web" && dependency.kind !== "run-notes-observation")
+            || inputLineage.dependencies.some(dependency => dependency.kind === "run-notes-observation"
+                && (dependency.owner !== "vault" || dependency.runId !== originRunId))) return undefined;
+        return Object.freeze({ schemaVersion: 1, conversationId, userMessageId, originRunId, handoff,
+            inputLineage,
+            ...(input.sourcePolicyPaths !== undefined
+                ? { sourcePolicyPaths: Object.freeze([...new Set(input.sourcePolicyPaths.map(path => requireString(path, "source policy path")))]) } : {}) });
+    } catch { return undefined; }
+}
+
+export function pageletAttachmentReference(attachment: PageletChatAttachment): Record<string, unknown> {
+    return { attachmentId: attachment.userMessageId, pageletId: attachment.handoff.id,
+        anchorPath: attachment.handoff.anchor.path, bodyHash: attachment.handoff.bodyHash,
+        totalLength: attachment.handoff.body.length, bodyAvailability: "read_pagelet_attachment" };
+}
+
 /** The existing web reuse lifetime applies until Chat first accepts this material. */
 export function pageletChatHandoffSourceLifetimeIsCurrent(context: PageletChatHandoffContext, now = Date.now()): boolean {
     return !context.inputEvidence?.lineage.dependencies.some(dependency => dependency.kind === "web")

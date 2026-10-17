@@ -31,6 +31,8 @@ import { boundActionStates, cloneActionStateBinding, cloneActionStates, projectA
 import { projectPaAgentToolStatus } from './pa-agent-action-history';
 import { isCoreWriteToolName } from './operations/input-validation';
 import { isObsidianSdkMethodName, resolveObsidianSdkReadPlan, type ObsidianSdkHost } from './independent-computation/obsidian-resource-sdk';
+import { clonePageletChatAttachment, type PageletChatAttachment } from './pagelet-handoff';
+import { hashPageletContent } from '../pagelet/agent/anchor-snapshot';
 
 export const MAX_TASK_SOURCE_NOTE_HANDLES = 32;
 export const MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS = 8000;
@@ -77,6 +79,8 @@ export interface TaskSourceRunHost {
     revalidateVaultObservation?: AiServiceHost['revalidateVaultObservation'];
     isPathAllowed?: (path: string) => boolean;
     getMemoryEvidenceEpoch?: () => string;
+    getPageletHistorySourcePolicyPaths?: () => readonly string[];
+    isPageletSourcePathAllowed?: (path: string) => boolean;
     getTaskSourceAuthorityEpoch?: () => string;
     getTaskSourceConfigurationEpoch?: () => string;
     captureTaskSourceConfiguration?: AiServiceHost['captureTaskSourceConfiguration'];
@@ -118,6 +122,11 @@ export class TaskSourceRun {
     private readonly ownedLineages = new WeakMap<InputLineage, InputLineage>();
     private readonly ownedHistoryLineages = new WeakMap<ChatMessage, InputLineage | undefined>();
     private readonly conversationId: string | undefined;
+    private readonly pageletHistoryPolicyPaths: (() => readonly string[]) | undefined;
+    private readonly isPageletSourcePathAllowed: ((path: string) => boolean) | undefined;
+    private readonly admittedPageletAttachments = new WeakMap<ChatMessage, {
+        attachment: PageletChatAttachment; lineage: InputLineage; userLineage: InputLineage | undefined;
+    }>();
     private readonly historicalActionFragments = new WeakMap<ChatMessage, {
         binding: string; provenance: string; states: string; userMessageId: string;
     }>();
@@ -136,6 +145,8 @@ export class TaskSourceRun {
         }
         this.runSourceSelection = runSourceSelection ? Object.freeze(runSourceSelection) : undefined;
         this.conversationId = host.conversationId;
+        this.pageletHistoryPolicyPaths = host.getPageletHistorySourcePolicyPaths?.bind(host);
+        this.isPageletSourcePathAllowed = host.isPageletSourcePathAllowed?.bind(host);
         this.workspace = workspace;
         this.getFileByPath = host.getFileByPath.bind(host);
         this.hostIsCurrent = host.isCurrent.bind(host);
@@ -907,6 +918,7 @@ export class TaskSourceRun {
 
     /** D12: keep canonical history; omit only assistant turns with known revoked evidence. */
     readonly projectHistory = (history: readonly ChatMessage[]): ChatMessage[] => {
+        history = this.projectPageletAttachments(history);
         history = history.map(message => this.rebindHistoricalPageletAnswer(message, history));
         this.registerHistoricalResources(history);
         const constraint = this.state.snapshot();
@@ -1108,6 +1120,7 @@ export class TaskSourceRun {
         history: readonly ChatMessage[], signal?: AbortSignal,
     ): Promise<ChatMessage[]> => {
         throwIfAborted(signal);
+        history = this.projectPageletAttachments(history);
         history = history.map(message => this.rebindHistoricalPageletAnswer(message, history));
         this.registerHistoricalResources(history);
         if (!this.getTaskSourceAuthorityEpoch) return this.projectHistory(history);
@@ -1230,6 +1243,79 @@ export class TaskSourceRun {
         const admitted = completeInputLineage(dependencies);
         return await this.admitsLineageAsync(admitted, signal, true) ? admitted : undefined;
     };
+
+    /** A saved body belongs to its successful user/assistant pair, never to an arbitrary history field. */
+    readonly admitHistoricalPageletAttachment = async (
+        message: ChatMessage, history: readonly ChatMessage[], signal?: AbortSignal,
+    ): Promise<{ attachment: PageletChatAttachment; lineage: InputLineage } | undefined> => {
+        throwIfAborted(signal);
+        const attachment = clonePageletChatAttachment(message.pageletAttachment);
+        if (!attachment || message.role !== 'user' || !this.conversationId
+            || attachment.conversationId !== this.conversationId
+            || message.hostProvenance?.messageId !== attachment.userMessageId
+            || history.filter(item => item.role === 'user'
+                && item.hostProvenance?.messageId === attachment.userMessageId).length !== 1) return undefined;
+        const index = history.indexOf(message);
+        const answer = history[index + 1];
+        const canonical = answer?.canonicalTurn;
+        const binding = cloneActionStateBinding(answer?.actionStateBinding);
+        const restoredId = binding ? `rehydrated:${binding.conversationId}:${binding.turnIndex}` : undefined;
+        const restored = !!canonical && !!binding && canonical.runId === restoredId
+            && canonical.turnId === restoredId && canonical.messages.length === 0;
+        if (index < 0 || answer?.role !== 'assistant' || !canonical || canonical.status !== 'completed'
+            || (restored ? binding?.runId : canonical.runId) !== attachment.originRunId
+            || binding && (binding.conversationId !== this.conversationId || binding.runId !== attachment.originRunId
+                || !restored && binding.turnId !== canonical.turnId)) return undefined;
+        const answerLineage = cloneInputLineage(canonical.inputLineage);
+        const acceptedDependencies = new Set(answerLineage?.dependencies.map(dependency => JSON.stringify(dependency)));
+        if (!answerLineage?.dependencies.some(dependency => dependency.kind === 'user-text'
+            && dependency.messageId === attachment.userMessageId)
+            || attachment.inputLineage.dependencies.some(dependency => !acceptedDependencies.has(JSON.stringify(dependency)))) return undefined;
+        if (await hashPageletContent(attachment.handoff.body) !== attachment.handoff.bodyHash) return undefined;
+        throwIfAborted(signal);
+        const constraint = this.state.snapshot();
+        const observations = attachment.inputLineage.dependencies.filter(dependency => dependency.kind === 'run-notes-observation');
+        const sourceEpoch = observations.length ? this.currentNotesObservationEpoch() : undefined;
+        if (observations.length && (!sourceEpoch || !this.pageletAggregateSourcesAllowed(attachment, constraint))) return undefined;
+        if (attachment.inputLineage.dependencies.some(dependency => dependency.kind === 'vault'
+            && this.isPageletSourcePathAllowed?.(dependency.path) === false)) return undefined;
+        const lineage = completeInputLineage(attachment.inputLineage.dependencies.map(dependency =>
+            dependency.kind === 'run-notes-observation'
+                ? { ...dependency, runId: constraint.runId, sourceEpoch: sourceEpoch! } : dependency));
+        if (!await this.admitsLineageAsync(lineage, signal, true)
+            || this.state.snapshot() !== constraint
+            || observations.length && !this.pageletAggregateSourcesAllowed(attachment, constraint)) return undefined;
+        this.admittedPageletAttachments.set(message, { attachment, lineage, userLineage: historyInputLineage(message) });
+        return { attachment, lineage };
+    };
+
+    private projectPageletAttachments(history: readonly ChatMessage[]): ChatMessage[] {
+        return history.map(message => {
+            if (!message.pageletAttachment) return message;
+            const admitted = this.admittedPageletAttachments.get(message);
+            const policyCurrent = !admitted?.lineage.dependencies.some(dependency => dependency.kind === 'run-notes-observation')
+                || this.pageletAggregateSourcesAllowed(admitted.attachment, this.state.snapshot());
+            const allowed = admitted && policyCurrent && this.admitsLineage(admitted.lineage, true)
+                && admitted.lineage.dependencies.every(dependency => dependency.kind !== 'vault'
+                    || this.isPageletSourcePathAllowed?.(dependency.path) !== false);
+            const projected = { ...message };
+            delete projected.pageletAttachment;
+            if (admitted) projected.inputLineage = admitted.userLineage;
+            if (allowed) {
+                projected.pageletAttachment = admitted.attachment;
+                projected.inputLineage = unionInputLineages(admitted.userLineage, admitted.lineage);
+                this.admittedPageletAttachments.set(projected, admitted);
+            }
+            return projected;
+        });
+    }
+
+    private pageletAggregateSourcesAllowed(attachment: PageletChatAttachment, constraint: TaskSourceConstraint): boolean {
+        if (!attachment.sourcePolicyPaths || !this.pageletHistoryPolicyPaths
+            || constraint.allowedNoteIds !== null || constraint.excludedNoteIds.length !== 0) return false;
+        const currentPaths = new Set(this.pageletHistoryPolicyPaths());
+        return attachment.sourcePolicyPaths.every(path => currentPaths.has(path));
+    }
 
     /** Invalidates a proof, not the source snapshot itself. */
     readonly currentAuthorityEpoch = (): string | undefined => {

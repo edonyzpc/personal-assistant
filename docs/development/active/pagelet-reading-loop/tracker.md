@@ -2,13 +2,58 @@
 
 Document status: Current
 Delivery status: Validated
-Updated: 2026-10-16
+Updated: 2026-10-17
 Work item: B-176
 Authority: 唯一执行状态、finding 和验证证据。
 Product spec: [Pagelet Reading Loop](../../../product/specs/pagelet-reading-loop-product-spec.md)
 SDD: [Implementation Design](./sdd.md)
 
 ## Current Snapshot
+
+- 2026-10-17 修复验收后，用户明确授权将本次代码修改提交到本地 master；只包含本轮 Pagelet 来源、阅读、Chat 材料连续性及相应测试/契约，不含 push、closeout/archive 或 release。
+- 2026-10-17 二次独立 review 确认 R-06/07 两项 P2，用户当时授权仅修这两项、各补一条回归、复用有效验证，暂不提交。
+  单一 writer 仅改 orchestrator 及对应测试，主控负责本记录与检查，原发现者独立验收。沿用已接管的 GPT 执行，不因 GLM 配额恢复切回。
+  本轮日志与修改前两文件快照：`/private/tmp/pa-pagelet-races-20261017-CxtAbH/`。两条新增回归已先红后绿；其余模块的既有检查复用。
+- 2026-10-16 评审跟进：基线 `cbf87d1a`、开始时干净；用户授权先讨论缺口再修四项确认问题与必要定向回归，明确暂不提交。
+  用户已选择“材料随聊天保存、重开后按需引用”和“来源变化保留阅读、提前标记并禁交接”，DEC-066/Spec/SDD 同步承接。
+- 本增量由 GPT team 延续原实现接管，三名 writer 分别负责 Chat/runtime、Pagelet 来源、阅读 UI；主控负责聊天存储/UI接纳和文档。
+  writer 只跑所改定向回归，统一构建/广泛检查由主控在输入稳定后执行；交叉独立验收实际 diff。日志 `/private/tmp/pa-pagelet-followup-20261016-DI21XQ/`。
+- 修复映射：R-01 Memory 来源属性→两轮真实属性回归；R-02 每份Web归属→stage/后续联网与独立寿命；
+  R-03 空Detail/展开竞态→空态入口与延迟展开；R-04 阅读/交接一致→实际祖先变动、保留正文禁交接与撤权；
+  R-05 已接纳材料跨重开→序列化往返、历史引用/按需读取和来源反例。五项均完成本增量验证与独立复核；后续两项竞态修复亦已验收。
+
+### 2026-10-17 两项竞态修复验证
+
+| Check | Result | Evidence / limits |
+| --- | --- | --- |
+| R-06 用户选择不被后台校验取消 | PASS | `target-red.log` 原失败停在第一份；后台校验单独 controller，用户选择、关闭、展开、清除和卸载保留取消归属。新增一条通过实际 Next 回调及无关来源事件验证选择第二份的回归 |
+| R-07 缓存读取接续 Detail | PASS | 同一红灯日志原失败为空集合；接收沿原 reading/signal、policy、seal 与完整来源验证，Panel 展示另受原 intent 约束。新增一条回归验证展开后缓存可达、退出 checking、不重开 Panel、不触发模型；独立验收指出旧缓存可能覆盖新发现后，在同一用例补先后归属断言。仅用现有候选成员事实判断新接纳，避免无关 filter 新数组误判 |
+| 受影响 suite / 类型 / lint / DOM | PASS | `orchestrator-green.log` 初版 98/98；最后先后归属修订后 `orchestrator-superseded-green.log` 98/98。`tsc-final.log`、`lint-final.log` exit 0；DOM 扫描无命中（exit 1）。两次 suite 对应具体源码/断言变化，合计仅新增两条用例 |
+| 独立增量验收 | PASS | reviewer 核修改前快照、实际增量及红绿日志；确认取消清理、缓存接续及旧结果不覆盖新结果，无剩余 actionable finding；不重复测试 |
+
+本轮仅修改 orchestrator、其测试与本 Tracker。未改 UI 渲染、Chat、来源 owner 或打包接线，复用其既有验证；没有重跑全量、构建、部署、模型或设备检查。
+前轮 app 证据只支持未变交互，不能作为本轮新竞态修复的部署证明；当前安装的测试插件仍是前轮构建。
+
+### 2026-10-16 评审跟进验证
+
+以下日志均位于 `/private/tmp/pa-pagelet-followup-20261016-DI21XQ/`；前轮记录单独保留，不冒充本增量证据。
+
+| Check | Result | Evidence / limits |
+| --- | --- | --- |
+| R-01/05 Chat 来源与原材料 | PASS | `pagelet-history-final-focused.log`、`pagelet-history-admission-final.log`、`pagelet-history-chunks.log`：非枚举 Memory 属性、重开后按需读取、第三轮不自动重发全文、会话/run/hash/权限反例和 Unicode 分段；`chat-persistence-green.log` 核接纳后持久化及序列化往返。初次存储定向失败是两个 fixture 错误，修 fixture 保留原断言，不记产品红灯 |
+| R-02/04 来源 | 3 suites / 175 tests PASS | `backend-focused.log`：成果按实际作者输入持有 Web 来源及独立寿命，阅读与交接使用完整祖先复核 |
+| R-03/04 阅读 | 2 suites / 190 tests PASS | `ui-reading-final.log`：空态和展开竞态、缓存复核、正文/位置保留并禁交接、metadata 延迟撤权、Web 到期及已有 Undo 保留；目标红灯日志保留 |
+| 独立交叉验收 | 无剩余 actionable findings | 三名 reviewer 核对实际差量、原始证据及 Chat/runtime、来源、UI 接线；移除历史权限检查中不必要的逐笔记句柄注册，复用有效检查，不追加无风险依据的样本矩阵 |
+| lint / production build / platform | PASS | `lint.log` 完整 lint，沿用已证实必要的 Node stack_size=4096；首次 `build.log` 两处类型接线错误最小修复后，`build-green.log` 含 TypeScript/Tailwind/production build PASS，`lint-final-delta.log` 补对应两文件；`platform-guards.log` 552 文件通过。`dom-scan.log` 无注入命中（rg exit 1） |
+| full tests 与受影响补验 | 397 suites / 9654 tests 覆盖通过；原 full exit 1 | `full-tests.log` 原始 395 suites、9607 tests PASS，47 失败分布两套：生命周期旧 mock 缺 metadataCache.on 两例；Ghost localhost 监听受 sandbox EPERM 影响45例。只补两个 mock，并允许本机监听后 `failed-suites-rerun.log` 两套 / 171 tests PASS，复用其余通过结果；原命令自然退出，未 forceExit，也不称原 full 命令全绿 |
+| 当前构建部署 | PASS | `deploy.log`：make deploy-current 核对当前产物后部署 test vault；不重复已覆盖的统一构建和测试 |
+| 空 Detail 与来源变化阅读 | 桌面原生交互通过 | `app-empty-detail.png`：短点/展开保留空态说明与 Start discovery 入口，未触发模型；`app-stale-reading.log`/截图：受控成果的未引用祖先变化后，正文节点与原文不变、滚动 712→712，提前提示并禁 Discuss。合成来源验证，不冒充新的真实模型发现样本 |
+| Chat 重开原文 | 桌面原生交互通过 | 实际历史存储写入一份受控接纳材料，经原生 History 选择并展开 From Pagelet；`app-chat-reopen-final.log`/截图核对 2823 字符全文一致，含首轮回答未复述的第二条。按需工具入模及第三轮行为由真实 runtime 回归覆盖；本轮零模型调用 |
+| 环境恢复 | PASS | 合成两笔记、对应聊天和新叶已删除，原活动 Agent Debug、空 Chat、background/hints、debug/mobile off 恢复；`app-cleanup-final.log` 保留 Obsidian 删除空文件夹的 EISDIR，随后仅以 rmdir 删除该自有空目录。`app-restored-complete.log` 核目录与临时 global 均无；`app-errors-final.log` 无捕获错误 |
+
+2026-10-16 验收时最终文档和差量检查通过，源码在该轮构建后未变；2026-10-17 的后续源码修订及验证单列于上节。
+
+### 前轮交付记录
 
 - 用户明确授权按 B-176 方案完成全部开发测试，采用 implement-approved-spec；随后于 2026-10-16 明确授权本次修改提交到本地 master，不含 push、closeout、release。
 - 基线 master `67ab2183`，工作区起始干净。B-175 已验证并本地签名提交，按现有交付契约接续，不重做第一轮模型样本。
@@ -25,6 +70,7 @@ SDD: [Implementation Design](./sdd.md)
 | D-01 入口与复访 | B-176/REQ-01、B-176/REQ-02、B-176/REQ-03 / B-176/AC-01、B-176/AC-02、B-176/AC-03 | [x] | V-01/02 focused/full、真实短点零新请求/无抢占、A→B→A 已读复访通过；同步/异步 readiness 负例均覆盖。API/身份或状态改变才补验 |
 | D-02 稳定阅读与展开 | B-176/REQ-04、B-176/REQ-05 / B-176/AC-04、B-176/AC-05 | [x] | V-03/04 节点/位置/来源稳定、请求归属、关闭与晚到、展开失败负例通过；桌面所选第二份→Detail及独立草稿保护、390×844真实滚动/来源/关闭通过 |
 | D-03 完整 Agent 交接 | B-176/REQ-06、B-176/REQ-07 / B-176/AC-06、B-176/AC-07 | [x] | V-05/06 真 producer→服务/runtime→provider 全文/来源、Writing/后续历史/消费及权限/失败负例通过；app真成果3571 chars→Detail→Chat，实际accepted事件与成功消费通过 |
+| R-05 聊天原材料恢复 | B-176/REQ-08 / B-176/AC-08 | [x] | 本次评审跟进验证：接纳后保存、重开按需读取、第三轮默认不重复全文；会话归属及当前权限反例通过，原生历史展开核对完整原文 |
 
 所有 material 状态、准入与效果 owner 复用 [SDD ownership](./sdd.md#interfaces-and-ownership) 和 Command Architecture Contract。
 不从绿色 fixture 推断模型语义或 app 成功。重要跨模块来源/异步负例先保留目标失败，再实施并复测。
@@ -40,6 +86,13 @@ SDD: [Implementation Design](./sdd.md)
 
 | ID | Severity | Trigger / violated contract | Fix / evidence | State |
 | --- | --- | --- | --- | --- |
+| R-01 | P2 | 同轮 Pagelet 与 Memory 合并时展开对象丢失非枚举的来源属性，合法后续回答被过滤 | 合入已准入背景时显式保留原来源属性；真实非枚举属性两轮回归通过 | Resolved |
+| R-02 | P2 | 每份成果继承全 run Web，较早纯笔记成果被后续联网附加 URL 和 24h TTL | 按该份实际作者输入记录/lineage筛选Web；真实 stage→后续联网→缓存独立寿命回归通过 | Resolved |
+| R-03 | P2 | 空Panel展开后没有原因/发现入口，展开途中到达结果被旧Panel快照比较隐藏 | Detail复用阅读controls、比较自己的快照与最新候选；空态与展开竞态回归通过 | Resolved |
+| R-04 | P2 | 阅读只核显式引用，实际未引用祖先变化仍显示可交接；点操作才失败 | 完整祖先复核，普通变化保留正文/位置禁交接；权限撤销清除。覆盖缓存、metadata延迟撤权、Web到期和已有Undo保留 | Resolved |
+| R-05 | Product gap | 首次成功后没有原文可供第二轮或重开引用 | 用户明确选择随聊天保存：对应用户消息持有接纳附件、默认只投引用、窄只读工具按需返回；会话/run/hash/来源反例、重开及第三轮不重复投全文通过 | Resolved |
+| R-06 | P2 | 用户切换成果的来源校验在途时，后台来源事件重校验当前成果并取消共用 controller，静默吞掉点击；违反 AC-02/04 | 后台校验单独取消域，选择/关闭/卸载清理保留；对应回归红绿、suite 98/98，独立复核通过 | Resolved |
+| R-07 | P2 | 缓存纯读在途时展开 Detail，Panel intent 失效令合法 cache-hit 在进入可用集合前丢弃，Detail 停在 checking；R-03 的遗漏分支，违反 AC-01/05 | 合法读取接续 Detail、结束 checking；来源封口及关闭/换锚点保留，晚到旧缓存不能覆盖已接纳新集合；对应回归红绿、suite 98/98，独立复核通过 | Resolved |
 | F-01 | P2 | A 已读第二份并滚动后关闭；B 提醒来源单独失效时清空了 A 最近阅读，违反 REQ-03/AC-03 | 保留含 recent/available 成果的 policy identity；A/B 精确红绿、suite91；独立 reviewer 核对通过 | Resolved |
 | F-02 | P2 | R1 完成结果或旧 cache 冒充同 anchor 排队 R2 的等待结果，违反 REQ-04/AC-04 | session-only requestId 随原 result 贯穿，UI 按实际结果归属匹配；删除终态借旧cache填充路径。两个原始红灯、suite92及真实 scheduler/controller 红绿；独立复核通过 | Resolved |
 | F-03 | P1 | adapter 把旧 salted stableHash 身份摘要作为全文 SHA256，真实 Chat 交接始终拒绝，违反 REQ-06/AC-06 | 保留原身份算法，commit seal 前另算完整正文 bodyContentHash；真实 runtime→controller→adapter→Chat 准备/发送含原文空白回归；独立复核通过 | Resolved |
@@ -77,5 +130,6 @@ SDD: [Implementation Design](./sdd.md)
 
 ## Next And Stop Point
 
-全部 AC 与必要门禁已满足，保持 Validated；本轮 Git 交付范围为用户明确授权的本地 master 签名提交，实际身份以 Git 历史为准。
-不执行 push、closeout/archive 或 release。无剩余 confirmed blocker；CI、生产发布和 iPhone 硬件不在本轮验收范围。
+R-01..05 前轮证据保留；二次 review 的 R-06/07 已完成限定修复、定向验证及独立验收。按用户 2026-10-17 新授权签名提交到本地 master，Git 回执记录于交付回复。
+不执行 push、closeout/archive 或 release。旧助手正文仍沿用既有历史 epoch 过滤，本轮新增的是已接纳原材料按需恢复，不建立通用聊天快照协议。
+前轮 O-01 provider admission 原始失败仍缺可定位证据，本增量不把它宣称修复；CI、生产发布和 iPhone 硬件不在本轮验收范围。

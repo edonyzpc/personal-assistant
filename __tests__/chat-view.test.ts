@@ -5610,7 +5610,8 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('prepares a complete removable Pagelet attachment without sending and consumes it after one successful Ask', async () => {
-        const { view, containerEl, plugin } = createView({ operationsEnabled: true });
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'pagelet-saved-chat' });
+        const { view, containerEl } = createView({ operationsEnabled: true, chatHistoryManager: manager });
         await view.onOpen();
         const context = createPageletHandoffContext();
 
@@ -5632,18 +5633,30 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls).toHaveLength(1);
         expect(streamCalls[0].options.pageletHandoff).toEqual(context);
         expect(streamCalls[0].prompt).toBe('Discuss this Pagelet insight and help me decide the next step.');
+        const lineage = completeInputLineage([{ kind: 'vault', path: context.anchor.path, via: 'pagelet' }]);
+        const savedAttachment = { schemaVersion: 1 as const, conversationId: 'pagelet-saved-chat',
+            userMessageId: streamCalls[0].options.runSourceSelection!.userMessageId, originRunId: 'accepted-pagelet-run',
+            inputLineage: lineage, handoff: { ...context, bodyHash: 'a'.repeat(64),
+                inputEvidence: { lineage, sourceRecords: [], sourceSnapshots: [context.anchor], vaultObservations: [] } } };
         streamCalls[0].options.onTurnMetadata?.({ hasMemoryContent: false, allowedMemorySourcePaths: [],
-            acceptedPageletHandoffId: context.id });
+            acceptedPageletHandoffId: context.id, acceptedPageletAttachment: savedAttachment });
         streamCalls[0].onChunk('A source-backed answer.');
         streamCalls[0].resolve();
         await flushPromises();
         await flushPromises();
 
         expect(attachment.hidden).toBe(true);
+        expect(allText(getElementByClass(containerEl, 'pa-chat-pagelet-saved'))).toContain(context.body);
+        const restored = createView({ chatHistoryManager: manager });
+        await restored.view.onOpen();
+        for (let i = 0; i < 5; i++) await flushPromises();
+        expect(allText(getElementByClass(restored.containerEl, 'pa-chat-pagelet-saved'))).toContain(context.body);
+        await restored.view.onClose();
         getTextArea(containerEl).value = 'A follow-up question';
         void getButtonByText(containerEl, 'Ask').click();
         await flushPromises();
         expect(streamCalls[1].options.pageletHandoff).toBeUndefined();
+        expect((streamCalls[1].chatHistory as ChatMessage[]).find(message => message.pageletAttachment)?.pageletAttachment).toEqual(savedAttachment);
         streamCalls[1].resolve();
         await flushPromises();
     });

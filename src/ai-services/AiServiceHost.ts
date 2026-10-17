@@ -151,6 +151,8 @@ export interface AiServiceHost {
     getMemoryEvidenceEpoch?(): string;
     /** Original Pagelet owner epoch, for first Chat intake of its finite read observations. */
     getPageletEvidenceEpoch?(): string;
+    /** Current Pagelet/Memory source permission domain, without reading note bodies. */
+    getPageletHistorySourcePolicyPaths?(): readonly string[];
     /** Original Pagelet source owner predicate; Chat additionally enforces its own boundary. */
     isPageletSourcePathAllowed?(path: string): boolean;
 

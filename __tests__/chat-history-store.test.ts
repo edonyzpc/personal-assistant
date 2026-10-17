@@ -10,6 +10,7 @@ jest.mock('../src/platform-dom', () => ({ ...jest.requireActual('../src/platform
 import { createContextPagerStateFromChatContextUsed } from "../src/pa/context-pager";
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
 import { completeInputLineage } from '../src/ai-services/input-lineage';
+import type { PageletChatAttachment } from '../src/ai-services/pagelet-handoff';
 import { refreshWritingSaveStates, type PaAgentActionState } from '../src/ai-services/pa-agent-result-facts';
 
 const generationInput = (): GenerationInputSnapshotV1 => ({
@@ -162,6 +163,49 @@ function createVault(basePath: string, configDir = ".obsidian"): Vault {
 }
 
 describe("MemoryChatHistoryStore", () => {
+    it('retains an accepted Pagelet with its owning turn across IndexedDB reopen and deletion', async () => {
+        const factory = new FakeIndexedDbFactory();
+        const store = new IndexedDbChatHistoryStore('pagelet-history', factory as unknown as IDBFactory);
+        await store.initialize();
+        const lineage = completeInputLineage([{ kind: 'vault', path: 'anchor.md', via: 'pagelet' }]);
+        const anchor = { path: 'anchor.md', mtime: 1, size: 10, contentHash: 'anchor-hash' };
+        const attachment: PageletChatAttachment = {
+            schemaVersion: 1, conversationId: 'conv-1', userMessageId: 'pagelet-user', originRunId: 'pagelet-run',
+            inputLineage: lineage,
+            handoff: { version: 1, id: 'pagelet-1', body: 'First point.\n\nThe second point survives reopening.',
+                bodyHash: 'a'.repeat(64), anchor, sources: [], sourceRefs: [], webUrls: [], whyNow: [],
+                preparedAt: 1, pipelineVersion: 'v1', triggerReason: 'explicit',
+                inputEvidence: { lineage, sourceRecords: [], sourceSnapshots: [anchor], vaultObservations: [] } },
+        };
+        const manager = new ChatHistoryManager({ store });
+        const turn = manager.serializeTurn({ kind: 'history',
+            user: { role: 'user', content: 'Discuss this.', pageletAttachment: attachment,
+                hostProvenance: { version: 1, kind: 'ordinary_user_statement', messageId: attachment.userMessageId } },
+            assistant: { role: 'assistant', content: 'Only the first point was discussed.',
+                canonicalTurn: { schemaVersion: 1, runId: attachment.originRunId, turnId: 'pagelet-turn',
+                    status: 'completed', messages: [] } },
+        }, 'conv-1', 0);
+        await store.appendTurn(turn);
+        await store.appendTurn(makeTurn({ turnIndex: 1, user: { role: 'user', content: 'Legacy chat.' } }));
+        await store.appendTurn(makeTurn({ turnIndex: 2,
+            user: { role: 'user', content: 'Keep this message.', pageletAttachment: { schemaVersion: 99 } as unknown as PageletChatAttachment } }));
+        await store.dispose();
+        const reopened = new IndexedDbChatHistoryStore('pagelet-history', factory as unknown as IDBFactory);
+        await reopened.initialize();
+        try {
+            const turns = await reopened.getTurns('conv-1');
+            const restored = new ChatHistoryManager({ store: reopened }).deserializeTurn(turns[0]);
+            expect(restored.userMessage.pageletAttachment).toEqual(attachment);
+            expect(restored.userMessage.pageletAttachment).not.toBe(attachment);
+            expect(restored.assistantMessage.actionStateBinding?.runId).toBe(attachment.originRunId);
+            expect(turns[1].user.pageletAttachment).toBeUndefined();
+            expect(turns[2].user).toMatchObject({ content: 'Keep this message.' });
+            expect(turns[2].user.pageletAttachment).toBeUndefined();
+            await reopened.deleteTurn('conv-1', 0);
+            expect((await reopened.getTurns('conv-1')).every(value => !value.user.pageletAttachment)).toBe(true);
+        } finally { await reopened.dispose(); }
+    });
+
     it("whitelists and independently clones reduction receipts at storage boundaries", async () => {
         const store = new MemoryChatHistoryStore();
         await store.initialize();

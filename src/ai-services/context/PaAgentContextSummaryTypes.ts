@@ -1,5 +1,6 @@
 import type { ChatMessage, PaAgentMessage } from "../chat-types";
 import { chatImageIdentity } from "../chat-image-identity";
+import { pageletAttachmentReference } from '../pagelet-handoff';
 import { stableJson } from "../vault-observation-evidence";
 import { cloneInputLineage } from "../input-lineage";
 import { additionalHistoricalActionStates, projectPaAgentActionHistory, projectPaAgentToolResult, summarizableReadOnlyResultIds } from "../pa-agent-action-history";
@@ -231,6 +232,7 @@ function historyEvidenceIdentity(message: ChatMessage): string {
         actionStates: cloneActionStates(message.actionStates ?? message.canonicalTurn?.actionStates),
         actionStateBinding: cloneActionStateBinding(message.actionStateBinding),
         hostProvenance: message.hostProvenance !== undefined ? cloneChatHostProvenance(message.hostProvenance) : undefined,
+        pageletAttachment: message.pageletAttachment ? pageletAttachmentReference(message.pageletAttachment) : undefined,
         runId: message.canonicalTurn?.runId,
         turnId: message.canonicalTurn?.turnId,
     });

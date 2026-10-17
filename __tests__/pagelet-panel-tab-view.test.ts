@@ -312,6 +312,7 @@ import { PanelView } from "../src/pagelet/panel/PanelView";
 import { TabView } from "../src/pagelet/tab/TabView";
 import type { PageletDetailReadingPayload } from "../src/pagelet/tab/types";
 import type { PageletAgentDeliveryCandidate } from "../src/pagelet/agent/delivery-adapter";
+import { PAGELET_DEEP_DISCOVER_WEB_CACHE_TTL_MS } from "../src/pagelet/agent/types";
 import {
     createContextPagerStateFromRetrievalOutcome,
     type ConfirmedMemoryRecord,
@@ -336,6 +337,7 @@ describe("Pagelet panel and tab view regressions", () => {
         return {
             id,
             title: `Reading ${id}`,
+            preparedAt: "2026-10-16T00:00:00Z",
             body: `## Full ${id}\n\nFirst paragraph.\n\n### Last section\nThe complete ending for ${id}.`,
             sourceRefs: [{ path: "notes/anchor.md", title: "Anchor" }],
             pageletAgent: {
@@ -356,12 +358,126 @@ describe("Pagelet panel and tab view regressions", () => {
             onPositionChange: jest.fn(),
             validate: async () => true,
             discuss: async () => ({ status: "prepared" }),
-            getActivityLabel: () => "",
+            getReadingControls: () => ({ anchorPath: "notes/anchor.md", label: "" }),
             subscribe: () => () => undefined,
             getLatestCandidates: () => [],
             ...overrides,
         };
     }
+
+    it("keeps empty Detail actionable without starting discovery when it opens", async () => {
+        const discover = jest.fn();
+        const reading = Object.assign(readingPayload({ candidates: [], selectedId: "", positions: {} }), {
+            getReadingControls: () => ({
+                anchorPath: "notes/anchor.md",
+                label: "No content is available for this note yet. You can start a discovery.",
+                actions: [{ label: "Start discovery", callback: discover }],
+            }),
+        });
+        const view = new PageletDetailView({} as never, () => "en");
+        const content = view.contentEl as unknown as FakeElement;
+        content.isConnected = true;
+        view.setPayload({ title: "Pagelet", content: [], locale: "en", reading });
+        await view.onOpen();
+        expect(discover).not.toHaveBeenCalled();
+        expect(content.textContent).toContain("No content is available");
+        const button = content.querySelector(".pa-pagelet-reading-controls")?.querySelector("button");
+        expect(button?.textContent).toBe("Start discovery");
+        await button?.click();
+        expect(discover).toHaveBeenCalledTimes(1);
+        await view.onClose();
+    });
+
+    it("keeps stale Detail text and position while disabling handoff before a click", async () => {
+        let current = true;
+        let update = (): void => undefined;
+        const discuss = jest.fn<PageletDetailReadingPayload["discuss"]>().mockResolvedValue({ status: "prepared" });
+        const reading = readingPayload({
+            validate: async () => current,
+            discuss,
+            subscribe: listener => { update = listener; return () => undefined; },
+        });
+        const view = new PageletDetailView({} as never, () => "en");
+        const content = view.contentEl as unknown as FakeElement;
+        content.isConnected = true;
+        view.setPayload({ title: "Pagelet", content: [], locale: "en", reading });
+        await view.onOpen();
+        await Promise.resolve();
+        const body = content.querySelector(".pa-pagelet-tab-body")!;
+        const markdown = content.querySelector(".pa-pagelet-panel-timeline-insight");
+        body.scrollTop = 512;
+        current = false;
+        update();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(content.querySelector(".pa-pagelet-panel-timeline-insight")).toBe(markdown);
+        expect(body.scrollTop).toBe(512);
+        expect(content.textContent).toContain("out of date");
+        const action = body.querySelector(".pa-pagelet-panel-timeline-action-btn");
+        expect(action?.disabled).toBe(true);
+        await action?.click();
+        expect(discuss).not.toHaveBeenCalled();
+        await view.onClose();
+    });
+
+    it("offers a refreshed version of the same insight and hides a permission-revoked reading", async () => {
+        const selected = readingCandidate("selected");
+        const latest = { ...selected, preparedAt: "2026-10-16T00:01:00Z" };
+        let update = (): void => undefined;
+        const reading = readingPayload({
+            candidates: [selected], selectedId: selected.id,
+            getLatestCandidates: () => [latest],
+            validate: async candidate => candidate.staleStatus !== "boundary-changed",
+            subscribe: listener => { update = listener; return () => undefined; },
+        });
+        const view = new PageletDetailView({} as never, () => "en");
+        const content = view.contentEl as unknown as FakeElement;
+        content.isConnected = true;
+        view.setPayload({ title: "Pagelet", content: [], locale: "en", reading });
+        await view.onOpen();
+        const navigation = content.querySelector(".pa-pagelet-reading-navigation");
+        expect(navigation?.querySelectorAll("button")).toHaveLength(2);
+        await navigation?.querySelectorAll("button")[1]?.click();
+        await Promise.resolve();
+        expect(reading.onSelect).toHaveBeenCalledWith(latest);
+        latest.staleStatus = "boundary-changed";
+        update();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(content.textContent).not.toContain(selected.body);
+        expect(content.querySelector(".pa-pagelet-reading-navigation")?.textContent).not.toContain(selected.title);
+        await view.onClose();
+    });
+
+    it("marks an open web reading stale at its existing expiry and clears the timer on close", async () => {
+        jest.useFakeTimers();
+        const view = new PageletDetailView({} as never, () => "en");
+        try {
+            const expiresAt = Date.now() + 50;
+            const candidate = readingCandidate("web");
+            Object.assign(candidate.pageletAgent, { validationIdentity: {
+                preparedAt: expiresAt - PAGELET_DEEP_DISCOVER_WEB_CACHE_TTL_MS,
+                webObservations: [{ url: "https://example.com/source", observationHash: "web-source" }],
+            } });
+            const validate = jest.fn<PageletDetailReadingPayload["validate"]>(async () => Date.now() < expiresAt);
+            const reading = readingPayload({ candidates: [candidate], selectedId: candidate.id, validate });
+            const content = view.contentEl as unknown as FakeElement;
+            content.isConnected = true;
+            view.setPayload({ title: "Pagelet", content: [], locale: "en", reading });
+            await view.onOpen();
+            await Promise.resolve();
+            const markdown = content.querySelector(".pa-pagelet-panel-timeline-insight");
+            await jest.advanceTimersByTimeAsync(50);
+            expect(validate).toHaveBeenCalledTimes(2);
+            expect(content.querySelector(".pa-pagelet-panel-timeline-insight")).toBe(markdown);
+            expect(content.querySelector(".pa-pagelet-tab-body")?.querySelector("button")?.disabled).toBe(true);
+            await view.onClose();
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            await view.onClose();
+            jest.useRealTimers();
+        }
+    });
 
     it("preserves Panel reading DOM and position when the same content receives activity updates", async () => {
         const container = new FakeElement("div");
@@ -504,7 +620,7 @@ describe("Pagelet panel and tab view regressions", () => {
         let update = (): void => undefined;
         const unsubscribe = jest.fn();
         const reading = readingPayload({
-            getActivityLabel: () => label,
+            getReadingControls: () => ({ anchorPath: "notes/anchor.md", label }),
             subscribe: (listener) => { update = listener; return unsubscribe; },
         });
         const view = new PageletDetailView({} as never, () => "en");

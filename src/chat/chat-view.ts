@@ -27,6 +27,8 @@ import type {
 import type { MemoryMaintenancePlan } from '../memory-manager';
 import {
     createPageletChatHandoffContext,
+    clonePageletChatAttachment,
+    type PageletChatAttachment,
     type PageletChatHandoffContext,
     type PageletChatHandoffPreparationResult,
 } from '../ai-services/pagelet-handoff';
@@ -3827,6 +3829,14 @@ export class LLMView extends ItemView {
             appendAction(rendered.retryMessageButton, 'rotate-cw');
             appendAction(rendered.deleteButton, 'trash-2', true);
         };
+        const renderSavedPageletAttachment = (messageDiv: HTMLElement, attachment: PageletChatAttachment) => {
+            const details = messageDiv.createEl('details', { cls: 'pa-chat-pagelet-attachment pa-chat-pagelet-saved' });
+            details.createEl('summary', { text: t('plugin.chat.pageletAttachment.title') });
+            details.createDiv({ cls: 'pa-chat-pagelet-attachment__body', text: attachment.handoff.body });
+            const sources = details.createEl('ul');
+            for (const source of uniquePageletVaultSources(attachment.handoff)) sources.createEl('li', { text: source });
+            for (const url of attachment.handoff.webUrls) sources.createEl('li', { text: url });
+        };
         const createMessageElement = (
             message: ChatMessage,
             options: {
@@ -3856,6 +3866,9 @@ export class LLMView extends ItemView {
                 activeIdenticon: options.showAssistantLoader,
             });
             const contentDiv = messageDiv.createDiv({ cls: 'message-content' }) as HTMLElement;
+            if (message.role === 'user' && message.pageletAttachment) {
+                renderSavedPageletAttachment(messageDiv, message.pageletAttachment);
+            }
             if (message.images?.length && this.host.imageAssetService) {
                 this.imageRenderCleanups.set(messageDiv, renderImageAttachments(
                     messageDiv, message.images, this.host.imageAssetService, this.app,
@@ -6037,6 +6050,7 @@ export class LLMView extends ItemView {
         };
 
         const rawPromptsByTurn = new WeakMap<UiTurn, string>();
+        const acceptedPageletAttachments = new WeakMap<UiTurn, PageletChatAttachment>();
         const finalizeSuccessfulTurn = async (
             turn: UiTurn,
             prompt: string,
@@ -6104,7 +6118,11 @@ export class LLMView extends ItemView {
 
             if (!isLiveTurn()) return false;
 
+            const pageletAttachment = !sawLegacyPartialFailure && !sourceChanged
+                && (!canonicalTurn || canonicalTurn.status === 'completed')
+                ? acceptedPageletAttachments.get(turn) : undefined;
             const userMessage: ChatMessage = { role: 'user', content: rawPromptsByTurn.get(turn) ?? prompt,
+                ...(pageletAttachment ? { pageletAttachment } : {}),
                 inputLineage: completeInputLineage([{ kind: 'user-text',
                     messageId: turn.userProvenance?.messageId ?? turn.runSourceSelection?.userMessageId ?? String(turn.id) },
                 ...(turn.images ?? []).map(image => ({ kind: 'attachment' as const,
@@ -6161,6 +6179,7 @@ export class LLMView extends ItemView {
                 assistantMessage.sourceDecision = readPendingSourceDecision(assistantMessage);
             }
             this.chatHistory.push(userMessage, assistantMessage);
+            if (pageletAttachment) renderSavedPageletAttachment(userRendered.messageDiv, pageletAttachment);
             const executionSummary = createFinalizedSummary();
             const historyEntry: TimelineEntry = {
                 kind: 'history',
@@ -6639,6 +6658,12 @@ export class LLMView extends ItemView {
                     if (!acceptingStreamEvents || !isLiveTurn()) return;
                     if (metadata.acceptedPageletHandoffId === turnPageletHandoff?.id) {
                         acceptedPageletHandoffId = metadata.acceptedPageletHandoffId;
+                        const attachment = clonePageletChatAttachment(metadata.acceptedPageletAttachment);
+                        if (attachment && attachment.handoff.id === turnPageletHandoff?.id
+                            && attachment.userMessageId === stableMessageId
+                            && attachment.conversationId === conversationIdForMemoryActions) {
+                            acceptedPageletAttachments.set(turn, attachment);
+                        }
                     }
                     if (turn.canonicalLifecycle.active) return;
                     turn.memoryMetadata = metadata;

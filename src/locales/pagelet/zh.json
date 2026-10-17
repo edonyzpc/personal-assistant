@@ -118,6 +118,7 @@
     "pagelet.reading.newResults": "有新结果可读。",
     "pagelet.reading.showNew": "查看新结果",
     "pagelet.reading.discover": "开始发现",
+    "pagelet.reading.stale": "这份内容已过期，仍可继续阅读；请重新发现后再交给 PA Agent。",
     "pagelet.bubble.agentInsight.view": "查看洞察",
     "pagelet.bubble.agentInsight.viewDescription": "在拾页中打开完整且有来源依据的洞察。",
     "pagelet.bubble.agentInsight.whyNow.explicit": "你刚刚请拾页深入看看。",

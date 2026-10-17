@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../chat-types";
+import { clonePageletChatAttachment } from '../pagelet-handoff';
 import { chatHistoryImageMetadata } from "../chat-image-identity";
 import { cloneActionStateBinding, cloneActionStates, PA_AGENT_ACTION_STATE_CONTEXT_RULES,
     PA_AGENT_ACTION_OWNER_TOOL_NAMES, PA_AGENT_DOMAIN_ACTION_STATE_RULES,
@@ -637,6 +638,7 @@ async function snapshotHistoryAsync(history: readonly ChatMessage[], signal?: Ab
         snapshots.push({
             role: message.role,
             content: message.content,
+            ...(message.pageletAttachment ? { pageletAttachment: clonePageletChatAttachment(message.pageletAttachment) } : {}),
             ...(message.writingVersionId ? { writingVersionId: message.writingVersionId } : {}),
             ...(message.actionStates !== undefined ? { actionStates: cloneActionStates(message.actionStates) } : {}),
             ...(actionStateBinding ? { actionStateBinding } : {}),

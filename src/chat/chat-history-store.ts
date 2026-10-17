@@ -14,6 +14,7 @@ import {
 import { cloneSaveReceipt, assertSaveReceiptUpdate, type SaveReceipt } from "./save-receipt-types";
 import { cloneSourceRecord } from "../ai-services/source-store";
 import { cloneRecordedInputLineage } from "../ai-services/input-lineage";
+import { clonePageletChatAttachment } from "../ai-services/pagelet-handoff";
 import { cloneActionStates, cloneActionStateBinding, boundActionStates,
     type PaAgentActionState, type PaAgentActionStateBinding } from '../ai-services/pa-agent-result-facts';
 import {
@@ -85,6 +86,7 @@ export interface PersistedConversation {
 }
 
 export interface PersistedChatMessage {
+    pageletAttachment?: ChatMessage["pageletAttachment"];
     actionStates?: PaAgentActionState[];
     actionStateBinding?: PaAgentActionStateBinding;
     role: "user" | "assistant";
@@ -1768,9 +1770,11 @@ function cloneTurn(turn: PersistedTurn, discardInvalidGenerationInput = false): 
 }
 
 function cloneMessage(message: PersistedChatMessage, discardInvalidGenerationInput: boolean): PersistedChatMessage {
+    const pageletAttachment = message.role === "user" ? clonePageletChatAttachment(message.pageletAttachment) : undefined;
     return {
         role: message.role,
         content: message.content,
+        ...(pageletAttachment ? { pageletAttachment } : {}),
         ...(message.actionStates !== undefined ? { actionStates: cloneActionStates(message.actionStates) } : {}),
         ...(cloneActionStateBinding(message.actionStateBinding)
             ? { actionStateBinding: cloneActionStateBinding(message.actionStateBinding) } : {}),

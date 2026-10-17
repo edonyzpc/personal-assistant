@@ -2010,7 +2010,7 @@ describe("inline AI setup coordinator", () => {
                 ...plugin.app.vault,
                 on: jest.fn(() => ({})),
             },
-            metadataCache: { getFileCache: jest.fn(() => null) },
+            metadataCache: { getFileCache: jest.fn(() => null), on: jest.fn(() => ({})) },
         });
         const internals = plugin as unknown as Record<string, unknown>;
         internals.syncPageletDeepDiscoverControllerIdentity = jest.fn();
@@ -2102,7 +2102,7 @@ describe("inline AI setup coordinator", () => {
                 ...plugin.app.vault,
                 on: jest.fn(() => ({})),
             },
-            metadataCache: { getFileCache: jest.fn(() => null) },
+            metadataCache: { getFileCache: jest.fn(() => null), on: jest.fn(() => ({})) },
         });
         const internals = plugin as unknown as Record<string, unknown>;
         internals.syncPageletDeepDiscoverControllerIdentity = jest.fn();

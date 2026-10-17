@@ -15,7 +15,8 @@ import { agentDebugError, agentDebugNow, createAgentDebugCall, observeAgentDebug
     beginAgentDebugResponsePhase, finishAgentDebugResponsePhase } from './agent-debug-observation';
 import { getProviderAdmissionError, ProviderInputReprepareRequiredError } from './provider-admission-error';
 import { resolveB125RetrievalOptimizationFlags } from "../retrieval-optimization-platform-policy";
-import { createPageletChatHandoffContext, pageletChatHandoffSourceLifetimeIsCurrent, type PageletChatHandoffContext } from "./pagelet-handoff";
+import { clonePageletChatAttachment, createPageletChatHandoffContext, pageletChatHandoffSourceLifetimeIsCurrent, type PageletChatHandoffContext } from "./pagelet-handoff";
+import { createPageletHistoryTool, READ_PAGELET_ATTACHMENT } from './pagelet-history-tool';
 import { capturePageletSourceSnapshot, hashPageletContent } from "../pagelet/agent/anchor-snapshot";
 import { validatePageletInputEvidence } from "../pagelet/agent/pagelet-agent-quality-gate";
 import { stableHash } from "../pa/helpers";
@@ -1484,6 +1485,7 @@ export class PaAgentRuntime {
         const writingContextObservationHandles = new Map<string, string>();
         let writingContextCapability: AgentCapability | undefined;
         let writingHistoryCapability: AgentCapability | undefined;
+        let pageletHistoryCapability: AgentCapability | undefined;
         let imageStatusCapability: AgentCapability | undefined;
         let operationsStatusCapability: AgentCapability | undefined;
         let ghostPublishingCapability: AgentCapability | undefined;
@@ -1653,6 +1655,8 @@ export class PaAgentRuntime {
             revalidateVaultObservation: this.host.revalidateVaultObservation?.bind(this.host),
             isPathAllowed: path => this.host.isDataBoundaryAllowedPath?.(path) !== false,
             getMemoryEvidenceEpoch: this.host.getMemoryEvidenceEpoch?.bind(this.host),
+            getPageletHistorySourcePolicyPaths: this.host.getPageletHistorySourcePolicyPaths?.bind(this.host),
+            isPageletSourcePathAllowed: this.host.isPageletSourcePathAllowed?.bind(this.host),
             getTaskSourceAuthorityEpoch: this.host.getTaskSourceAuthorityEpoch?.bind(this.host),
             getTaskSourceConfigurationEpoch: this.host.getTaskSourceConfigurationEpoch?.bind(this.host),
             captureTaskSourceConfiguration: this.host.captureTaskSourceConfiguration?.bind(this.host),
@@ -1840,6 +1844,7 @@ export class PaAgentRuntime {
         const legacyEvents = new AgentEventEmitter(options.onEvent);
         let admittedPagelet: PageletChatHandoffContext | undefined;
         let admittedPageletLineage: InputLineage | undefined;
+        let pageletSourcePolicyPaths: readonly string[] | undefined;
         if (options.pageletHandoff) {
             const requested = createPageletChatHandoffContext(options.pageletHandoff);
             if (!pageletChatHandoffSourceLifetimeIsCurrent(requested)
@@ -1857,18 +1862,44 @@ export class PaAgentRuntime {
                     getAuthoringEvidenceEpoch: this.host.getPageletEvidenceEpoch?.bind(this.host),
                     signal: options.signal,
                 })) throw new Error("Pagelet attachment sources are incomplete or no longer available. Remove the attachment or discover again.");
+            if (requested.inputEvidence?.lineage.dependencies.some(dependency => dependency.kind === 'run-notes-observation')) {
+                const paths = this.host.getPageletHistorySourcePolicyPaths?.();
+                pageletSourcePolicyPaths = paths ? [...paths] : undefined;
+            }
             admittedPageletLineage = await sourceRun.admitPageletInputLineage(requested.inputEvidence?.lineage, options.signal);
             if (!admittedPageletLineage) throw new Error("Pagelet attachment is not allowed by the selected sources. Keep the attachment and change the source selection, or remove it.");
             admittedPagelet = requested;
         }
+        const pageletHistory = options.chatHistory ?? [];
+        const pageletMessages = pageletHistory.filter(message => message.role === 'user' && message.pageletAttachment);
+        const pageletById = new Map(pageletMessages.flatMap(message => {
+            const id = message.hostProvenance?.messageId;
+            return id && pageletMessages.filter(candidate => candidate.hostProvenance?.messageId === id).length === 1
+                ? [[id, message] as const] : [];
+        }));
+        for (const message of pageletById.values()) {
+            await sourceRun.admitHistoricalPageletAttachment(message, pageletHistory, options.signal);
+        }
+        if (options.conversationId && pageletById.size) {
+            pageletHistoryCapability = createChatToolCapability(createPageletHistoryTool({
+                attachmentIds: [...pageletById.keys()],
+                admit: async (id, signal) => {
+                    const message = pageletById.get(id);
+                    return message ? sourceRun.admitHistoricalPageletAttachment(message, pageletHistory, signal) : undefined;
+                },
+                isCurrent: sourceRun.isCurrent,
+            }), { providerId: 'chat-pagelet-history' });
+            pageletHistoryCapability.canReuseSuccessfulResult = false;
+            if (!commandCapabilities.register(pageletHistoryCapability)) throw new Error('Pagelet history capability unavailable');
+        }
         const readAdmittedInjectedContext = (): PaAgentInjectedContext | undefined => {
             // A web run must not even prepare automatic private background.
             if (runSourceSelection?.scope === 'web') return undefined;
-            const context = this.readInjectedContext();
+            const context = this.host.getMemoryExtractionPromptContext() as PaAgentInjectedContext | undefined;
             const background = context?.isSourceCurrent?.() === false ? undefined : !runSourceSelection || !context
                 ? context : sourceRun.admitsLineage(backgroundInputLineage(context, generationInputBackgroundSources(context)))
                     ? context : undefined;
-            return admittedPagelet ? { ...background, pageletHandoff: admittedPagelet } : background;
+            return this.attachPageletHandoff(background, admittedPagelet);
         };
         let injectedContext = readAdmittedInjectedContext();
         const governedMemoryTrace = injectedContext?.governedMemoryTrace ?? [];
@@ -2140,6 +2171,7 @@ export class PaAgentRuntime {
             availableMetaToolNames.add(LOAD_SKILL_TOOL_NAME);
         }
         if (writingHistoryCapability) availableMetaToolNames.add('read_writing_history');
+        if (pageletHistoryCapability) availableMetaToolNames.add(READ_PAGELET_ATTACHMENT);
         if (imageStatusCapability) availableMetaToolNames.add('get_image_status');
         if (operationsStatusCapability) availableMetaToolNames.add('get_operations_status');
         const hostPolicy = createPaAgentHostPolicy();
@@ -2178,6 +2210,7 @@ export class PaAgentRuntime {
             const actionStateBinding = cloneActionStateBinding(message.actionStateBinding);
             const sourceSelection = parseRunSourceSelection(message.runSourceSelection);
             return { role: message.role, content: message.content, ...chatHistoryImageMetadata(message),
+                ...(message.pageletAttachment ? { pageletAttachment: message.pageletAttachment } : {}),
                 ...(message.writingVersionId ? { writingVersionId: message.writingVersionId } : {}),
                 ...(message.actionStates ? { actionStates: message.actionStates } : {}),
                 ...(actionStateBinding ? { actionStateBinding } : {}),
@@ -2185,7 +2218,14 @@ export class PaAgentRuntime {
                 ...(sourceSelection ? { runSourceSelection: sourceSelection } : {}),
                 ...(inputLineage ? { inputLineage } : {}),
                 ...(metadata ? { memoryMetadata: metadata } : {}),
-                ...(message.canonicalTurn ? { canonicalTurn: message.canonicalTurn } : {}) };
+                ...(message.canonicalTurn ? { canonicalTurn: { ...message.canonicalTurn,
+                    messages: message.canonicalTurn.messages.map(part => part.role === 'toolResult'
+                        && part.toolName === READ_PAGELET_ATTACHMENT ? { ...part, content: { ...part.content,
+                            // This is historical tool output. The same material remains
+                            // available on demand; the live turn still receives its read in full.
+                            promptText: 'The Pagelet material read in this historical call is available through read_pagelet_attachment. Use the attachmentId and offset from the call to read the original text again.',
+                        } } : part),
+                } } : {}) };
         });
         const currentMemoryUsage = () => {
             const context = injectedContext;
@@ -2387,7 +2427,12 @@ export class PaAgentRuntime {
             answerLineageByTurn.set(input.turnId, requestLineage);
             sourceRun.acceptGenerationLineage(requestLineage);
             if (projectedPagelet) legacyEvents.turnMetadata({ hasMemoryContent: false,
-                allowedMemorySourcePaths: [], acceptedPageletHandoffId: projectedPagelet.id });
+                allowedMemorySourcePaths: [], acceptedPageletHandoffId: projectedPagelet.id,
+                ...(options.conversationId && admittedPageletLineage ? { acceptedPageletAttachment: clonePageletChatAttachment({
+                    schemaVersion: 1, conversationId: options.conversationId, userMessageId, originRunId: runId,
+                    handoff: projectedPagelet, inputLineage: admittedPageletLineage,
+                    ...(pageletSourcePolicyPaths ? { sourcePolicyPaths: pageletSourcePolicyPaths } : {}),
+                }) } : {}) });
             const assertAttachmentSourcesCurrent = imageScope?.hasSelectedImages
                 ? imageScope.captureSourceValidity() : undefined;
             answerAttachmentValidityByTurn.set(input.turnId, () => {
@@ -3169,6 +3214,7 @@ export class PaAgentRuntime {
                         || capability === imageStatusCapability
                         || capability === operationsStatusCapability
                         || capability === writingHistoryCapability
+                        || capability === pageletHistoryCapability
                         || capability === this.executeCodeCapability
                         || capability === this.executeObsidianCodeCapability
                         || insightRead
@@ -3872,10 +3918,10 @@ export class PaAgentRuntime {
         return { projection, operationsGuidance };
     }
 
-    private readInjectedContext(
+    private attachPageletHandoff(
+        memoryContext: PaAgentInjectedContext | undefined,
         pageletHandoff?: PageletChatHandoffContext,
     ): PaAgentInjectedContext | undefined {
-        const memoryContext = this.host.getMemoryExtractionPromptContext() as PaAgentInjectedContext | undefined;
         if (!pageletHandoff) return memoryContext;
         const result: PaAgentInjectedContext = {
             ...(memoryContext ?? {}),

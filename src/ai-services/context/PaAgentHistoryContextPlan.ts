@@ -7,6 +7,7 @@ import { stringifyContextSteps } from './PaAgentContextSerialization';
 import { chatHistoryImageMetadata } from "../chat-image-identity";
 import { projectPaAgentActionHistory, additionalHistoricalActionStates, canSummarizeReadOnlyActionHistory, summarizableReadOnlyResultIds } from "../pa-agent-action-history";
 import { cloneActionStates, projectActionStates } from '../pa-agent-result-facts';
+import { pageletAttachmentReference } from '../pagelet-handoff';
 import { groupChatTurnsSteps } from './PaAgentContextCompactor';
 
 export interface PaAgentProtectedHistoryLayout {
@@ -302,6 +303,7 @@ export function historyRecord(message: ChatMessage, content: unknown = message.c
         role: message.role,
         content,
         ...chatHistoryImageMetadata(message),
+        ...(message.pageletAttachment ? { pageletAttachment: pageletAttachmentReference(message.pageletAttachment) } : {}),
         ...(actions.length ? { actionHistory: actions } : {}),
         ...(message.actionStates ?? message.canonicalTurn?.actionStates ? {
             actionStates: projectActionStates(additionalHistoricalActionStates(message)),
@@ -337,7 +339,7 @@ export function* historySummaryContentSteps(message: ChatMessage): Generator<voi
     // Closed owner facts travel in retained_action_facts. Prose and original
     // call/result content are the free sources and can be split into chunks.
     delete record.actionStates;
-    if (!message.images?.length && !record.actionHistory) {
+    if (!message.images?.length && !record.actionHistory && !message.pageletAttachment) {
         return message.content;
     }
     const facts = { ...record };

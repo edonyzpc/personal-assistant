@@ -12,6 +12,8 @@ export interface ChatMessage {
     role: 'user' | 'assistant';
     content: string;
     images?: MessageImage[];
+    /** Host-accepted Pagelet material owned by this user turn; never plain user text. */
+    pageletAttachment?: import('./pagelet-handoff').PageletChatAttachment;
     hostProvenance?: ChatHostProvenance;
     /** Captured by Chat before asynchronous preparation; never inferred from model text. */
     runSourceSelection?: RunSourceSelection;
@@ -249,6 +251,7 @@ export interface ChatTurnMemoryMetadata {
     inputLineage?: InputLineage;
     /** This visible attachment was admitted and represented by the actual request projection. */
     acceptedPageletHandoffId?: string;
+    acceptedPageletAttachment?: import('./pagelet-handoff').PageletChatAttachment;
     contextTrace?: PersistedContextTrace;
     /** Trusted host observation envelopes retained for later revalidation. */
     vaultObservationEvidence?: VaultObservationEvidence[];
@@ -705,6 +708,7 @@ export interface AgentTurnPlan {
 export type ChatAgentIntent = "content-seeking" | "agent-control";
 
 export type ChatToolName =
+    | "read_pagelet_attachment"
     | "read_writing_history"
     | "get_image_status"
     | "get_writing_context"

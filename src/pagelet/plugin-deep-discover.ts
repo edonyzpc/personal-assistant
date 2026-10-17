@@ -45,6 +45,7 @@ import {
     anchorSnapshotIdentity,
     capturePageletAnchorSnapshot,
     capturePageletSourceMaterial,
+    capturePageletSourceSnapshot,
     createPageletAgentCacheIdentity,
     createPageletInsightCollectionId,
     createPageletInsightId,
@@ -56,6 +57,7 @@ import {
     normalizePageletInsightClaim,
     pageletAgentPolicyIdentityKey,
     pageletDeepDiscoverCommitSealIsCurrent,
+    validatePageletInputEvidence,
     type PageletAgentPolicyIdentity,
     type PageletAgentDeliveryCandidate,
     type PageletAgentSourceSnapshot,
@@ -234,11 +236,33 @@ export class DeepDiscoverPluginIntegration {
         identity: Parameters<PageletDeepDiscoverScheduler["validateInsight"]>[0],
         signal?: AbortSignal,
     ): Promise<boolean> {
-        if (
-            !this.scheduler
-            || this.controllerPolicyIdentitySnapshot !== this.getPolicyIdentityKey()
-        ) return false;
-        return await this.scheduler.validateInsight(identity, signal);
+        const scheduler = this.scheduler;
+        const epoch = this.controllerEpoch;
+        const policy = this.getPolicyIdentityKey();
+        const isCurrent = () => !signal?.aborted && this.scheduler === scheduler && this.controllerEpoch === epoch
+            && this.dependencies.isRuntimeCurrent() && this.dependencies.isPageletEnabled()
+            && this.controllerPolicyIdentitySnapshot === policy && this.getPolicyIdentityKey() === policy;
+        if (!scheduler || !isCurrent() || !identity.inputEvidence) return false;
+        try {
+            if (!await scheduler.validateInsight(identity, signal) || !isCurrent()) return false;
+            const host = this.dependencies.createLiveHost();
+            const isPathAllowed = (path: string) => host.isDataBoundaryAllowedPath?.(path) !== false;
+            const valid = await validatePageletInputEvidence(identity.inputEvidence, {
+                anchor: identity.cacheIdentity.anchor,
+                isPathAllowed,
+                isAuthoringPathAllowed: path => this.dependencies.source.isPageletProviderPathAllowed(path),
+                readCurrentSourceSnapshot: (path, readSignal) => capturePageletSourceSnapshot({
+                    host, path, signal: readSignal, isPathAllowed,
+                }),
+                revalidateVaultObservation: host.revalidateVaultObservation?.bind(host),
+                getEvidenceEpoch: host.getMemoryEvidenceEpoch?.bind(host),
+                getAuthoringEvidenceEpoch: () => this.dependencies.graph.getMemoryGraphTopologyEpoch(),
+                signal,
+            });
+            return valid && isCurrent();
+        } catch {
+            return false;
+        }
     }
 
     acknowledgeOrchestratorResult(

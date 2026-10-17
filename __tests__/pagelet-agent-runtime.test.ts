@@ -33,6 +33,8 @@ import {
     createAnchorBoundReadNoteTool,
 } from '../src/pagelet/agent/anchor-note-tool';
 import { PageletDeepDiscoverController } from '../src/pagelet/agent/pagelet-deep-discover-controller';
+import { pageletAgentInsightToDeliveryCandidate } from '../src/pagelet/agent/delivery-adapter';
+import { PAGELET_DEEP_DISCOVER_WEB_CACHE_TTL_MS } from '../src/pagelet/agent/types';
 import { validatePageletInputEvidence } from '../src/pagelet/agent/pagelet-agent-quality-gate';
 import {
     PAGELET_AGENT_READ_ONLY_TOOL_ALLOWLIST,
@@ -602,6 +604,55 @@ describe('Pagelet autonomous completed text', () => {
             validItemIndexes: [], aggregateCurrent: false }));
         expect(await validatePageletInputEvidence(evidence, options)).toBe(false);
         expect(revalidate).toHaveBeenCalled();
+    });
+
+    it('keeps staged notes-only text independent of later Web sources and their expiry', async () => {
+        const web = createFakeWebCapability();
+        const host = createHost();
+        host.settings.webSearchEnabled = true;
+        const staged = '## Completed before Web\n`notes/anchor.md` validate first';
+        const terminal = '## Completed after Web\n`notes/anchor.md` compare the external verification';
+        const runtime = createPageletAgentRuntime({
+            host,
+            isPathAllowed: path => path.startsWith('notes/'),
+            executeMemorySearch: async input => ({ usedMemory: false, query: input.query, documents: [], sources: [] }),
+            captureSourceMaterial: async path => path === anchor.path ? { ...anchor } : null,
+            webCapabilities: [web.capability],
+            createModel: () => ({ stream: async function* (input) {
+                if (input.turnIndex === 0) yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
+                else if (input.turnIndex === 1) yield { type: 'toolcall_delta', id: 'stage-before-web', name: 'stage_pagelet_insight', input: { insightMarkdown: staged, sourceIds: [anchor.path] }, index: 0 };
+                else if (input.turnIndex === 2) yield { type: 'toolcall_delta', id: 'web-after-stage', name: BUILTIN_WEB_SEARCH_TOOL_NAME, input: { query: 'release validation' }, index: 0 };
+                else yield { type: 'text_delta', text: terminal };
+            } }),
+        });
+        let now = 2_000;
+        const controller = new PageletDeepDiscoverController({
+            runtime,
+            captureSnapshot: async () => anchor,
+            captureSourceMaterial: async path => path === anchor.path ? { ...anchor } : null,
+            getPolicyIdentity: () => pageletPolicyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: path => path.startsWith('notes/'),
+            now: () => now,
+        });
+        const result = await controller.run({ path: anchor.path, triggerReason: 'explicit', force: true });
+        if (result.status !== 'verified') throw new Error(`Expected verified text, received ${result.status}`);
+        expect(web.execute).toHaveBeenCalledTimes(1);
+        expect(result.insights.map(insight => insight.body)).toEqual([staged, terminal]);
+        const [first, second] = result.insights.map(insight => pageletAgentInsightToDeliveryCandidate(insight, 'en'));
+        expect(first.pageletAgent.handoff.webUrls).toEqual([]);
+        expect(first.pageletAgent.handoff.inputEvidence?.lineage.dependencies.some(dependency => dependency.kind === 'web')).toBe(false);
+        expect(second.pageletAgent.handoff.webUrls).toEqual(['https://example.com/official']);
+        expect(second.pageletAgent.handoff.inputEvidence?.lineage.dependencies).toContainEqual({
+            kind: 'web', providerId: 'pagelet-test-web', resultKey: 'https://example.com/official',
+        });
+        now += PAGELET_DEEP_DISCOVER_WEB_CACHE_TTL_MS;
+        await expect(controller.validateInsight(first.pageletAgent.validationIdentity)).resolves.toBe(true);
+        await expect(controller.validateInsight(second.pageletAgent.validationIdentity)).resolves.toBe(false);
+        const cached = await controller.readCachedCollection(anchor.path);
+        expect(cached).toMatchObject({ status: 'cache-hit', insights: [{ body: staged }] });
+        if (cached.status === 'cache-hit') expect(cached.insights).toHaveLength(1);
     });
 
     it('retains original owner facts for a real metadata no-match observation', async () => {

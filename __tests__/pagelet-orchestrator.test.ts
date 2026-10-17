@@ -585,6 +585,42 @@ function makeMemoryRecord(overrides: Partial<ConfirmedMemoryRecord> = {}): Confi
 }
 
 describe("PageletOrchestrator Deep Discover migration", () => {
+    it("keeps a pending reader selection through an unrelated source recheck", async () => {
+        const result = makeVerifiedDeepDiscoverResult();
+        const second = { ...result.insight, insightId: "second-reading", body: "The complete second reading." };
+        result.collection.insights = [result.insight, second];
+        let selecting = false;
+        let finishSelection!: (valid: boolean) => void;
+        const validateDeepDiscoverInsight = jest.fn<NonNullable<PageletHost["validateDeepDiscoverInsight"]>>(identity =>
+            selecting && identity.insightId === second.insightId
+                ? new Promise(resolve => { finishSelection = resolve; }) : Promise.resolve(true));
+        const host = makeHost({
+            readDeepDiscover: async () => ({ ...result, status: "cache-hit" }),
+            validateDeepDiscoverInsight,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = { open: jest.fn<PanelOpen>(), close: jest.fn(), isOpen: true };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            panelReading: { selectedId: string };
+            invalidateAgentInsightForPaths(paths: readonly string[]): void;
+        };
+        internals.panelView = panelView;
+        await orchestrator.openPanel();
+        selecting = true;
+        const next = panelView.open.mock.calls.at(-1)?.[1][0].actions?.find(action => action.label === "Next result");
+        expect(next).toBeDefined();
+        next!.callback();
+        expect(finishSelection).toBeDefined();
+        internals.invalidateAgentInsightForPaths(["notes/unrelated.md"]);
+        await flushAsyncWork();
+        finishSelection(true);
+        await flushAsyncWork();
+        expect(internals.panelReading.selectedId).toBe(second.insightId);
+        expect(panelView.open.mock.calls.at(-1)?.[1][0].insightText).toBe(second.body);
+        expect(panelView.close).not.toHaveBeenCalled();
+    });
+
     it("B-176 ignores a late pure read for A after reading B without running or cancelling analysis", async () => {
         let activePath = 'notes/a.md';
         let finishA!: (result: Awaited<ReturnType<NonNullable<PageletHost['readDeepDiscover']>>>) => void;
@@ -729,7 +765,9 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         expect(panelView.open.mock.calls.at(-1)?.[1][0].insightText).toBe('## Second full text\nThe complete second body.');
         expect(panelView.restoreReadingPosition).toHaveBeenLastCalledWith({ scrollTop: 87, sourcesExpanded: [true] });
         expect(readDeepDiscover).toHaveBeenCalledTimes(2);
-        expect(internals.panelReading.candidates.map(candidate => candidate.id)).toEqual(['a-second']);
+        expect(internals.panelReading.candidates.map(candidate => [candidate.id, candidate.staleStatus])).toEqual([
+            ['deep-notes/a.md', 'stale'], ['a-second', 'fresh'],
+        ]);
         const controls = panelView.open.mock.calls.at(-1)?.[2]?.reading;
         if (!controls) throw new Error("expected controls for the restored reading");
         controls.actions?.find((action: { label: string }) => action.label === 'Show new results')?.callback();
@@ -1076,11 +1114,12 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         }
     });
 
-    it("invalidates a candidate and its open Panel when any cited source changes", async () => {
-        const host = makeHost();
+    it("keeps the selected Panel reading stale when an uncited input changes and leaves its sibling usable", async () => {
+        let changed = false;
+        const host = makeHost({ validateDeepDiscoverInsight: async identity => !changed || identity.insightId === "independent-sibling" });
         const orchestrator = new PageletOrchestrator(host);
         const panelView = {
-            open: jest.fn(),
+            open: jest.fn<PanelOpen>(),
             close: jest.fn(),
             isOpen: true,
         };
@@ -1095,21 +1134,65 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             ): void;
             invalidateAgentInsightForPaths(paths: readonly string[]): void;
             agentInsightCandidate: unknown;
-            openAgentInsightCandidate: unknown;
+            openAgentInsightCandidate: PageletAgentDeliveryCandidate | null;
+            panelReading: { candidates: PageletAgentDeliveryCandidate[] };
         };
         internals.panelView = panelView;
+        const result = makeVerifiedDeepDiscoverResult();
+        const hidden = { ...result.insight.anchor, path: "notes/uncited.md" };
+        result.insight = {
+            ...result.insight,
+            inputEvidence: {
+                lineage: { schemaVersion: 1, completeness: "complete", dependencies: [
+                    { kind: "vault", via: "pagelet", path: result.insight.anchor.path },
+                    { kind: "vault", via: "note", path: hidden.path },
+                ] },
+                sourceRecords: [], sourceSnapshots: [result.insight.anchor, hidden], vaultObservations: [],
+            },
+        };
+        const sibling = { ...makeVerifiedDeepDiscoverResult().insight, insightId: "independent-sibling", body: "An independent result." };
+        result.insights = [result.insight, sibling];
+        result.collection.insights = result.insights;
         const candidate = internals.acceptDeepDiscoverResult(
-            makeVerifiedDeepDiscoverResult(),
+            result,
             { path: "notes/current.md", proactive: false },
         );
         expect(candidate).not.toBeNull();
         internals.openAgentInsightPanel(candidate!);
 
-        internals.invalidateAgentInsightForPaths(["notes/related.md"]);
+        changed = true;
+        internals.invalidateAgentInsightForPaths([hidden.path]);
+        await flushAsyncWork();
+        expect(internals.openAgentInsightCandidate?.id).toBe(result.insight.insightId);
+        expect(internals.openAgentInsightCandidate?.staleStatus).toBe("stale");
+        expect(panelView.close).not.toHaveBeenCalled();
+        const finding = panelView.open.mock.calls.at(-1)?.[1][0];
+        expect(finding?.insightText).toBe(result.insight.body);
+        expect(finding?.actionStatus?.label).toContain("out of date");
+        expect(finding?.actions?.find(action => action.label === "Discuss in Chat")?.disabled).toBe(true);
+        expect(internals.panelReading.candidates).toHaveLength(2);
+        finding?.actions?.find(action => action.label === "Next result")?.callback();
+        await flushAsyncWork();
+        expect(internals.openAgentInsightCandidate?.id).toBe(sibling.insightId);
+        expect(panelView.open.mock.calls.at(-1)?.[1][0].actions?.find(action => action.label === "Discuss in Chat")?.disabled).not.toBe(true);
+    });
 
-        expect(internals.agentInsightCandidate).toBeNull();
-        expect(internals.openAgentInsightCandidate).toBeNull();
-        expect(panelView.close).toHaveBeenCalledTimes(1);
+    it.each([false, true])("rechecks a cache-hit through the full reading validator before displaying it: %s", async valid => {
+        const cached = makeVerifiedDeepDiscoverResult();
+        const validateDeepDiscoverInsight = jest.fn<NonNullable<PageletHost["validateDeepDiscoverInsight"]>>().mockResolvedValue(valid);
+        const host = makeHost({
+            readDeepDiscover: async () => ({ ...cached, status: "cache-hit" }),
+            validateDeepDiscoverInsight,
+            getDeepDiscoverPolicyIdentity: () => "current-policy",
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = { open: jest.fn<PanelOpen>(), close: jest.fn(), isOpen: true };
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+        await orchestrator.openPanel();
+        expect(validateDeepDiscoverInsight).toHaveBeenCalledTimes(1);
+        const findings = panelView.open.mock.calls.at(-1)?.[1] ?? [];
+        if (valid) expect(findings[0]?.insightText).toBe(cached.insight.body);
+        else expect(findings).toEqual([]);
     });
 
     it("invalidates a candidate and its open Panel when policy identity changes", () => {
@@ -1587,6 +1670,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             openAgentInsightPanel(candidate: PageletAgentDeliveryCandidate): void;
             handleMarkdownModify(path: string): void;
             handleNoteActivity: typeof handleNoteActivity;
+            revalidateOpenReading(): Promise<void>;
             openAgentInsightCandidate: unknown;
         };
         internals.panelView = panelView;
@@ -1597,7 +1681,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         );
         internals.openAgentInsightPanel(withExplicitLinkAction(candidate));
         const latestFirstFinding = () => panelView.open.mock.calls.at(-1)?.[1][0] as {
-            actionStatus?: { label: string; preview?: string };
+            actionStatus?: { label: string; preview?: string; detail?: string };
             actions: Array<{ label: string; callback(): void }>;
         };
 
@@ -1624,6 +1708,12 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         expect(latestFirstFinding().actionStatus?.label).toBe("The related-note link was added.");
         expect(latestFirstFinding().actions[0].label).toBe("Undo");
 
+        validateDeepDiscoverInsight.mockResolvedValueOnce(false);
+        await internals.revalidateOpenReading();
+        expect(latestFirstFinding().actions[0].label).toBe("Undo");
+        expect(latestFirstFinding().actionStatus?.detail).toContain("out of date");
+        await internals.revalidateOpenReading();
+
         latestFirstFinding().actions[0].callback();
         await flushAsyncWork();
 
@@ -1636,8 +1726,9 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         expect(handleNoteActivity).toHaveBeenCalledWith("notes/current.md");
 
         internals.handleMarkdownModify("notes/current.md");
-        expect(internals.openAgentInsightCandidate).toBeNull();
-        expect(panelView.close).toHaveBeenCalledTimes(1);
+        expect(internals.openAgentInsightCandidate).not.toBeNull();
+        expect(latestFirstFinding().actionStatus?.label).toContain("out of date");
+        expect(panelView.close).not.toHaveBeenCalled();
     });
 
     it("cancels a staged Pagelet intent on inline Cancel and Panel session close", async () => {
@@ -2581,6 +2672,116 @@ describe("PageletOrchestrator pet task visuals", () => {
 });
 
 describe("PageletOrchestrator detail expansion", () => {
+    it("makes an in-flight cache read available after the empty Panel expands into Detail", async () => {
+        let finishRead!: (result: Awaited<ReturnType<NonNullable<PageletHost["readDeepDiscover"]>>>) => void;
+        const readDeepDiscover = jest.fn<NonNullable<PageletHost["readDeepDiscover"]>>(
+            () => new Promise(resolve => { finishRead = resolve; }),
+        );
+        const openPageletDetailView = jest.fn<NonNullable<PageletHost["openPageletDetailView"]>>();
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>();
+        const host = makeHost({ readDeepDiscover, openPageletDetailView, runDeepDiscover });
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = {
+            currentLayoutType: "discover" as const, currentVisibleFindings: [], currentPanelExtra: undefined,
+            open: jest.fn<PanelOpen>(), close: jest.fn(() => { panelView.isOpen = false; }), isOpen: true,
+        };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            expandPanelToTab(): Promise<void>;
+            acceptDeepDiscoverResult(result: PageletDeepDiscoverControllerResult, options: { path: string; proactive: boolean }): unknown;
+        };
+        internals.panelView = panelView;
+        const loading = orchestrator.openPanel();
+        await flushAsyncWork();
+        expect(readDeepDiscover).toHaveBeenCalledTimes(1);
+        await internals.expandPanelToTab();
+        const reading = openPageletDetailView.mock.calls[0]?.[0].reading;
+        if (!reading) throw new Error("Expected a Detail reading payload");
+        expect(reading.candidates).toEqual([]);
+        const changed = jest.fn();
+        const unsubscribe = reading.subscribe(changed);
+        const panelRenderCount = panelView.open.mock.calls.length;
+        const result = makeVerifiedDeepDiscoverResult();
+        finishRead({ ...result, status: "cache-hit" });
+        await loading;
+        expect(reading.getLatestCandidates().map(candidate => candidate.id)).toEqual([result.insight.insightId]);
+        expect(reading.getReadingControls().label).toContain("New results are available.");
+        expect(reading.getReadingControls().label).not.toContain("Checking available content");
+        expect(changed).toHaveBeenCalled();
+        expect(panelView.open).toHaveBeenCalledTimes(panelRenderCount);
+        expect(panelView.isOpen).toBe(false);
+        expect(runDeepDiscover).not.toHaveBeenCalled();
+        unsubscribe();
+
+        // The same valid cache read must not replace a newer collection accepted
+        // while its full source validation is still awaiting completion.
+        const path = "notes/racing.md";
+        jest.mocked(host.app.workspace.getActiveFile).mockReturnValue(makeTFile(path));
+        const older = makeVerifiedDeepDiscoverResult("explicit", path);
+        let finishValidation!: (valid: boolean) => void;
+        host.validateDeepDiscoverInsight = identity => identity.insightId === older.insight.insightId
+            ? new Promise(resolve => { finishValidation = resolve; }) : Promise.resolve(true);
+        panelView.isOpen = true;
+        const racingRead = orchestrator.openPanel();
+        await flushAsyncWork();
+        await internals.expandPanelToTab();
+        const racingDetail = openPageletDetailView.mock.calls.at(-1)?.[0].reading;
+        if (!racingDetail) throw new Error("Expected the second Detail reading payload");
+        finishRead({ ...older, status: "cache-hit" });
+        await flushAsyncWork();
+        expect(finishValidation).toBeDefined();
+        const newer = makeVerifiedDeepDiscoverResult("explicit", path);
+        newer.insight = { ...newer.insight, insightId: "newer-than-cache", body: "The newly discovered reading." };
+        newer.insights = [newer.insight];
+        newer.collection.insights = newer.insights;
+        internals.acceptDeepDiscoverResult(newer, { path, proactive: false });
+        const accepted = racingDetail.getLatestCandidates()[0];
+        expect(accepted?.id).toBe(newer.insight.insightId);
+        const rendersBeforeValidation = panelView.open.mock.calls.length;
+        finishValidation(true);
+        await racingRead;
+        expect(racingDetail.getLatestCandidates()).toEqual([accepted]);
+        expect(racingDetail.getReadingControls().label).not.toContain("Checking available content");
+        expect(panelView.open).toHaveBeenCalledTimes(rendersBeforeValidation);
+        expect(panelView.isOpen).toBe(false);
+    });
+
+    it("keeps a result completed during empty Detail expansion reachable from that Detail snapshot", async () => {
+        let finishOpen!: () => void;
+        const openPageletDetailView = jest.fn<NonNullable<PageletHost["openPageletDetailView"]>>(
+            () => new Promise<void>(resolve => { finishOpen = resolve; }),
+        );
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>();
+        const host = makeHost({
+            openPageletDetailView, runDeepDiscover,
+            readDeepDiscover: async () => ({ status: "empty" }),
+            getDeepDiscoverActivity: () => ({ phase: "running", requestId: "waiting-request" }),
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = {
+            currentLayoutType: "discover" as const,
+            currentVisibleFindings: [], currentPanelExtra: undefined,
+            open: jest.fn<PanelOpen>(), close: jest.fn(), isOpen: true,
+        };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            expandPanelToTab(): Promise<void>;
+            acceptDeepDiscoverResult(result: PageletDeepDiscoverControllerResult, options: { path: string; proactive: boolean }): unknown;
+        };
+        internals.panelView = panelView;
+        await orchestrator.openPanel();
+        const pending = internals.expandPanelToTab();
+        const payload = openPageletDetailView.mock.calls[0]?.[0];
+        expect(payload?.reading?.candidates).toEqual([]);
+        const result = makeVerifiedDeepDiscoverResult();
+        result.requestId = "waiting-request";
+        internals.acceptDeepDiscoverResult(result, { path: "notes/current.md", proactive: false });
+        finishOpen();
+        await pending;
+        expect(payload?.reading?.getLatestCandidates().map(candidate => candidate.id)).toEqual([result.insight.insightId]);
+        expect(runDeepDiscover).not.toHaveBeenCalled();
+    });
+
     it("B-176 keeps the Panel intact until the Detail target accepts the payload", async () => {
         let rejectOpen!: (error: Error) => void;
         const openPageletDetailView = jest.fn<NonNullable<PageletHost['openPageletDetailView']>>(() => new Promise((_resolve, reject) => { rejectOpen = reject; }));
@@ -3606,7 +3807,7 @@ describe("PageletOrchestrator Share Card gate", () => {
 describe("PageletOrchestrator LC-01 feature event lifecycle", () => {
     interface RecordedEventRef {
         id: string;
-        source: "workspace" | "vault";
+        source: "workspace" | "vault" | "metadata";
         event: string;
         callback: (...args: unknown[]) => void;
         detached: boolean;
@@ -3661,7 +3862,7 @@ describe("PageletOrchestrator LC-01 feature event lifecycle", () => {
         mutableHost.pageletFeatureScope = featureScope;
         mutableHost.isFeatureScopeCurrent = (scope) => scope === featureScope && !featureScopeReleased;
         const record = (
-            source: "workspace" | "vault",
+            source: "workspace" | "vault" | "metadata",
             event: string,
             callback: (...args: unknown[]) => void,
         ) => {
@@ -3702,7 +3903,12 @@ describe("PageletOrchestrator LC-01 feature event lifecycle", () => {
         (host as unknown as { app: PageletHost["app"] }).app = {
             workspace,
             vault,
-            metadataCache: { getFileCache: jest.fn(() => null) },
+            metadataCache: {
+                getFileCache: jest.fn(() => null),
+                on: jest.fn((event: string, callback: (...args: unknown[]) => void) => (
+                    record("metadata", event, callback)
+                )),
+            },
         } as unknown as PageletHost["app"];
 
         return {
@@ -3720,19 +3926,18 @@ describe("PageletOrchestrator LC-01 feature event lifecycle", () => {
         };
     }
 
-    it("detaches all five feature event refs when the feature is disabled", () => {
+    it("detaches every feature event ref including create when the feature is disabled", () => {
         const harness = createLifecycleHarness();
         const orchestrator = harness.createOrchestrator();
         orchestrator.initialize();
-        expect(harness.registerEvent).toHaveBeenCalledTimes(5);
+        expect(harness.refs.map(ref => ref.event)).toContain("create");
 
         orchestrator.destroy();
         harness.releaseFeatureScope();
 
-        expect(harness.refs).toHaveLength(5);
-        expect(harness.refs.map((ref) => ref.detached)).toEqual([true, true, true, true, true]);
+        expect(harness.refs.every(ref => ref.detached)).toBe(true);
         harness.releaseFeatureScope();
-        expect(harness.refs.map((ref) => ref.detached)).toEqual([true, true, true, true, true]);
+        expect(harness.refs.every(ref => ref.detached)).toBe(true);
     });
 
     it("lets only the current generation receive an event after off/on", () => {
@@ -3786,20 +3991,17 @@ describe("PageletOrchestrator LC-01 feature event lifecycle", () => {
             const harness = createLifecycleHarness();
             const orchestrator = harness.createOrchestrator();
             orchestrator.initialize();
-            const panelView = { close: jest.fn(), destroy: jest.fn(), isOpen: true };
-            const openCandidate = {
-                pageletAgent: {
-                    validationIdentity: {
-                        cacheIdentity: { anchor: { path: "notes/open.md" }, sources: [] },
-                },
-            },
-            };
+            const panelView = { open: jest.fn<PanelOpen>(), close: jest.fn(), destroy: jest.fn(), isOpen: true };
             const state = orchestrator as unknown as {
-                panelView: { close: jest.Mock; isOpen: boolean };
-                openAgentInsightCandidate: unknown;
+                panelView: typeof panelView;
+                openAgentInsightCandidate: PageletAgentDeliveryCandidate;
+                acceptDeepDiscoverResult(result: PageletDeepDiscoverControllerResult, options: { path: string; proactive: boolean }): PageletAgentDeliveryCandidate;
+                openAgentInsightPanel(candidate: PageletAgentDeliveryCandidate): void;
             };
             state.panelView = panelView;
-            state.openAgentInsightCandidate = openCandidate;
+            state.openAgentInsightPanel(state.acceptDeepDiscoverResult(makeVerifiedDeepDiscoverResult("explicit", "notes/open.md"), {
+                path: "notes/open.md", proactive: false,
+            }));
 
             const modify = harness.refs.find(({ event }) => event === "modify");
             modify?.callback(makeTFile("notes/current.md"));
@@ -3811,10 +4013,46 @@ describe("PageletOrchestrator LC-01 feature event lifecycle", () => {
 
             const deleted = harness.refs.find(({ event }) => event === "delete");
             deleted?.callback(makeTFile("notes/open.md"));
-            expect(panelView.close).toHaveBeenCalledTimes(1);
+            expect(state.openAgentInsightCandidate.staleStatus).toBe("stale");
+            expect(panelView.close).not.toHaveBeenCalled();
             orchestrator.destroy();
         } finally {
             jest.useRealTimers();
+        }
+    });
+
+    it("clears retained reading when delayed metadata reveals a revoked source", async () => {
+        const harness = createLifecycleHarness();
+        const orchestrator = harness.createOrchestrator();
+        orchestrator.initialize();
+        try {
+            const panelView = { open: jest.fn<PanelOpen>(), close: jest.fn(), destroy: jest.fn(), isOpen: true };
+            const state = orchestrator as unknown as {
+                panelView: typeof panelView;
+                openAgentInsightCandidate: PageletAgentDeliveryCandidate | null;
+                acceptDeepDiscoverResult(result: PageletDeepDiscoverControllerResult, options: { path: string; proactive: boolean }): PageletAgentDeliveryCandidate;
+                openAgentInsightPanel(candidate: PageletAgentDeliveryCandidate): void;
+            };
+            state.panelView = panelView;
+            const candidate = state.acceptDeepDiscoverResult(makeVerifiedDeepDiscoverResult("explicit", "notes/open.md"), {
+                path: "notes/open.md", proactive: false,
+            });
+            state.openAgentInsightPanel(candidate);
+            harness.host.validateDeepDiscoverInsight = jest.fn(async () => false);
+
+            harness.refs.find(({ event }) => event === "modify")?.callback(makeTFile("notes/open.md"));
+            await flushAsyncWork();
+            expect(candidate.staleStatus).toBe("stale");
+            expect(panelView.close).not.toHaveBeenCalled();
+
+            harness.host.isPathAllowedForPagelet = path => path !== "notes/open.md";
+            harness.refs.find(({ source, event }) => source === "metadata" && event === "changed")
+                ?.callback(makeTFile("notes/open.md"));
+            expect(candidate.staleStatus).toBe("boundary-changed");
+            expect(state.openAgentInsightCandidate).toBeNull();
+            expect(panelView.close).toHaveBeenCalledTimes(1);
+        } finally {
+            orchestrator.destroy();
         }
     });
 

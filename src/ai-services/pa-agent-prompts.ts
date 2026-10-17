@@ -4,6 +4,7 @@ import { AIMessage, HumanMessage, SystemMessage, type BaseMessage } from "@langc
 import { PaAgentContextProjector } from "./context";
 import { escapeTaggedBoundary } from "./agent-utils";
 import type { ChatMessage, PaAgentMessage } from "./chat-types";
+import { pageletAttachmentReference } from './pagelet-handoff';
 import { actionHistoryMessages, canProjectNativeActionHistory, projectPaAgentActionHistory,
     additionalHistoricalActionStates, type PaAgentActionGroup } from "./pa-agent-action-history";
 import type { PaAgentProjectedHistory, PaAgentProjectedHistoryEntry } from "./context/PaAgentContextProjector";
@@ -368,7 +369,9 @@ function currentRequestMessages(currentInput: string, history: PaAgentProjectedH
 
 function historicalTextMessage(message: ChatMessage): BaseMessage {
     const content = `<historical_message role="${message.role}" context_only="true" format="json">\n${
-        escapeTaggedBoundary(JSON.stringify({ content: message.content }), 'historical_message')}\n</historical_message>`;
+        escapeTaggedBoundary(JSON.stringify({ content: message.content,
+            ...(message.pageletAttachment ? { pageletAttachment: pageletAttachmentReference(message.pageletAttachment) } : {}),
+        }), 'historical_message')}\n</historical_message>`;
     return message.role === 'user' ? new HumanMessage(content) : new AIMessage(content);
 }
 

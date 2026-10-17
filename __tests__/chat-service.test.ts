@@ -37,7 +37,7 @@ import type {
 } from '../src/ai-services/operations/types';
 import { OperationsService, type OperationsSession } from '../src/ai-services/operations/operations-service';
 import { OperationsToolProvider } from '../src/ai-services/operations/operations-tool-provider';
-import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
+import type { PageletChatAttachment, PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
 import { hashPageletContent } from '../src/pagelet/agent/anchor-snapshot';
 import { createPageletAgentRuntime } from '../src/pagelet/agent/pagelet-agent-runtime';
 import { PageletDeepDiscoverController } from '../src/pagelet/agent/pagelet-deep-discover-controller';
@@ -3234,6 +3234,117 @@ describe('ChatService.streamLLM integration', () => {
         expect(inputs).toHaveLength(2);
         service.dispose();
         controller.dispose();
+    });
+
+    it('preserves non-enumerable Memory source receipts with Pagelet and its follow-up history', async () => {
+        const fixture = await createPageletSourceFixture();
+        const personal = { state: 'identified' as const, mode: 'governed' as const,
+            revisions: [{ claimId: 'pagelet-preference', revisionId: 'pagelet-preference-v1' }] };
+        const memoryContext = { memoryContextMode: 'governed', governedMemoryContext: 'Prefer concise replies.' };
+        Object.defineProperties(memoryContext, {
+            generationInputSources: { value: { personal, insights: { state: 'none' } } },
+            isSourceCurrent: { value: () => true },
+        });
+        const plugin = { ...createPlugin({ ...fixture, memoryExtractionPromptContext: memoryContext }),
+            isPersonalSourceCurrent: () => true };
+        const inputs: Record<string, string>[] = [];
+        mockCreateChatModel.mockResolvedValue(createStreamModel('A Pagelet answer with saved preferences.', input => inputs.push(input)));
+        const events: CanonicalAgentEvent[] = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        try {
+            await service.streamLLM('Discuss this finding.', jest.fn(), undefined, [], {
+                pageletHandoff: fixture.context, conversationId: 'pagelet-memory',
+                onLifecycleEvent: event => events.push(event),
+                runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'first', userMessageId: 'first-user' },
+            });
+            const messages = events.flatMap(event => event.type === 'message_end' ? [event.message] : []);
+            const canonical = createPaAgentPersistedTurn({ runId: events[0].runId, turnId: events[0].turnId,
+                status: 'completed', committedFinalText: 'A Pagelet answer with saved preferences.', messages });
+            expect(canonical.inputLineage).toMatchObject({ completeness: 'complete', dependencies: expect.arrayContaining([
+                { kind: 'personal', source: personal },
+                { kind: 'vault', path: fixture.context.anchor.path, via: 'pagelet' },
+            ]) });
+            expect(inputs[0].input).toContain('Prefer concise replies.');
+            const history: ChatMessage[] = [{ role: 'user', content: 'Discuss this finding.', hostProvenance: {
+                version: 1, kind: 'ordinary_user_statement', messageId: 'first-user' } },
+            { role: 'assistant', content: 'A Pagelet answer with saved preferences.',
+                canonicalTurn: canonical, inputLineage: canonical.inputLineage }];
+            await service.streamLLM('Continue the discussion.', jest.fn(), undefined, history, {
+                conversationId: 'pagelet-memory',
+                runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'second', userMessageId: 'second-user' },
+            });
+            expect(inputs[1].input).toContain('A Pagelet answer with saved preferences.');
+        } finally { service.dispose(); }
+    });
+
+    it('reads the original Pagelet on demand after persisted reopen without copying its body into follow-up context', async () => {
+        const fixture = await createPageletSourceFixture();
+        const originalLineage = fixture.context.inputEvidence!.lineage;
+        const handoff = { ...fixture.context, inputEvidence: { ...fixture.context.inputEvidence!,
+            lineage: completeInputLineage([...originalLineage.dependencies, { kind: 'run-notes-observation',
+                runId: 'pagelet-author', owner: 'vault', sourceEpoch: fixture.authoringEpoch.value }]) } };
+        const plugin = { ...createPlugin(fixture), getPageletHistorySourcePolicyPaths: () => fixture.markdownFiles.map(file => file.path) };
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const events: CanonicalAgentEvent[] = [];
+        let attachment: PageletChatAttachment | undefined;
+        mockCreateChatModel.mockResolvedValue(createStreamModel('Start with the third suggestion.'));
+        try {
+            await service.streamLLM('Which suggestion should I start with?', jest.fn(), undefined, [], {
+                pageletHandoff: handoff, conversationId: 'pagelet-reopen',
+                runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'first', userMessageId: 'attached-user' },
+                onTurnMetadata: metadata => { if (metadata.acceptedPageletAttachment) attachment = metadata.acceptedPageletAttachment; },
+                onLifecycleEvent: event => events.push(event),
+            });
+            expect(attachment).toBeDefined();
+            const canonical = createPaAgentPersistedTurn({ runId: events[0].runId, turnId: events[0].turnId,
+                status: 'completed', committedFinalText: 'Start with the third suggestion.',
+                messages: events.flatMap(event => event.type === 'message_end' ? [event.message] : []) });
+            const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore() });
+            const saved = manager.serializeTurn({ kind: 'history', user: { role: 'user', content: 'Which suggestion should I start with?',
+                pageletAttachment: attachment, hostProvenance: { version: 1, kind: 'ordinary_user_statement', messageId: 'attached-user' } },
+            assistant: { role: 'assistant', content: 'Start with the third suggestion.', canonicalTurn: canonical,
+                inputLineage: canonical.inputLineage } }, 'pagelet-reopen', 0);
+            const restored = manager.deserializeTurn(JSON.parse(JSON.stringify(saved)));
+            expect(restored.userMessage.pageletAttachment?.handoff.body).toBe(handoff.body);
+            fixture.evidenceEpoch.value = 'ordinary-note-edit';
+            fixture.authoringEpoch.value = 'ordinary-pagelet-source-edit';
+            fixture.fileContents['projects/anchor.md'] += '\nLater note text.';
+            fixture.markdownFiles[0].stat.mtime++;
+            const inputs: Record<string, string>[] = [];
+            const toolModel = (name: string, args: unknown, id: string) => createStreamChunksModel([{
+                tool_call_chunks: [{ index: 0, id, name, args: JSON.stringify(args) }],
+            }], input => inputs.push(input));
+            mockCreateChatModel.mockReset()
+                .mockResolvedValueOnce(toolModel('load_tools', { names: ['read_pagelet_attachment'] }, 'load-pagelet'))
+                .mockResolvedValueOnce(toolModel('read_pagelet_attachment', { action: 'read', attachmentId: 'attached-user' }, 'read-pagelet'))
+                .mockResolvedValue(createStreamModel('The original second suggestion means this.', input => inputs.push(input)));
+            const followUpEvents: CanonicalAgentEvent[] = [];
+            await service.streamLLM('Explain the second suggestion in the original material.', jest.fn(), undefined,
+                [restored.userMessage, restored.assistantMessage], { conversationId: 'pagelet-reopen',
+                    runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'second', userMessageId: 'followup-user' },
+                    onLifecycleEvent: event => followUpEvents.push(event) });
+            expect(inputs[0].input).toMatch(/"attachmentId"\s*:\s*"attached-user"/u);
+            expect(inputs[0].input).not.toContain('Source-backed detail.');
+            expect(inputs[1].input).not.toContain('Source-backed detail.');
+            expect(inputs[2].tool_observations).toContain(JSON.stringify(handoff.body).slice(1, -1));
+            const final = followUpEvents.flatMap(event => event.type === 'message_end' && event.message.role === 'assistant'
+                ? [event.message] : []).at(-1);
+            expect(final?.inputLineage).toMatchObject({ completeness: 'complete' });
+            const followUpCanonical = createPaAgentPersistedTurn({ runId: followUpEvents[0].runId,
+                turnId: followUpEvents[0].turnId, status: 'completed',
+                committedFinalText: 'The original second suggestion means this.',
+                messages: followUpEvents.flatMap(event => event.type === 'message_end' ? [event.message] : []) });
+            const thirdInputs: Record<string, string>[] = [];
+            mockCreateChatModel.mockReset().mockResolvedValue(createStreamModel('You are welcome.', input => thirdInputs.push(input)));
+            await service.streamLLM('Thank you.', jest.fn(), undefined, [restored.userMessage, restored.assistantMessage,
+                { role: 'user', content: 'Explain the second suggestion in the original material.', hostProvenance: {
+                    version: 1, kind: 'ordinary_user_statement', messageId: 'followup-user' } },
+                { role: 'assistant', content: 'The original second suggestion means this.', canonicalTurn: followUpCanonical,
+                    inputLineage: followUpCanonical.inputLineage }], { conversationId: 'pagelet-reopen',
+                runSourceSelection: { schemaVersion: 1, scope: 'notes', selectionId: 'third', userMessageId: 'thanks-user' } });
+            expect(JSON.stringify(thirdInputs)).not.toContain('Source-backed detail.');
+            expect(thirdInputs[0].input).toContain('The original second suggestion means this.');
+        } finally { service.dispose(); }
     });
 
     it('injects complete Pagelet evidence as context-only while Operations availability follows opt-in', async () => {
