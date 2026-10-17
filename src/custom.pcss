@@ -7482,6 +7482,7 @@ body.is-mobile .pa-pagelet-action-ring-item {
 	font-family: var(--font-interface,inherit);
 	color: var(--text-normal,#dcddde);
 	box-sizing: border-box;
+	container: pa-pagelet-detail / inline-size;
 }
 
 .pa-pagelet-tab-body {
@@ -8146,6 +8147,270 @@ body.is-mobile .pa-pagelet-tab-memory-meta-row {
 }
 .pa-pagelet-tab-tag-chip--link:hover { color: var(--text-accent-hover); }
 
+.pa-pagelet-tab--reading .pa-pagelet-tab-body {
+	max-width: min(100%,720px);
+	padding: 20px clamp(16px,4cqw,40px) 48px;
+}
+
+.pa-pagelet-tab .pa-pagelet-reading-controls {
+	padding: 14px clamp(16px,4cqw,40px) 8px;
+	border-bottom: 1px solid var(--background-modifier-border,#3a3a3a);
+	background: var(--background-primary,#1e1e1e);
+}
+
+.pa-pagelet-reading-navigation {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px clamp(16px,4cqw,40px) 12px;
+	border-bottom: 1px solid var(--background-modifier-border,#3a3a3a);
+	background: var(--background-primary,#1e1e1e);
+}
+
+.pa-pagelet-reading-header {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+	min-width: 0;
+}
+
+.pa-pagelet-reading-eyebrow,
+.pa-pagelet-reading-note,
+.pa-pagelet-reading-candidate-count,
+.pa-pagelet-reading-section-label {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted,#999);
+	overflow-wrap: anywhere;
+}
+
+.pa-pagelet-reading-note,
+.pa-pagelet-reading-candidate-count,
+.pa-pagelet-reading-section-label {
+	flex: 1;
+	min-width: 0;
+	text-align: right;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pa-pagelet-reading-eyebrow {
+	color: var(--text-normal,#dcddde);
+	font-weight: 600;
+	flex: none;
+}
+
+.pa-pagelet-reading-candidates,
+.pa-pagelet-reading-sections {
+	min-width: 0;
+}
+
+.pa-pagelet-reading-candidates[hidden] {
+	display: none;
+}
+
+.pa-pagelet-reading-update {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	min-width: 0;
+}
+
+.pa-pagelet-reading-update[hidden] {
+	display: none;
+}
+
+.pa-pagelet-reading-candidate-list,
+.pa-pagelet-reading-section-links {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	min-width: 0;
+}
+
+.pa-pagelet-reading-candidate-list {
+	align-items: center;
+}
+
+.pa-pagelet-tab--reading .pa-pagelet-reading-section-links {
+	max-height: min(30vh, 264px);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-gutter: stable;
+	padding-right: 2px;
+}
+
+.pa-pagelet-tab--reading .pa-pagelet-tab-nav-item {
+	max-width: 100%;
+	white-space: normal;
+	overflow-wrap: anywhere;
+	text-align: left;
+}
+
+.pa-pagelet-reading-candidate-count {
+	flex: none;
+	margin-right: 2px;
+	text-align: left;
+}
+
+.pa-pagelet-tab--reading .pa-pagelet-tab-nav-item[aria-pressed=true] {
+	border-color: var(--interactive-accent,#7c9eff);
+	background: var(--background-modifier-hover,#333333);
+	color: var(--text-normal,#dcddde);
+	box-shadow: inset 0 -2px 0 var(--interactive-accent,#7c9eff);
+}
+
+.pa-pagelet-tab--reading .pa-pagelet-tab-nav-item[aria-current=true] {
+	color: var(--text-normal,#dcddde);
+	border-color: var(--interactive-accent,#7c9eff);
+}
+
+.pa-pagelet-reading-picker {
+	display: none;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.pa-pagelet-reading-select {
+	width: 100%;
+	min-width: 0;
+	max-width: 100%;
+	min-height: 36px;
+	padding: 4px 28px 4px 10px;
+	border-radius: 6px;
+	border: 1px solid var(--background-modifier-border,#3a3a3a);
+	background: var(--background-primary,#1e1e1e);
+	color: var(--text-normal,#dcddde);
+	font-family: var(--font-interface,inherit);
+	font-size: var(--font-ui-small);
+}
+
+.pa-pagelet-tab--reading .pa-pagelet-panel-timeline {
+	background: transparent;
+	border: none;
+	padding: 0;
+}
+
+.pa-pagelet-tab--reading .pa-pagelet-panel-timeline-title {
+	font-size: var(--font-ui-large);
+	font-weight: 600;
+	color: var(--text-normal,#dcddde);
+}
+
+.pa-pagelet-tab--reading .pa-pagelet-panel-timeline-insight {
+	background: transparent;
+	border-left: none;
+	border-radius: 0;
+	padding: 0;
+	margin-top: 12px;
+	color: var(--text-normal,#dcddde);
+	font-size: var(--font-text-size,17px);
+	line-height: 1.8;
+	max-width: 100%;
+}
+
+.pa-pagelet-tab--reading .pa-pagelet-panel-timeline-insight h1 {
+	font-size: 1.55em;
+	line-height: 1.35;
+	margin: 1.2em 0 0.55em;
+}
+
+.pa-pagelet-tab--reading .pa-pagelet-panel-timeline-insight h2 {
+	font-size: 1.28em;
+	line-height: 1.4;
+	margin: 1.35em 0 0.6em;
+}
+
+.pa-pagelet-tab--reading .pa-pagelet-panel-timeline-insight h3 {
+	font-size: 1.1em;
+	line-height: 1.45;
+	margin: 1.2em 0 0.5em;
+}
+
+.pa-pagelet-tab--reading .pa-pagelet-panel-timeline-insight p,
+.pa-pagelet-tab--reading .pa-pagelet-panel-timeline-insight li {
+	font-size: inherit;
+	line-height: inherit;
+}
+
+.pa-pagelet-tab--reading .pa-pagelet-panel-timeline-insight pre,
+.pa-pagelet-tab--reading .pa-pagelet-panel-timeline-insight table {
+	max-width: 100%;
+	overflow-x: auto;
+}
+
+.pa-pagelet-tab--reading .pa-pagelet-panel-timeline-insight table {
+	display: block;
+	border-collapse: collapse;
+}
+
+.pa-pagelet-tab--reading :is(h1,h2,h3,h4) {
+	scroll-margin-top: 24px;
+}
+
+@container pa-pagelet-detail (max-width:560px) {
+	.pa-pagelet-tab .pa-pagelet-tab-body {
+		padding: 16px 16px 36px;
+	}
+
+	.pa-pagelet-reading-header,
+	.pa-pagelet-tab .pa-pagelet-reading-controls {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.pa-pagelet-tab .pa-pagelet-reading-controls {
+		flex-wrap: nowrap;
+	}
+
+	.pa-pagelet-tab .pa-pagelet-reading-controls .pa-pagelet-reading-anchor,
+	.pa-pagelet-tab .pa-pagelet-reading-controls .pa-pagelet-reading-status {
+		flex-basis: auto;
+		min-width: 0;
+	}
+
+	.pa-pagelet-reading-note,
+	.pa-pagelet-reading-candidate-count {
+		text-align: left;
+		white-space: normal;
+	}
+
+	.pa-pagelet-reading-candidate-list,
+	.pa-pagelet-reading-sections,
+	.pa-pagelet-reading-section-label {
+		display: none;
+	}
+
+	.pa-pagelet-reading-picker {
+		display: flex;
+	}
+
+	.pa-pagelet-reading-select {
+		min-height: 44px;
+		font-size: 16px;
+	}
+}
+
+@container pa-pagelet-detail (max-width:400px) {
+	.pa-pagelet-tab .pa-pagelet-tab-body {
+		padding: 12px 12px 32px;
+	}
+
+	.pa-pagelet-tab .pa-pagelet-reading-controls,
+	.pa-pagelet-reading-navigation {
+		padding-inline: 12px;
+	}
+
+	.pa-pagelet-tab--reading .pa-pagelet-panel-timeline-actions,
+	.pa-pagelet-tab .pa-pagelet-reading-controls {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+	}
+}
+
 .pa-pagelet-tab-nav {
 	display: flex;
 	flex-wrap: wrap;
@@ -8174,6 +8439,45 @@ body.is-mobile .pa-pagelet-tab-memory-meta-row {
 .pa-pagelet-tab-nav-item:focus-visible {
 	border-color: var(--interactive-accent,#7c9eff);
 	color: var(--interactive-accent,#7c9eff);
+}
+
+.pa-pagelet-tab-nav-item[aria-current=true] {
+	border-color: var(--interactive-accent,#7c9eff);
+	background: var(--background-modifier-hover,#333333);
+	color: var(--text-normal,#dcddde);
+}
+
+.pa-pagelet-panel-connection-graph-details {
+	border: 1px solid var(--background-modifier-border,#3a3a3a);
+	border-radius: 8px;
+	overflow: hidden;
+	background: var(--background-primary,#1e1e1e);
+}
+
+.pa-pagelet-panel-connection-graph-details > summary {
+	min-height: 44px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 14px;
+	cursor: pointer;
+	color: var(--text-muted,#999);
+	font-size: var(--font-ui-medium);
+	font-weight: 600;
+	list-style: none;
+}
+
+.pa-pagelet-panel-connection-graph-details > summary::-webkit-details-marker {
+	display: none;
+}
+
+.pa-pagelet-panel-connection-graph-details > summary::after {
+	content: "▾";
+	margin-left: auto;
+}
+
+.pa-pagelet-panel-connection-graph-details:not([open]) > summary::after {
+	content: "▸";
 }
 
 .pa-pagelet-tab-context-pager-details {
@@ -8213,14 +8517,6 @@ body.is-mobile .pa-pagelet-tab-memory-meta-row {
 	box-shadow: none;
 }
 
-@media (max-width:720px) {
-	.pa-pagelet-tab-body {
-		padding: 16px;
-		max-width: none;
-	}
-
-}
-
 body.is-mobile .pa-pagelet-tab-body {
 	padding: 16px;
 	max-width: none;
@@ -8233,11 +8529,12 @@ body.is-mobile .pa-pagelet-tab-recall-link,
 body.is-mobile .pa-pagelet-tab-recall-save,
 body.is-mobile .pa-pagelet-tab-memory-confirm-all,
 body.is-mobile .pa-pagelet-tab-maintenance-action,
-body.is-mobile .pa-pagelet-tab-review-queue-filter,
-body.is-mobile .pa-pagelet-tab-nav-item {
-	min-height: 44px;
-	padding: 10px 14px;
-}
+	body.is-mobile .pa-pagelet-tab-review-queue-filter,
+	body.is-mobile .pa-pagelet-tab-nav-item,
+	body.is-mobile .pa-pagelet-reading-select {
+		min-height: 44px;
+		padding: 10px 14px;
+	}
 
 @media (prefers-reduced-motion: reduce) {
 	/* F-04: Pet idle/nudge blink groups */

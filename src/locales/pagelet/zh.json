@@ -117,6 +117,11 @@
     "pagelet.reading.running": "正在分析这篇笔记…",
     "pagelet.reading.newResults": "有新结果可读。",
     "pagelet.reading.showNew": "查看新结果",
+    "pagelet.reading.navigation.ariaLabel": "阅读导航",
+    "pagelet.reading.currentResultType": "阅读",
+    "pagelet.reading.candidates.ariaLabel": "本批成果",
+    "pagelet.reading.candidateCount": "正在阅读 {current} / {total}",
+    "pagelet.reading.sections.ariaLabel": "本页章节",
     "pagelet.reading.discover": "开始发现",
     "pagelet.reading.stale": "这份内容已过期，仍可继续阅读；请重新发现后再交给 PA Agent。",
     "pagelet.bubble.agentInsight.view": "查看洞察",
@@ -518,6 +523,8 @@
     "pagelet.tab.empty.body": "详细结果是临时内容。请先在拾页面板中运行审阅，再展开到这里查看结果。",
     "pagelet.tab.restored.title": "结果已过期",
     "pagelet.tab.restored.body": "拾页详细结果是临时内容。请重新运行拾页，或打开已保存的审阅/总结笔记查看历史。",
+    "pagelet.tab.restoredNote.title": "阅读已暂停",
+    "pagelet.tab.restoredNote.body": "拾页详细结果是临时内容。打开这篇笔记并点击 Pet 可在此标签重新接入；也可以重新运行拾页。",
     "pagelet.tab.tag.findings": "{count} 条发现",
     "pagelet.tab.tag.insights": "{count} 条洞察",
     "pagelet.tab.tag.sources": "{count} 个来源",
@@ -803,5 +810,6 @@
     "pagelet.graphDiscovery.none": "这个范围内暂未发现有来源依据的图谱建议。",
     "pagelet.tab.scopeRecap.title": "范围回顾",
     "pagelet.summary.save.cancelled": "已取消保存整理笔记。",
-    "pagelet.tab.titlePrefix": "拾页 — {title}"
+    "pagelet.tab.titlePrefix": "拾页 — {title}",
+    "pagelet.tab.newResultIndicator": "新"
 }

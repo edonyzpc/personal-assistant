@@ -50,6 +50,10 @@ const CONTEXTUAL_MEMORY_STATE_MARKER = "exact-governed-claims-v1";
 const pageletDetailSessionCache = new Map<string, PageletDetailPayload>();
 let pageletDetailSessionCounter = 0;
 
+type PageletDetailLeafWithNativeHeader = WorkspaceLeaf & {
+    updateHeader?: () => void;
+};
+
 export function clearPageletDetailSessionCache(): void {
     pageletDetailSessionCache.clear();
     pageletDetailSessionCounter = 0;
@@ -419,6 +423,8 @@ export class PageletDetailView extends ItemView {
     private contextualMemoryClaimIds: string[] = [];
     private hasContextualMemoryState = false;
     private payloadOptions: Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason" | "deliveryTarget" | "reading"> = {};
+    private hasNewResults = false;
+    private readonly onViewClosed?: (view: PageletDetailView) => void;
 
     constructor(
         leaf: WorkspaceLeaf,
@@ -437,6 +443,7 @@ export class PageletDetailView extends ItemView {
         onLinkQuietRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<{ ok: boolean; message: string }>,
         onOpenSettings?: () => void,
         memoryCallbacks: PageletMemoryLifecycleCallbacks = {},
+        onViewClosed?: (view: PageletDetailView) => void,
     ) {
         super(leaf);
         this.getLocale = getLocale;
@@ -450,6 +457,7 @@ export class PageletDetailView extends ItemView {
         this.onLinkQuietRecallCandidate = onLinkQuietRecallCandidate;
         this.onOpenSettings = onOpenSettings;
         this.memoryCallbacks = memoryCallbacks;
+        this.onViewClosed = onViewClosed;
         this.locale = getLocale();
         this.title = pageletT("pagelet.tab.title", this.locale);
         this.sessionId = createPageletDetailSessionId();
@@ -461,7 +469,20 @@ export class PageletDetailView extends ItemView {
     }
 
     getDisplayText(): string {
-        return pageletT("pagelet.tab.title", this.locale);
+        const anchorPath = this.getNoteAnchorPath();
+        if (!anchorPath) return pageletT("pagelet.tab.title", this.locale);
+        const noteName = anchorPath.split("/").pop() ?? anchorPath;
+        const baseName = noteName.replace(/\.md$/i, "");
+        const sameNamePaths = this.app.workspace.getLeavesOfType(PAGELET_DETAIL_VIEW_TYPE)
+            .map(leaf => leaf.view instanceof PageletDetailView ? leaf.view.getNoteAnchorPath() : null)
+            .filter((path): path is string => path !== null)
+            .filter(path => (path.split("/").pop() ?? path).replace(/\.md$/i, "") === baseName);
+        const distinctPaths = new Set(sameNamePaths);
+        const displayTitle = distinctPaths.size > 1 ? anchorPath.replace(/\.md$/i, "") : baseName;
+        const title = pageletT("pagelet.tab.titlePrefix", this.locale, { title: displayTitle });
+        return this.hasNewResults
+            ? `${title} · ${pageletT("pagelet.tab.newResultIndicator", this.locale)}`
+            : title;
     }
 
     getIcon(): string {
@@ -472,10 +493,12 @@ export class PageletDetailView extends ItemView {
         if (!this.hasPayload()) {
             this.locale = this.getLocale();
             this.title = pageletT("pagelet.tab.title", this.locale);
+            this.refreshNativeHeader();
         }
         this.rehydrateContextualMemory();
         this.renderer = new TabView(this.locale, {
             app: this.app,
+            isViewDisplayed: () => this.isViewDisplayed(),
             onConnectionNodeClick: (noteName, sourcePath) => this.openRelatedNote(noteName, sourcePath),
             onSourcePathClick: (path) => this.openRelatedNote(path),
             onSaveSummaryNote: this.onSaveSummaryNote
@@ -510,9 +533,14 @@ export class PageletDetailView extends ItemView {
         this.renderer.open(this.title, this.content, this.payloadOptions);
     }
 
+    onResize(): void {
+        this.renderer?.notifyDisplayed();
+    }
+
     async onClose(): Promise<void> {
         this.renderer?.destroy();
         this.renderer = null;
+        this.onViewClosed?.(this);
     }
 
     setPayload(payload: PageletDetailPayload): void {
@@ -531,7 +559,37 @@ export class PageletDetailView extends ItemView {
         this.applyPayload(invalidContext
             ? { ...payload, restoredFromState: true }
             : normalizedPayload);
+        this.hasNewResults = false;
         this.renderPayload();
+        this.refreshNativeHeader();
+    }
+
+    getNoteAnchorPath(): string | null {
+        return this.payloadOptions?.reading?.anchorPath ?? this.payloadOptions?.sourcePath ?? null;
+    }
+
+    isRestoredPlaceholder(): boolean {
+        return Boolean(this.getNoteAnchorPath() && this.payloadOptions?.restoredFromState);
+    }
+
+    setHasNewResults(hasNewResults: boolean): void {
+        if (this.hasNewResults === hasNewResults) return;
+        this.hasNewResults = hasNewResults;
+        this.refreshNativeHeader();
+    }
+
+    notifyDisplayed(): void {
+        this.renderer?.notifyDisplayed();
+    }
+
+    private refreshNativeHeader(): void {
+        const leaf = this.leaf as PageletDetailLeafWithNativeHeader | undefined;
+        if (typeof leaf?.updateHeader === "function") leaf.updateHeader();
+    }
+
+    private isViewDisplayed(): boolean {
+        const container = this.containerEl as (HTMLElement & { isShown?: () => boolean }) | undefined;
+        return container?.isShown?.() ?? true;
     }
 
     getState(): Record<string, unknown> {
@@ -576,6 +634,7 @@ export class PageletDetailView extends ItemView {
             this.resetPayload();
         }
         this.renderPayload();
+        this.refreshNativeHeader();
     }
 
     private applyPayload(payload: PageletDetailPayload): void {
@@ -782,7 +841,7 @@ export class PageletDetailView extends ItemView {
             new Notice(pageletT("pagelet.panel.status.relatedMissing", this.locale), 3000);
             return;
         }
-        const leaf = this.app.workspace.getMostRecentLeaf();
+        const leaf = this.app.workspace.getLeaf(false);
         if (!leaf) return;
         void leaf.openFile(file).then(() => {
             new Notice(pageletT("pagelet.panel.status.relatedOpened", this.locale), 2500);
@@ -985,4 +1044,3 @@ function normalizeTabEntryReason(value: unknown): TabEntryReason | undefined {
         ? value
         : undefined;
 }
-

@@ -235,29 +235,40 @@ class FakeElement {
         } as DOMRect;
     }
 
+    closest(selector: string): FakeElement | null {
+        let current: FakeElement | null = this;
+        while (current) {
+            if (this.matchesSimpleSelector(current, selector)) return current;
+            current = current.parent;
+        }
+        return null;
+    }
+
     querySelector(selector: string): FakeElement | null {
         return this.querySelectorAll(selector)[0] ?? null;
     }
 
     querySelectorAll(selector: string): FakeElement[] {
         const matches: FakeElement[] = [];
+        const selectors = selector.split(",").map(part => part.trim()).filter(Boolean);
         const visit = (node: FakeElement): void => {
-            if (selector === "*") {
-                matches.push(node);
-            } else if (selector === "[data-pa-memory-focus-key]") {
-                if (node.getAttribute("data-pa-memory-focus-key") !== null) matches.push(node);
-            } else if (selector === "[data-pa-recall-focus-key]") {
-                if (node.getAttribute("data-pa-recall-focus-key") !== null) matches.push(node);
-            } else if (selector.startsWith(".")) {
-                const className = selector.slice(1);
-                if (node.classList.contains(className)) matches.push(node);
-            } else if (node.tagName.toLowerCase() === selector.toLowerCase()) {
-                matches.push(node);
-            }
+            if (selectors.some(part => this.matchesSimpleSelector(node, part))) matches.push(node);
             for (const child of node.children) visit(child);
         };
         visit(this);
         return matches;
+    }
+
+    private matchesSimpleSelector(node: FakeElement, selector: string): boolean {
+        if (selector === "*") return true;
+        if (selector === "[data-pa-memory-focus-key]") {
+            return node.getAttribute("data-pa-memory-focus-key") !== null;
+        }
+        if (selector === "[data-pa-recall-focus-key]") {
+            return node.getAttribute("data-pa-recall-focus-key") !== null;
+        }
+        if (selector.startsWith(".")) return node.classList.contains(selector.slice(1));
+        return node.tagName.toLowerCase() === selector.toLowerCase();
     }
 
     private setConnected(value: boolean): void {
@@ -381,6 +392,11 @@ describe("Pagelet panel and tab view regressions", () => {
         await view.onOpen();
         expect(discover).not.toHaveBeenCalled();
         expect(content.textContent).toContain("No content is available");
+        const candidates = content.querySelector(".pa-pagelet-reading-candidates");
+        expect(candidates?.getAttribute("hidden")).toBe("");
+        expect(content.querySelector(".pa-pagelet-reading-candidate-list")?.children).toHaveLength(0);
+        const sectionPicker = content.querySelector(".pa-pagelet-reading-section-picker");
+        expect(sectionPicker?.querySelector("select")?.getAttribute("hidden")).toBe("");
         const button = content.querySelector(".pa-pagelet-reading-controls")?.querySelector("button");
         expect(button?.textContent).toBe("Start discovery");
         await button?.click();
@@ -421,6 +437,18 @@ describe("Pagelet panel and tab view regressions", () => {
     });
 
     it("offers a refreshed version of the same insight and hides a permission-revoked reading", async () => {
+        const renderPermissionHeadings = async (_app: unknown, markdown: string, target: HTMLElement) => {
+            const appendTarget = target as unknown as FakeElement;
+            const firstHeading = (globalThis as unknown as { document: FakeDocument }).document.createElement("h2");
+            firstHeading.textContent = "First permission-checked section";
+            const secondHeading = (globalThis as unknown as { document: FakeDocument }).document.createElement("h3");
+            secondHeading.textContent = "Second permission-checked section";
+            appendTarget.appendChild(firstHeading);
+            appendTarget.appendChild(secondHeading);
+            return Promise.resolve();
+        };
+        mockMarkdownRender.mockImplementationOnce(renderPermissionHeadings);
+        mockMarkdownRender.mockImplementationOnce(renderPermissionHeadings);
         const selected = readingCandidate("selected");
         const latest = { ...selected, preparedAt: "2026-10-16T00:01:00Z" };
         let update = (): void => undefined;
@@ -435,17 +463,43 @@ describe("Pagelet panel and tab view regressions", () => {
         content.isConnected = true;
         view.setPayload({ title: "Pagelet", content: [], locale: "en", reading });
         await view.onOpen();
-        const navigation = content.querySelector(".pa-pagelet-reading-navigation");
-        expect(navigation?.querySelectorAll("button")).toHaveLength(2);
-        await navigation?.querySelectorAll("button")[1]?.click();
         await Promise.resolve();
-        expect(reading.onSelect).toHaveBeenCalledWith(latest);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        const sectionNavigation = content.querySelector(".pa-pagelet-reading-sections");
+        const sectionSelect = content.querySelector(".pa-pagelet-reading-section-picker")
+            ?.querySelector("select");
+        expect(sectionNavigation?.querySelectorAll("button").map((button) => button.textContent))
+            .toEqual(["First permission-checked section", "Second permission-checked section"]);
+        expect(sectionSelect?.children).toHaveLength(2);
+        const navigation = content.querySelector(".pa-pagelet-reading-navigation");
+        const updateRegion = navigation?.querySelector(".pa-pagelet-reading-update");
+        expect(updateRegion?.getAttribute("hidden")).toBeNull();
+        expect(updateRegion?.querySelector("button")?.textContent).toBe("Show new results");
+        await updateRegion?.querySelector("button")?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(reading.onSelect).toHaveBeenCalledWith(latest, [latest]);
+        expect(sectionNavigation?.querySelectorAll("button").map((button) => button.textContent))
+            .toEqual(["First permission-checked section", "Second permission-checked section"]);
+        expect(sectionSelect?.children).toHaveLength(2);
         latest.staleStatus = "boundary-changed";
         update();
         await Promise.resolve();
         await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
         expect(content.textContent).not.toContain(selected.body);
         expect(content.querySelector(".pa-pagelet-reading-navigation")?.textContent).not.toContain(selected.title);
+        expect(content.querySelector(".pa-pagelet-tab-body")?.textContent).not.toContain("First permission-checked section");
+        expect(content.querySelector(".pa-pagelet-tab-body")?.textContent).not.toContain("Second permission-checked section");
+        expect(sectionNavigation?.querySelectorAll("button")).toHaveLength(0);
+        expect(sectionSelect?.children).toHaveLength(0);
+        expect(sectionNavigation?.getAttribute("hidden")).toBe("");
+        expect(sectionSelect?.getAttribute("hidden")).toBe("");
         await view.onClose();
     });
 
@@ -587,6 +641,8 @@ describe("Pagelet panel and tab view regressions", () => {
         content.isConnected = true;
         view.setPayload({ title: "Pagelet", content: [], locale: "en", reading });
         await view.onOpen();
+        await Promise.resolve();
+        expect(reading.onSelect).toHaveBeenCalledWith(reading.candidates[1]);
 
         const body = content.querySelector(".pa-pagelet-tab-body");
         expect(body?.textContent).toContain(reading.candidates[1]!.body);
@@ -613,6 +669,92 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(restoredContent.querySelector(".pa-pagelet-tab-body")?.scrollTop).toBe(219);
         expect(restoredContent.textContent).toContain(reading.candidates[0]!.body);
         await restored.onClose();
+    });
+
+    it("renders the reading hierarchy, candidate selection and rendered-section positioning", async () => {
+        mockMarkdownRender.mockImplementationOnce(async (_app, markdown, target) => {
+            target.textContent = "";
+            const appendTarget = target as unknown as FakeElement;
+            const title = (globalThis as unknown as { document: FakeDocument }).document.createElement("h2");
+            title.textContent = "First h2";
+            const interleaved = (globalThis as unknown as { document: FakeDocument }).document.createElement("h3");
+            interleaved.textContent = "Interleaved h3";
+            const ending = (globalThis as unknown as { document: FakeDocument }).document.createElement("h2");
+            ending.textContent = "Second h2";
+            appendTarget.appendChild(title);
+            appendTarget.appendChild(interleaved);
+            appendTarget.appendChild(ending);
+            return Promise.resolve();
+        });
+        const reading = readingPayload();
+        const view = new PageletDetailView({} as never, () => "en");
+        const content = view.contentEl as unknown as FakeElement;
+        content.isConnected = true;
+        view.setPayload({ title: "Pagelet", content: [], locale: "en", reading });
+        await view.onOpen();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const root = content.querySelector(".pa-pagelet-tab");
+        expect(root?.classList.contains("pa-pagelet-tab--reading")).toBe(true);
+        const navigation = content.querySelector(".pa-pagelet-reading-navigation");
+        expect(navigation?.textContent).toContain("Reading");
+        expect(navigation?.textContent).toContain("notes/anchor.md");
+        expect(navigation?.textContent).toContain("Reading 2 of 2");
+        const candidateButtons = navigation
+            ?.querySelector(".pa-pagelet-reading-candidate-list")
+            ?.querySelectorAll("button") ?? [];
+        expect(candidateButtons.map((button) => button.textContent)).toEqual(["Reading first", "Reading second"]);
+        expect(candidateButtons[1]?.getAttribute("aria-pressed")).toBe("true");
+        const candidateSelect = navigation?.querySelector("select");
+        expect(candidateSelect?.value).toBe("second");
+        expect(content.querySelector(".pa-pagelet-tab-body")?.querySelectorAll("h2, h3").map((heading) => heading.textContent))
+            .toEqual(["First h2", "Interleaved h3", "Second h2"]);
+        const sectionButtons = navigation
+            ?.querySelector(".pa-pagelet-reading-sections")
+            ?.querySelectorAll("button") ?? [];
+        expect(sectionButtons.map((button) => button.textContent))
+            .toEqual(["First h2", "Interleaved h3", "Second h2"]);
+        expect(sectionButtons[0]?.getAttribute("aria-current")).toBe("true");
+        expect(navigation?.querySelectorAll("select")[1]?.getAttribute("aria-label"))
+            .toBe("Sections on this page");
+        await view.onClose();
+    });
+
+    it("hydrates an empty waiting reading without rebuilding an occupied reading", async () => {
+        let update = (): void => undefined;
+        const candidate = readingCandidate("waiting-result");
+        const reading = readingPayload({
+            candidates: [], selectedId: "", positions: {},
+            subscribe: listener => { update = listener; return () => undefined; },
+        });
+        const view = new PageletDetailView({} as never, () => "en");
+        const content = view.contentEl as unknown as FakeElement;
+        content.isConnected = true;
+        let displayed = false;
+        (view as unknown as { containerEl: { isShown: () => boolean } }).containerEl = {
+            isShown: () => displayed,
+        };
+        view.setPayload({ title: "Pagelet", content: [], locale: "en", reading });
+        await view.onOpen();
+        expect(content.textContent).not.toContain(candidate.body);
+
+        reading.candidates = [candidate];
+        reading.selectedId = candidate.id;
+        update();
+        await Promise.resolve();
+        expect(content.querySelector(".pa-pagelet-tab-body")?.textContent).toContain(candidate.body);
+        expect(reading.onSelect).not.toHaveBeenCalled();
+        const hydrated = content.querySelector(".pa-pagelet-panel-timeline-insight");
+        update();
+        expect(content.querySelector(".pa-pagelet-panel-timeline-insight")).toBe(hydrated);
+        displayed = true;
+        view.notifyDisplayed();
+        await Promise.resolve();
+        expect(reading.onSelect).toHaveBeenCalledWith(candidate);
+        await view.onClose();
     });
 
     it("updates Detail activity without rebuilding reading, and disposes its subscription", async () => {
@@ -948,6 +1090,11 @@ describe("Pagelet panel and tab view regressions", () => {
         const { addIcon: addIconMock } = jest.requireMock("obsidian") as { addIcon: jest.Mock };
         addIconMock.mockClear();
         const view = new PageletDetailView({} as never, () => "en");
+        const updateHeader = jest.fn();
+        (view as unknown as { leaf: { updateHeader: typeof updateHeader } }).leaf = { updateHeader };
+        (view as unknown as { app: unknown }).app = {
+            workspace: { getLeavesOfType: () => [] },
+        };
 
         expect(view.getViewType()).toBe(PAGELET_DETAIL_VIEW_TYPE);
         expect(view.getIcon()).toBe(PAGELET_DETAIL_ICON);
@@ -957,16 +1104,97 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(svg).toMatch(/<(?:path|circle|rect|ellipse|line|polyline|polygon)\b/);
 
         await view.onOpen();
+        updateHeader.mockClear();
         view.setPayload({
             title: "Pagelet — Detail View",
             content: [],
             locale: "en",
+            sourcePath: "notes/current.md",
         });
+        expect(updateHeader).toHaveBeenCalledWith();
 
-        expect(view.getDisplayText()).toBe("Pagelet — Detail View");
+        expect(view.getDisplayText()).toBe("Pagelet — current");
+        view.setHasNewResults(true);
+        expect(updateHeader).toHaveBeenCalledTimes(2);
+        expect(view.getDisplayText()).toContain("New");
         const contentEl = view.contentEl as unknown as FakeElement;
         expect(contentEl.textContent).toContain("No findings yet");
         expect(contentEl.querySelector(".pa-pagelet-tab-header")).toBeNull();
+    });
+
+    it("notifies the host once when a note Detail closes", async () => {
+        const closed: string[] = [];
+        const view = new PageletDetailView(
+            {} as never,
+            () => "en",
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            {},
+            closedView => {
+                closed.push(closedView.getNoteAnchorPath() ?? "none");
+            },
+        );
+        await view.onOpen();
+        view.setPayload({
+            title: "Pagelet",
+            content: [],
+            locale: "en",
+            sourcePath: "notes/current.md",
+        });
+        await view.onClose();
+        expect(closed).toEqual(["notes/current.md"]);
+    });
+
+    it("opens related notes through a navigable leaf without replacing the current Detail", async () => {
+        const relatedFile = { extension: "md" };
+        const editorLeaf = { openFile: jest.fn(async (_file: unknown) => undefined) };
+        const currentDetailLeaf = { openFile: jest.fn(async () => undefined) };
+        const view = new PageletDetailView({} as never, () => "en");
+        (view as unknown as { app: unknown }).app = {
+            workspace: {
+                getLeaf: jest.fn(() => editorLeaf),
+                getMostRecentLeaf: jest.fn(() => currentDetailLeaf),
+            },
+            vault: {
+                getAbstractFileByPath: jest.fn(() => relatedFile),
+            },
+            metadataCache: {
+                getFirstLinkpathDest: jest.fn(() => null),
+            },
+        };
+        await view.onOpen();
+        view.setPayload({
+            title: "Pagelet",
+            content: [],
+            locale: "en",
+            layoutType: "discover",
+            sourcePath: "notes/current.md",
+            extra: {
+                connections: [{
+                    fromNote: "notes/current.md",
+                    toNote: "notes/related.md",
+                    strength: "medium" as const,
+                    sharedConcepts: ["shared constraint"],
+                }],
+            },
+        });
+        const content = view.contentEl as unknown as FakeElement;
+        const node = content.querySelectorAll(".pa-pagelet-panel-connection-node")[1];
+        await node?.click();
+
+        expect((view as unknown as { app: { workspace: { getLeaf: jest.Mock } } }).app.workspace.getLeaf)
+            .toHaveBeenCalledWith(false);
+        expect(editorLeaf.openFile).toHaveBeenCalledWith(relatedFile);
+        expect(currentDetailLeaf.openFile).not.toHaveBeenCalled();
+        expect(view.getNoteAnchorPath()).toBe("notes/current.md");
+        await view.onClose();
     });
 
     it("renders discovery payloads in the native detail tab", async () => {
@@ -1112,6 +1340,88 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.textContent).toContain("Prefers concise weekly planning.");
         expect(container.textContent).toContain("Forgotten. No original content or source is kept here.");
         expect(container.textContent).not.toContain("No findings yet");
+    });
+
+    it("maps current and clicked Detail sections through their real aliases", async () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const tab = new TabView("en");
+        const quietCandidate: QuietRecallCandidate = {
+            id: "qr-current-section",
+            title: "Recall: current section",
+            summary: "A saved insight may matter now.",
+            sourceInsightId: "ins-current-section",
+            sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
+            whyNow: ["Source matches the note you are looking at."],
+            nextAction: "Compare this saved insight with the current note.",
+            relation: "current",
+            score: 90,
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            context: { kind: "note_retrieval" },
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-current-section",
+        };
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Pagelet — Detail View", [], {
+            layoutType: "review",
+            entryReason: "quiet-recall",
+            extra: {
+                quietRecall: {
+                    generatedAt: "2026-06-29T12:00:00.000Z",
+                    currentPath: "notes/current.md",
+                    totalCount: 1,
+                    candidates: [quietCandidate],
+                },
+                memoryGovernance: {
+                    records: [makeMemoryRecord()],
+                    totalCount: 1,
+                },
+                maintenanceReview: {
+                    generatedAt: "2026-06-28T12:00:00.000Z",
+                    previewOnly: true,
+                    weeklyScanEnabled: false,
+                    totalCount: 1,
+                    categories: [{ category: "inbox_cleanup", label: "inbox_cleanup", count: 1 }],
+                    proposals: [makeMaintenanceProposal()],
+                },
+            },
+        });
+
+        const body = container.querySelector(".pa-pagelet-tab-body");
+        const sections = [
+            container.querySelector(".pa-pagelet-tab-quiet-recall"),
+            container.querySelector(".pa-pagelet-tab-memory-governance"),
+            container.querySelector(".pa-pagelet-tab-maintenance-review"),
+        ];
+        const tops = [-160, -20, 140];
+        const scrolledIntoView = sections.map(() => jest.fn());
+        sections.forEach((section, index) => {
+            if (section) {
+                Object.defineProperty(section, "getBoundingClientRect", {
+                    value: () => ({ top: tops[index] }),
+                });
+                Object.defineProperty(section, "scrollIntoView", {
+                    value: scrolledIntoView[index],
+                });
+            }
+        });
+        await body?.dispatch("scroll");
+
+        const buttons = container.querySelector(".pa-pagelet-tab-nav")?.querySelectorAll("button") ?? [];
+        expect(buttons.map((button) => button.textContent)).toEqual([
+            "Quiet Recall",
+            "Memory",
+            "Maintenance Review",
+        ]);
+        expect(buttons.map((button) => button.getAttribute("aria-current"))).toEqual([
+            null,
+            "true",
+            null,
+        ]);
+        await buttons[1]?.click();
+        expect(scrolledIntoView[1]).toHaveBeenCalled();
+        expect(scrolledIntoView[2]).not.toHaveBeenCalled();
+        tab.destroy();
     });
 
     it("forgets a Memory only through the host-owned permanent action callback", async () => {
@@ -3599,6 +3909,41 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(contentEl.querySelector(".pa-pagelet-panel-connection-graph")).toBeNull();
     });
 
+    it("uses Pet recovery copy only for a restored note-anchored Detail", async () => {
+        const restoredNote = new PageletDetailView({} as never, () => "en");
+        await restoredNote.onOpen();
+        await restoredNote.setState({
+            version: 5,
+            payload: {
+                locale: "en",
+                sessionId: "missing-note-session",
+                restoredFromState: true,
+                sourcePath: "notes/current.md",
+                layoutType: "discover",
+            },
+        }, {} as never);
+        let contentEl = restoredNote.contentEl as unknown as FakeElement;
+        expect(contentEl.textContent).toContain("Reading paused");
+        expect(contentEl.textContent).toContain("click Pet to reconnect this tab");
+        await restoredNote.onClose();
+
+        const restoredAggregate = new PageletDetailView({} as never, () => "en");
+        await restoredAggregate.onOpen();
+        await restoredAggregate.setState({
+            version: 5,
+            payload: {
+                locale: "en",
+                sessionId: "missing-aggregate-session",
+                restoredFromState: true,
+            },
+        }, {} as never);
+        contentEl = restoredAggregate.contentEl as unknown as FakeElement;
+        expect(contentEl.textContent).toContain("Result no longer available");
+        expect(contentEl.textContent).toContain("open a saved review or summary note");
+        expect(contentEl.textContent).not.toContain("click Pet to reconnect this tab");
+        await restoredAggregate.onClose();
+    });
+
     it("does not persist panel-only extra fields in native detail state", async () => {
         const view = new PageletDetailView({} as never, () => "en");
         const connections = [{
@@ -4380,6 +4725,7 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(mockMarkdownRender).not.toHaveBeenCalled();
         const graph = container.querySelector(".pa-pagelet-panel-connection-graph");
         expect(graph).not.toBeNull();
+        expect(container.querySelector(".pa-pagelet-panel-connection-graph-details")).toBeNull();
         expect(graph?.getAttribute("role")).toBe("group");
         expect(graph?.getAttribute("aria-label")).toBe("Note connection graph");
         expect(container.querySelector(".pa-pagelet-panel-connection-mermaid")).toBeNull();
@@ -4411,6 +4757,46 @@ describe("Pagelet panel and tab view regressions", () => {
             "Diary-2023-04-03.md",
             "2.fleeting/Test-2023-04-08.md",
         );
+    });
+
+    it("collapses the Detail Discovery graph while retaining its instance and full relationship list", async () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const tab = new TabView("en");
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Pagelet — Detail View", [{
+            title: "Current note links to diary",
+            description: "Finding prose remains separate from the graph.",
+            sourceFile: "2.fleeting/Test-2023-04-08.md",
+        }], {
+            layoutType: "discover",
+            sourcePath: "2.fleeting/Test-2023-04-08.md",
+            extra: {
+                connections: [{
+                    fromNote: "2.fleeting/Test-2023-04-08.md",
+                    toNote: "Diary-2023-04-03.md",
+                    strength: "medium" as const,
+                    sharedConcepts: ["diary thread"],
+                }],
+            },
+        });
+
+        const details = container.querySelector(".pa-pagelet-panel-connection-graph-details") as FakeElement & { open: boolean };
+        expect(details.getAttribute("open")).toBeNull();
+        expect(details.open).toBe(true);
+        const graph = container.querySelector(".pa-pagelet-panel-connection-graph");
+        expect(container.textContent).toContain("Discovered Connections");
+        expect(container.textContent).toContain("diary thread");
+
+        await details.querySelector("summary")?.click();
+        expect(details.open).toBe(false);
+        expect(container.querySelector(".pa-pagelet-panel-connection-graph")).toBe(graph);
+        expect(container.textContent).toContain("Discovered Connections");
+
+        await details.querySelector("summary")?.click();
+        expect(details.open).toBe(true);
+        expect(container.querySelector(".pa-pagelet-panel-connection-graph")).toBe(graph);
+        tab.destroy();
     });
 
     it("renders duplicated Deep Discover prose once through the safe markdown DOM path", async () => {

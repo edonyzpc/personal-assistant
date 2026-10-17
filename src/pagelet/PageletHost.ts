@@ -11,7 +11,7 @@
  * without pulling in the full orchestrator.
  */
 
-import type { App, EventRef } from "obsidian";
+import type { App, EventRef, WorkspaceLeaf } from "obsidian";
 
 import type {
     PageletChatHandoffContext,
@@ -27,7 +27,11 @@ import type { PetCorner } from "./pet/types";
 import type { PageletAttentionStorage } from "./attention";
 import type { GeneratedReviewNote } from "./output/types";
 import type { WriteResult } from "./output/types";
-import type { PageletDetailPayload } from "./tab/types";
+import type {
+    PageletDetailOpenOptions,
+    PageletDetailPayload,
+    PageletDetailPathState,
+} from "./tab/types";
 import type { DiscoveryResult, PanelMemoryGovernanceState } from "./panel/types";
 import type {
     PageletAgentValidationIdentity,
@@ -272,7 +276,15 @@ export interface PageletHost {
     openQuickCapture(): void;
 
     /** Open Pagelet detail results in a native Obsidian workspace leaf. */
-    openPageletDetailView(payload: PageletDetailPayload): Promise<void> | void;
+    openPageletDetailView(payload: PageletDetailPayload, options?: PageletDetailOpenOptions): Promise<void> | void;
+    /** Return the current native Detail routing state for a vault-relative note path. */
+    getPageletDetailPathState?(path: string): PageletDetailPathState;
+    /** Return the actual note anchor owned by this exact Detail leaf, if any. */
+    getPageletDetailLeafAnchorPath?(leaf: WorkspaceLeaf): string | null;
+    /** Reveal the live Detail for a note without changing its payload. */
+    revealPageletDetailViewForPath?(path: string): Promise<boolean>;
+    /** Project a per-note new-results cue onto any live Detail for that note. */
+    markPageletDetailNewResults?(path: string, hasNewResults: boolean): void;
 
     /** Evict only Scope Recap-derived payloads from the in-memory detail cache. */
     clearScopeRecapDetailSessionCache?(): void;

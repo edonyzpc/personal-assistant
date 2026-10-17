@@ -668,7 +668,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         const orchestrator = new PageletOrchestrator(host);
         let position = { scrollTop: 0, sourcesExpanded: [false] };
         const panelView = {
-            open: jest.fn<PanelOpen>(), close: jest.fn(), isOpen: true,
+            open: jest.fn<PanelOpen>(), close: jest.fn(), destroy: jest.fn(), isOpen: true,
             getReadingPosition: () => position,
             restoreReadingPosition: jest.fn((next: typeof position) => { position = next; }),
         };
@@ -2672,6 +2672,301 @@ describe("PageletOrchestrator pet task visuals", () => {
 });
 
 describe("PageletOrchestrator detail expansion", () => {
+    it("B-177 routes Pet reading to per-note Details and only reveals an existing live note", async () => {
+        let activePath = "notes/a.md";
+        const detailStates = new Map<string, "live" | "restored-placeholder">();
+        const openedPayloads: PageletDetailPayload[] = [];
+        const revealedPaths: string[] = [];
+        const readDeepDiscover = jest.fn<NonNullable<PageletHost["readDeepDiscover"]>>(async input => ({
+            ...makeVerifiedDeepDiscoverResult("explicit", input.path),
+            status: "cache-hit",
+        }));
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>();
+        const host = makeHost({
+            readDeepDiscover,
+            runDeepDiscover,
+            openPageletDetailView: payload => {
+                openedPayloads.push(payload);
+                const path = payload.reading?.anchorPath ?? payload.sourcePath;
+                if (path) detailStates.set(path, "live");
+            },
+        });
+        Object.assign(host, {
+            getPageletDetailPathState: (path: string) => detailStates.get(path) ?? "none",
+            revealPageletDetailViewForPath: async (path: string) => {
+                revealedPaths.push(path);
+                return detailStates.get(path) === "live";
+            },
+        });
+        jest.mocked(host.app.workspace.getActiveFile).mockImplementation(() => makeTFile(activePath));
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = {
+            open: jest.fn<PanelOpen>(), close: jest.fn(), destroy: jest.fn(), isOpen: true,
+        };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            handlePetClick(): void;
+        };
+        internals.panelView = panelView;
+
+        internals.handlePetClick();
+        await flushAsyncWork();
+        activePath = "notes/b.md";
+        internals.handlePetClick();
+        await flushAsyncWork();
+        expect(openedPayloads.map(payload => payload.reading?.anchorPath)).toEqual(["notes/a.md", "notes/b.md"]);
+        expect(panelView.open).not.toHaveBeenCalled();
+        expect(runDeepDiscover).not.toHaveBeenCalled();
+
+        activePath = "notes/a.md";
+        internals.handlePetClick();
+        await flushAsyncWork();
+        expect(revealedPaths).toEqual(["notes/a.md"]);
+        expect(openedPayloads).toHaveLength(2);
+        expect(readDeepDiscover).toHaveBeenCalledTimes(2);
+        orchestrator.destroy();
+    });
+
+    it("B-177 suppresses artificial discovery between a note and its own anchored Detail", () => {
+        const markdownA = {
+            view: {
+                getViewType: () => "markdown",
+                file: makeTFile("notes/a.md"),
+                contentEl: {},
+            },
+        };
+        const markdownB = {
+            view: {
+                getViewType: () => "markdown",
+                file: makeTFile("notes/b.md"),
+                contentEl: {},
+            },
+        };
+        const detailA = { view: { getViewType: () => "pa-pagelet-detail-view" } };
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(
+            async () => ({ status: "quiet", reason: "no-insight" }),
+        );
+        const host = makeHost({ runDeepDiscover });
+        Object.assign(host, {
+            getPageletDetailLeafAnchorPath: (leaf: unknown) => leaf === detailA ? "notes/a.md" : null,
+        });
+        host.settings.pagelet.petVisible = false;
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            currentMarkdownAnchorPath: string | null;
+            handleLeafChange(leaf: unknown): void;
+        };
+        internals.currentMarkdownAnchorPath = "notes/a.md";
+
+        internals.handleLeafChange(detailA);
+        expect(internals.currentMarkdownAnchorPath).toBe("notes/a.md");
+        internals.handleLeafChange(markdownA);
+        expect(internals.currentMarkdownAnchorPath).toBe("notes/a.md");
+        expect(runDeepDiscover).not.toHaveBeenCalled();
+
+        internals.handleLeafChange(markdownB);
+        expect(runDeepDiscover.mock.calls.map(([input]) => [input.path, input.triggerReason])).toEqual([
+            ["notes/a.md", "leave-note"],
+            ["notes/b.md", "open-changed-note"],
+        ]);
+        orchestrator.destroy();
+    });
+
+    it("B-177 leaves an accepted waiting Detail intact when its superseded pure read finishes", async () => {
+        let finishOldRead!: (result: Awaited<ReturnType<NonNullable<PageletHost["readDeepDiscover"]>>>) => void;
+        let activityRequestId = "request-r";
+        const detailStates = new Map<string, "live" | "restored-placeholder">();
+        let openedReading: PageletDetailPayload["reading"] | undefined;
+        const readDeepDiscover = jest.fn<NonNullable<PageletHost["readDeepDiscover"]>>(
+            () => new Promise(resolve => { finishOldRead = resolve; }),
+        );
+        const host = makeHost({
+            readDeepDiscover,
+            getDeepDiscoverActivity: () => ({ phase: "running", requestId: activityRequestId }),
+            runDeepDiscover: jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(),
+            openPageletDetailView: payload => {
+                openedReading = payload.reading;
+                detailStates.set(payload.reading?.anchorPath ?? "", "live");
+            },
+        });
+        Object.assign(host, {
+            getPageletDetailPathState: (path: string) => detailStates.get(path) ?? "none",
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            handlePetClick(): void;
+            acceptDeepDiscoverResult(result: PageletDeepDiscoverControllerResult, options: { path: string; proactive: boolean }): unknown;
+        };
+
+        internals.handlePetClick();
+        await flushAsyncWork();
+        expect(readDeepDiscover).toHaveBeenCalledTimes(1);
+        expect(openedReading?.candidates).toEqual([]);
+
+        const verified = makeVerifiedDeepDiscoverResult("explicit", "notes/current.md");
+        verified.requestId = "request-r";
+        internals.acceptDeepDiscoverResult(verified, { path: "notes/current.md", proactive: false });
+        await flushAsyncWork();
+        expect(openedReading?.candidates.map(candidate => candidate.id)).toEqual([verified.insight.insightId]);
+        expect(openedReading?.selectedId).toBe(verified.insight.insightId);
+
+        finishOldRead({ status: "empty" });
+        await flushAsyncWork();
+        expect(openedReading?.candidates.map(candidate => candidate.id)).toEqual([verified.insight.insightId]);
+        expect(openedReading?.selectedId).toBe(verified.insight.insightId);
+        expect(openedReading?.getReadingControls().label).not.toContain("No content is available for this note yet");
+        orchestrator.destroy();
+    });
+
+    it("B-177 fills only its waiting Detail and keeps new-result cues attributed to that note", async () => {
+        let activePath = "notes/a.md";
+        let activityRequestId = "request-a";
+        const detailStates = new Map<string, "live" | "restored-placeholder">();
+        let openedReading: PageletDetailPayload["reading"] | undefined;
+        const markedNewResults: Array<[string, boolean]> = [];
+        const host = makeHost({
+            readDeepDiscover: async () => ({ status: "empty" }),
+            getDeepDiscoverActivity: () => ({ phase: "running", requestId: activityRequestId }),
+            runDeepDiscover: jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(),
+            openPageletDetailView: payload => {
+                openedReading = payload.reading;
+                const path = payload.reading?.anchorPath ?? payload.sourcePath;
+                if (path) detailStates.set(path, "live");
+            },
+        });
+        Object.assign(host, {
+            getPageletDetailPathState: (path: string) => detailStates.get(path) ?? "none",
+            markPageletDetailNewResults: (path: string, hasNewResults: boolean) => {
+                markedNewResults.push([path, hasNewResults]);
+            },
+        });
+        host.settings.pagelet.proactiveHints = true;
+        jest.mocked(host.app.workspace.getActiveFile).mockImplementation(() => makeTFile(activePath));
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            currentMarkdownAnchorPath: string | null;
+            handlePetClick(): void;
+            acceptDeepDiscoverResult(result: PageletDeepDiscoverControllerResult, options: { path: string; proactive: boolean }): unknown;
+            currentAdmittedNudgeTickets(): unknown[];
+            handlePageletDetailClosed(path: string): void;
+        };
+        internals.handlePetClick();
+        await flushAsyncWork();
+        expect(openedReading?.candidates).toEqual([]);
+        expect(openedReading?.anchorPath).toBe("notes/a.md");
+        openedReading?.subscribe(() => undefined);
+
+        internals.currentMarkdownAnchorPath = "notes/b.md";
+        const result = makeVerifiedDeepDiscoverResult("edit-idle", "notes/a.md");
+        result.requestId = "request-a";
+        internals.acceptDeepDiscoverResult(result, { path: "notes/a.md", proactive: true });
+        await flushAsyncWork();
+        expect(openedReading?.candidates.map(candidate => candidate.id)).toEqual([result.insight.insightId]);
+        expect(markedNewResults).toEqual([["notes/a.md", true]]);
+        expect(internals.currentAdmittedNudgeTickets()).toEqual([]);
+
+        internals.acceptDeepDiscoverResult(result, { path: "notes/a.md", proactive: true });
+        await flushAsyncWork();
+        expect(markedNewResults).toEqual([["notes/a.md", true]]);
+
+        activityRequestId = "request-b";
+        const changedResult = makeVerifiedDeepDiscoverResult("edit-idle", "notes/a.md");
+        changedResult.insight = {
+            ...changedResult.insight,
+            insightId: "a-changed-result",
+            body: "## Changed A result\nThis is a genuinely different collection.",
+        };
+        changedResult.insights = [changedResult.insight];
+        changedResult.collection.insights = changedResult.insights;
+        changedResult.requestId = "request-b";
+        internals.acceptDeepDiscoverResult(changedResult, { path: "notes/a.md", proactive: true });
+        await flushAsyncWork();
+        expect(markedNewResults).toEqual([
+            ["notes/a.md", true],
+            ["notes/a.md", true],
+        ]);
+        internals.acceptDeepDiscoverResult(changedResult, { path: "notes/a.md", proactive: true });
+        await flushAsyncWork();
+        expect(markedNewResults).toEqual([
+            ["notes/a.md", true],
+            ["notes/a.md", true],
+        ]);
+
+        const bResult = makeVerifiedDeepDiscoverResult("edit-idle", "notes/b.md");
+        bResult.requestId = "request-b";
+        internals.acceptDeepDiscoverResult(bResult, { path: "notes/b.md", proactive: true });
+        await flushAsyncWork();
+
+        detailStates.delete("notes/a.md");
+        internals.currentMarkdownAnchorPath = "notes/a.md";
+        expect(internals.currentAdmittedNudgeTickets()).toHaveLength(1);
+        internals.handlePageletDetailClosed("notes/a.md");
+        expect(internals.currentAdmittedNudgeTickets()).toHaveLength(1);
+        detailStates.set("notes/a.md", "live");
+        expect(internals.currentAdmittedNudgeTickets()).toEqual([]);
+        orchestrator.destroy();
+    });
+
+    it("B-177 accepts the full Show-new collection while an old member remains a local selection", async () => {
+        let activityRequestId = "request-a";
+        const detailStates = new Map<string, "live" | "restored-placeholder">();
+        let openedReading: PageletDetailPayload["reading"] | undefined;
+        const markedNewResults: Array<[string, boolean]> = [];
+        const host = makeHost({
+            readDeepDiscover: async () => ({ status: "empty" }),
+            getDeepDiscoverActivity: () => ({ phase: "running", requestId: activityRequestId }),
+            openPageletDetailView: payload => {
+                openedReading = payload.reading;
+                detailStates.set(payload.reading?.anchorPath ?? "", "live");
+            },
+        });
+        Object.assign(host, {
+            getPageletDetailPathState: (path: string) => detailStates.get(path) ?? "none",
+            markPageletDetailNewResults: (path: string, hasNewResults: boolean) => {
+                markedNewResults.push([path, hasNewResults]);
+            },
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            recentReadings: Map<string, { candidates: PageletAgentDeliveryCandidate[] }>;
+            handlePetClick(): void;
+            acceptDeepDiscoverResult(result: PageletDeepDiscoverControllerResult, options: { path: string; proactive: boolean }): unknown;
+        };
+        internals.handlePetClick();
+        await flushAsyncWork();
+        const first = makeVerifiedDeepDiscoverResult("edit-idle", "notes/current.md");
+        first.requestId = "request-a";
+        internals.acceptDeepDiscoverResult(first, { path: "notes/current.md", proactive: false });
+
+        activityRequestId = "request-b";
+        const newer = makeVerifiedDeepDiscoverResult("edit-idle", "notes/current.md");
+        const second = {
+            ...newer.insight,
+            insightId: "current-second",
+            body: "## Second current result\nOnly the full Show-new set accepts this collection.",
+        };
+        newer.insights = [newer.insight, second];
+        newer.collection.insights = newer.insights;
+        newer.requestId = "request-b";
+        internals.acceptDeepDiscoverResult(newer, { path: "notes/current.md", proactive: false });
+        const oldMember = openedReading?.candidates[0];
+        const latest = openedReading?.getLatestCandidates();
+        if (!oldMember || !latest || latest.length !== 2) throw new Error("Expected an old member and full latest set");
+
+        openedReading?.onSelect(oldMember);
+        expect(markedNewResults).toEqual([
+            ["notes/current.md", true],
+            ["notes/current.md", true],
+        ]);
+        expect(internals.recentReadings.get("notes/current.md")?.candidates).toEqual([oldMember]);
+
+        openedReading?.onSelect(oldMember, latest);
+        expect(markedNewResults[markedNewResults.length - 1]).toEqual(["notes/current.md", false]);
+        expect(internals.recentReadings.get("notes/current.md")?.candidates).toEqual(latest);
+        expect(openedReading?.candidates).toEqual(latest);
+        orchestrator.destroy();
+    });
+
     it("makes an in-flight cache read available after the empty Panel expands into Detail", async () => {
         let finishRead!: (result: Awaited<ReturnType<NonNullable<PageletHost["readDeepDiscover"]>>>) => void;
         const readDeepDiscover = jest.fn<NonNullable<PageletHost["readDeepDiscover"]>>(

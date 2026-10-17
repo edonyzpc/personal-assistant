@@ -1,5 +1,11 @@
 # Pagelet Product Design
 
+> 2026-10-17 当前 Detail UI 契约：[DEC-067](./decisions/dec-067-pagelet-note-detail-tabs.md) /
+> [B-177 Spec](./specs/pagelet-note-detail-tabs-product-spec.md) 将 Pet 默认阅读改为按当前笔记打开或定位独立 Detail，
+> 新发现提示跟随所属笔记；保留全部内容视图与 Discovery graph，采用顶部导航与宽窄阅读布局。
+> 已完成实现与限定验收，证据及限制见 [B-177 历史验证](../archive/2026/b177-pagelet-note-detail-tabs-validation.md)。
+> 下方历史 Bubble/Panel 逐级入口与固定布局不覆盖当前契约；必要洞察调用沿原准入，其他能力和权限不变。
+
 > 2026-10-16 approved target: [DEC-065](./decisions/dec-065-pagelet-autonomous-discovery.md)
 > 与 [B-175 Product Spec](./specs/pagelet-autonomous-discovery-product-spec.md) 定义第一轮自主发现闭环。
 > Agent 决定方向、深度、继续与结果，保留可选完整文本暂存、来源和权限；移除旧数量、阶段

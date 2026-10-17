@@ -99,7 +99,10 @@ export interface PageletDetailReadingPayload {
     candidates: readonly PageletAgentDeliveryCandidate[];
     selectedId: string;
     positions: Readonly<Record<string, PageletReadingPosition>>;
-    onSelect: (candidate: PageletAgentDeliveryCandidate) => void;
+    onSelect: (
+        candidate: PageletAgentDeliveryCandidate,
+        acceptedCandidates?: readonly PageletAgentDeliveryCandidate[],
+    ) => void;
     onPositionChange: (id: string, position: PageletReadingPosition) => void;
     validate: (candidate: PageletAgentDeliveryCandidate, signal: AbortSignal) => Promise<boolean>;
     discuss: (candidate: PageletAgentDeliveryCandidate, signal: AbortSignal) => Promise<PageletChatHandoffPreparationResult>;
@@ -121,4 +124,13 @@ export interface PageletDetailPayload {
     /** Transient exact-target render acknowledgement; never persisted or cached. */
     deliveryTarget?: PageletDetailDeliveryTarget;
     reading?: PageletDetailReadingPayload;
+}
+
+export type PageletDetailPathState = "live" | "restored-placeholder" | "none";
+
+export interface PageletDetailOpenOptions {
+    /** A user reading action may reveal an existing live note Detail without replacing its body. */
+    noteReading?: boolean;
+    /** Hydrate the restored-from-state placeholder for the same note in that same leaf. */
+    hydrateRestoredFromState?: boolean;
 }

@@ -64,6 +64,7 @@
 
 ## Pagelet Delivery
 
+- [按笔记独立 Detail 与阅读布局](./specs/pagelet-note-detail-tabs-product-spec.md) — B-177：Pet 直达所属笔记 Detail、提示归属、顶部导航及宽窄布局；全部 view 与 Discovery graph 保留，[历史验证](../archive/2026/b177-pagelet-note-detail-tabs-validation.md)。
 - [入口与阅读闭环](./specs/pagelet-reading-loop-product-spec.md) — B-176：独立第二轮的短点内容、已看复访、稳定阅读与完整 Agent 交接；[开发与测试设计](../development/active/pagelet-reading-loop/sdd.md)，不扩大 B-175。
 - [Autonomous Discovery](./specs/pagelet-autonomous-discovery-product-spec.md) — B-175：第一轮自主探索、可选完整暂存、事实边界与可靠交付；实施状态见其 Tracker。
 - [Attention-Aware Delivery and Action Ring](./specs/pagelet-attention-aware-delivery-product-spec.md)

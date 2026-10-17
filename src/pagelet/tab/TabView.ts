@@ -70,6 +70,7 @@ import { QuietRecallSection } from "./sections/QuietRecallSection";
 
 export interface TabViewOptions {
     app?: App;
+    isViewDisplayed?: () => boolean;
     onConnectionNodeClick?: (noteName: string, sourcePath?: string) => void;
     onSourcePathClick?: (path: string) => void;
     onSaveSummaryNote?: (note: GeneratedReviewNote) => Promise<WriteResult>;
@@ -101,6 +102,12 @@ const ENTRY_REASON_TO_PRIMARY_SECTION: Partial<Record<TabEntryReason, string>> =
     "quiet-recall": "quiet-recall",
     "graph-discovery": "graph-discovery",
     "pattern-detection": "pattern-detection",
+};
+
+const SECTION_TARGET_SUFFIXES: Partial<Record<string, readonly string[]>> = {
+    memory: ["memory-governance", "memory"],
+    maintenance: ["maintenance-review", "maintenance"],
+    "context-pager": ["context-pager-details", "context-pager"],
 };
 
 // ---------------------------------------------------------------------------
@@ -143,7 +150,17 @@ export class TabView {
     private selectedReading: PageletAgentDeliveryCandidate | null = null;
     private readingControlsEl: HTMLElement | null = null;
     private readingNavigationEl: HTMLElement | null = null;
+    private readingCandidatesEl: HTMLElement | null = null;
+    private readingCandidateListEl: HTMLElement | null = null;
+    private readingCandidateCountEl: HTMLElement | null = null;
+    private readingCandidateSelectEl: HTMLSelectElement | null = null;
+    private readingUpdateEl: HTMLElement | null = null;
+    private readingSectionNavEl: HTMLElement | null = null;
+    private readingSectionSelectEl: HTMLSelectElement | null = null;
+    private readingScrollHandler: (() => void) | null = null;
+    private sectionScrollHandler: (() => void) | null = null;
     private readingNavigationIdentity = "";
+    private readingInitialSelectionPending = false;
     private readingUnsubscribe: (() => void) | null = null;
     private readingAction: AbortController | null = null;
     private readingHandoffPending = false;
@@ -217,10 +234,19 @@ export class TabView {
         return this._isOpen;
     }
 
+    /** Recheck a displayed reading after its native leaf becomes visible. */
+    notifyDisplayed(): void {
+        if (this.readingInitialSelectionPending) void this.validateDisplayedReading();
+    }
+
     /** Clean up -- remove DOM, detach listeners. */
     destroy(): void {
         this.disposed = true;
         this.releaseReading();
+        if (this.bodyEl && this.sectionScrollHandler) {
+            this.bodyEl.removeEventListener("scroll", this.sectionScrollHandler);
+        }
+        this.sectionScrollHandler = null;
         this.unloadRenderComponent();
         this.destroySectionRenderers();
         if (this.rootEl) {
@@ -312,20 +338,16 @@ export class TabView {
         for (const slot of slots) {
             const btn = el("button", "pa-pagelet-tab-nav-item", pageletT(slot.labelKey, this.locale));
             btn.setAttribute("type", "button");
+            btn.setAttribute("data-section-id", slot.id);
             btn.addEventListener("click", () => {
-                const target = this.bodyEl?.querySelector(`.pa-pagelet-tab-${slot.id}, .pa-pagelet-tab-section.pa-pagelet-tab-${slot.id}`);
-                if (!target) {
-                    const sections = this.bodyEl?.querySelectorAll(".pa-pagelet-tab-section, .pa-pagelet-tab-context-pager-details");
-                    const index = slots.indexOf(slot);
-                    const fallbackTarget = sections?.[index];
-                    if (fallbackTarget) this.scrollTabNavTarget(fallbackTarget);
-                    return;
-                }
+                const target = this.resolveSectionTarget(slot.id, slots);
+                if (!target) return;
                 this.scrollTabNavTarget(target);
             });
             nav.appendChild(btn);
         }
         this.bodyEl.prepend(nav);
+        this.updateSectionNavigationCurrent();
     }
 
     private scrollTabNavTarget(target: Element): void {
@@ -336,6 +358,49 @@ export class TabView {
             return;
         }
         target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    private updateSectionNavigationCurrent(): void {
+        const body = this.bodyEl;
+        if (!body) return;
+        const buttons = Array.from(body.querySelectorAll("button"))
+            .filter(button => button.getAttribute("data-section-id") !== null);
+        if (buttons.length === 0) return;
+        const bodyTop = body.getBoundingClientRect().top;
+        let currentId = buttons[0]?.getAttribute("data-section-id") ?? "";
+        const slots = buttons
+            .map(button => button.getAttribute("data-section-id"))
+            .filter((id): id is string => id !== null)
+            .map(id => ({ id }));
+        for (const button of buttons) {
+            const sectionId = button.getAttribute("data-section-id");
+            const target = sectionId ? this.resolveSectionTarget(sectionId, slots) : null;
+            if (target && target.getBoundingClientRect().top - bodyTop <= 120) {
+                currentId = sectionId ?? currentId;
+            }
+        }
+        for (const button of buttons) {
+            const sectionId = button.getAttribute("data-section-id");
+            if (sectionId === currentId) button.setAttribute("aria-current", "true");
+            else button.removeAttribute("aria-current");
+        }
+    }
+
+    private resolveSectionTarget(
+        sectionId: string,
+        slots: readonly { id: string }[],
+    ): Element | null {
+        const body = this.bodyEl;
+        if (!body) return null;
+        const targetSuffixes = SECTION_TARGET_SUFFIXES[sectionId] ?? [sectionId];
+        for (const suffix of targetSuffixes) {
+            const target = body.querySelector(`.pa-pagelet-tab-${suffix}`);
+            if (target) return target;
+        }
+
+        const sections = body.querySelectorAll(".pa-pagelet-tab-section, .pa-pagelet-tab-context-pager-details");
+        const slotIndex = slots.findIndex(slot => slot.id === sectionId);
+        return sections[slotIndex] ?? null;
     }
 
     // -----------------------------------------------------------------------
@@ -354,6 +419,8 @@ export class TabView {
         // Body
         const body = el("div", "pa-pagelet-tab-body");
         this.bodyEl = body;
+        this.sectionScrollHandler = () => this.updateSectionNavigationCurrent();
+        body.addEventListener("scroll", this.sectionScrollHandler);
         root.appendChild(body);
 
         return root;
@@ -439,6 +506,7 @@ export class TabView {
                 {
                     sourcePath: options.sourcePath,
                     onConnectionNodeClick: this.options.onConnectionNodeClick,
+                    collapsibleConnectionGraph: true,
                 },
             );
             return;
@@ -561,22 +629,92 @@ export class TabView {
 
     private renderReading(reading: PageletDetailReadingPayload): void {
         this.reading = reading;
+        this.rootEl?.classList.add("pa-pagelet-tab--reading");
         this.selectedReading = reading.candidates.find(candidate => candidate.id === reading.selectedId) ?? null;
+        this.readingInitialSelectionPending = this.selectedReading !== null;
         this.readingUnavailable = this.selectedReading?.staleStatus === "stale";
         this.readingMessage = this.readingUnavailable ? pageletT("pagelet.reading.stale", this.locale) : "";
         this.readingControlsEl = el("div", "pa-pagelet-reading-controls");
-        this.readingNavigationEl = el("div", "pa-pagelet-reading-navigation");
-        this.rootEl?.prepend(this.readingNavigationEl);
+        const navigation = this.buildReadingNavigation();
+        this.rootEl?.prepend(navigation);
         this.rootEl?.prepend(this.readingControlsEl);
         this.renderSelectedReading();
         this.refreshReadingControls();
+        this.readingScrollHandler = () => this.updateReadingCurrentSection();
+        this.bodyEl?.addEventListener("scroll", this.readingScrollHandler);
         this.readingUnsubscribe = reading.subscribe(() => {
             if (this.disposed || this.reading !== reading) return;
+            const hydrated = !this.selectedReading
+                && reading.candidates.find(candidate => candidate.id === reading.selectedId);
+            if (hydrated) {
+                this.selectedReading = hydrated;
+                this.readingInitialSelectionPending = true;
+                this.renderSelectedReading();
+            }
             if (this.selectedReading?.staleStatus === "stale") this.markDisplayedReadingStale();
             this.refreshReadingControls();
             void this.validateDisplayedReading();
         });
         void this.validateDisplayedReading();
+    }
+
+    private buildReadingNavigation(): HTMLElement {
+        const navigation = el("nav", "pa-pagelet-reading-navigation");
+        navigation.setAttribute("aria-label", pageletT("pagelet.reading.navigation.ariaLabel", this.locale));
+
+        const header = el("header", "pa-pagelet-reading-header");
+        header.appendChild(el("div", "pa-pagelet-reading-eyebrow",
+            pageletT("pagelet.reading.currentResultType", this.locale)));
+        header.appendChild(el("div", "pa-pagelet-reading-note", this.reading?.anchorPath ?? ""));
+        navigation.appendChild(header);
+
+        const candidates = el("section", "pa-pagelet-reading-candidates");
+        candidates.setAttribute("aria-label", pageletT("pagelet.reading.candidates.ariaLabel", this.locale));
+        this.readingCandidatesEl = candidates;
+        this.readingCandidateListEl = el("div", "pa-pagelet-reading-candidate-list");
+        candidates.appendChild(this.readingCandidateListEl);
+        const picker = el("label", "pa-pagelet-reading-picker");
+        this.readingCandidateCountEl = el("span", "pa-pagelet-reading-picker-count");
+        picker.appendChild(this.readingCandidateCountEl);
+        this.readingCandidateSelectEl = el("select", "pa-pagelet-reading-select");
+        this.readingCandidateSelectEl.setAttribute("aria-label",
+            pageletT("pagelet.reading.candidates.ariaLabel", this.locale));
+        this.readingCandidateSelectEl.addEventListener("change", () => {
+            const candidate = this.reading?.candidates.find(item => item.id === this.readingCandidateSelectEl?.value);
+            if (candidate) void this.selectReading(candidate);
+        });
+        picker.appendChild(this.readingCandidateSelectEl);
+        candidates.appendChild(picker);
+        navigation.appendChild(candidates);
+
+        this.readingUpdateEl = el("section", "pa-pagelet-reading-update");
+        this.readingUpdateEl.setAttribute("aria-label",
+            pageletT("pagelet.reading.newResults", this.locale));
+        this.readingUpdateEl.setAttribute("hidden", "");
+        navigation.appendChild(this.readingUpdateEl);
+
+        this.readingSectionNavEl = el("section", "pa-pagelet-reading-sections");
+        this.readingSectionNavEl.setAttribute("aria-label",
+            pageletT("pagelet.tab.nav.ariaLabel", this.locale));
+        this.readingSectionNavEl.setAttribute("hidden", "");
+        navigation.appendChild(this.readingSectionNavEl);
+
+        const sectionPicker = el("label", "pa-pagelet-reading-picker pa-pagelet-reading-section-picker");
+        sectionPicker.appendChild(el("span", "pa-sr-only",
+            pageletT("pagelet.reading.sections.ariaLabel", this.locale)));
+        this.readingSectionSelectEl = el("select", "pa-pagelet-reading-select");
+        this.readingSectionSelectEl.setAttribute("aria-label",
+            pageletT("pagelet.reading.sections.ariaLabel", this.locale));
+        this.readingSectionSelectEl.setAttribute("hidden", "");
+        this.readingSectionSelectEl.addEventListener("change", () => {
+            const target = this.bodyEl?.querySelector(`[id="${this.readingSectionSelectEl?.value}"]`);
+            if (target) this.scrollTabNavTarget(target);
+        });
+        sectionPicker.appendChild(this.readingSectionSelectEl);
+        navigation.appendChild(sectionPicker);
+
+        this.readingNavigationEl = navigation;
+        return navigation;
     }
 
     private rememberReadingPosition(): void {
@@ -589,6 +727,7 @@ export class TabView {
 
     private releaseReading(): void {
         this.rememberReadingPosition();
+        this.rootEl?.classList.remove("pa-pagelet-tab--reading");
         this.readingUnsubscribe?.();
         this.readingUnsubscribe = null;
         this.readingAction?.abort();
@@ -599,9 +738,21 @@ export class TabView {
         this.clearReadingExpiry();
         this.readingControlsEl?.remove();
         this.readingControlsEl = null;
+        if (this.bodyEl && this.readingScrollHandler) {
+            this.bodyEl.removeEventListener("scroll", this.readingScrollHandler);
+        }
+        this.readingScrollHandler = null;
         this.readingNavigationEl?.remove();
         this.readingNavigationEl = null;
+        this.readingCandidatesEl = null;
+        this.readingCandidateListEl = null;
+        this.readingCandidateCountEl = null;
+        this.readingCandidateSelectEl = null;
+        this.readingUpdateEl = null;
+        this.readingSectionNavEl = null;
+        this.readingSectionSelectEl = null;
         this.readingNavigationIdentity = "";
+        this.readingInitialSelectionPending = false;
         this.reading = null;
         this.selectedReading = null;
         this.readingMessage = "";
@@ -612,6 +763,7 @@ export class TabView {
         if (!this.bodyEl || !this.reading) return;
         this.unloadRenderComponent();
         clearChildren(this.bodyEl);
+        this.renderReadingSectionNavigation();
         const candidate = this.selectedReading;
         if (!candidate || candidate.staleStatus === "boundary-changed") return;
         const component = new Component();
@@ -648,6 +800,8 @@ export class TabView {
                 if (this.renderComponent !== component || this.selectedReading !== candidate) return;
                 // Native Markdown rendering may grow the document after the first scroll restoration.
                 if (body.scrollTop === appliedScrollTop) body.scrollTop = position.scrollTop;
+                this.renderReadingSectionNavigation();
+                this.updateReadingCurrentSection();
             },
         });
         restorePageletReadingPosition(body, position);
@@ -673,26 +827,128 @@ export class TabView {
         ]);
         if (navigationIdentity === this.readingNavigationIdentity) return;
         this.readingNavigationIdentity = navigationIdentity;
-        clearChildren(this.readingNavigationEl);
-        const addCandidate = (candidate: PageletAgentDeliveryCandidate): void => {
-            const button = el("button", "pa-pagelet-tab-nav-item", candidate.title);
-            button.setAttribute("type", "button");
-            button.setAttribute("aria-pressed", String(candidate.id === this.selectedReading?.id));
-            button.addEventListener("click", () => { void this.selectReading(candidate); });
-            this.readingNavigationEl?.appendChild(button);
-        };
-        for (const candidate of reading.candidates) addCandidate(candidate);
-        if (latest.some(candidate => !reading.candidates.some(current => current.id === candidate.id
-            && current.preparedAt === candidate.preparedAt))) {
-            const button = el("button", "pa-pagelet-tab-nav-item",
-                pageletT("pagelet.panel.agentInsight.newResults", this.locale));
-            button.setAttribute("type", "button");
-            button.addEventListener("click", () => {
-                if (this.reading !== reading || latest.length === 0) return;
-                void this.selectReading(latest[0]!, latest);
-            });
-            this.readingNavigationEl.appendChild(button);
+        this.refreshReadingCandidates(reading, latest);
+    }
+
+    private refreshReadingCandidates(
+        reading: PageletDetailReadingPayload,
+        latest: readonly PageletAgentDeliveryCandidate[],
+    ): void {
+        const hasCandidates = reading.candidates.length > 0;
+        const list = this.readingCandidateListEl;
+        const select = this.readingCandidateSelectEl;
+        if (list) clearChildren(list);
+        if (select) clearChildren(select);
+        if (this.readingCandidatesEl) {
+            if (hasCandidates) this.readingCandidatesEl.removeAttribute("hidden");
+            else this.readingCandidatesEl.setAttribute("hidden", "");
         }
+        if (hasCandidates) {
+            if (list && select) {
+                const selectedIndex = reading.candidates.findIndex(
+                    candidate => candidate.id === this.selectedReading?.id,
+                );
+                const currentIndex = selectedIndex >= 0
+                    ? selectedIndex + 1
+                    : reading.candidates.length;
+                const countLabel = pageletT("pagelet.reading.candidateCount", this.locale, {
+                    current: currentIndex,
+                    total: reading.candidates.length,
+                });
+                list.appendChild(el("div", "pa-pagelet-reading-candidate-count", countLabel));
+                if (this.readingCandidateCountEl) this.readingCandidateCountEl.textContent = countLabel;
+                for (const candidate of reading.candidates) {
+                    const button = el("button", "pa-pagelet-tab-nav-item", candidate.title);
+                    button.setAttribute("type", "button");
+                    button.setAttribute("aria-pressed", String(candidate.id === this.selectedReading?.id));
+                    button.setAttribute("data-index", String(select.children.length + 1));
+                    button.addEventListener("click", () => { void this.selectReading(candidate); });
+                    list.appendChild(button);
+                    const option = el("option", undefined, candidate.title);
+                    option.value = candidate.id;
+                    if (candidate.id === this.selectedReading?.id) option.setAttribute("selected", "true");
+                    select.appendChild(option);
+                }
+                select.value = this.selectedReading?.id ?? "";
+            }
+        }
+
+        const hasNewResults = latest.some(candidate => !reading.candidates.some(current => current.id === candidate.id
+            && current.preparedAt === candidate.preparedAt));
+        const updateEl = this.readingUpdateEl;
+        if (!updateEl) return;
+        clearChildren(updateEl);
+        if (!hasNewResults) {
+            updateEl.setAttribute("hidden", "");
+            return;
+        }
+        updateEl.removeAttribute("hidden");
+        const button = el("button", "pa-pagelet-tab-nav-item",
+            pageletT("pagelet.reading.showNew", this.locale));
+        button.setAttribute("type", "button");
+        button.addEventListener("click", () => {
+            if (this.reading !== reading || latest.length === 0) return;
+            void this.selectReading(latest[0]!, latest);
+        });
+        button.classList.add("pa-pagelet-reading-candidate--new");
+        updateEl.appendChild(button);
+    }
+
+    private renderReadingSectionNavigation(): void {
+        const sectionNav = this.readingSectionNavEl;
+        const sectionSelect = this.readingSectionSelectEl;
+        if (!sectionNav || !sectionSelect || !this.bodyEl) return;
+        clearChildren(sectionNav);
+        clearChildren(sectionSelect);
+        const headings = Array.from(this.bodyEl.querySelectorAll("h1, h2, h3"))
+            .filter(heading => (heading.textContent ?? "").trim().length > 0);
+        if (headings.length <= 1) {
+            sectionNav.setAttribute("hidden", "");
+            sectionSelect.setAttribute("hidden", "");
+            return;
+        }
+
+        sectionNav.removeAttribute("hidden");
+        sectionSelect.removeAttribute("hidden");
+        sectionNav.appendChild(el("span", "pa-pagelet-reading-section-label",
+            pageletT("pagelet.reading.sections.ariaLabel", this.locale)));
+        const links = el("div", "pa-pagelet-reading-section-links");
+        sectionNav.appendChild(links);
+        headings.forEach((heading, index) => {
+            const id = heading.getAttribute("id") ?? `pa-pagelet-reading-section-${++tabLabelSequence}`;
+            heading.setAttribute("id", id);
+            const label = (heading.textContent ?? "").trim();
+            const button = el("button", "pa-pagelet-tab-nav-item", label);
+            button.setAttribute("type", "button");
+            button.setAttribute("data-target-id", id);
+            button.addEventListener("click", () => this.scrollTabNavTarget(heading));
+            links.appendChild(button);
+
+            const option = el("option", undefined, label);
+            option.value = id;
+            if (index === 0) option.setAttribute("selected", "true");
+            sectionSelect.appendChild(option);
+        });
+        sectionSelect.value = headings[0]?.getAttribute("id") ?? "";
+    }
+
+    private updateReadingCurrentSection(): void {
+        const sectionSelect = this.readingSectionSelectEl;
+        if (!sectionSelect || !this.bodyEl) return;
+        const buttons = Array.from(this.readingSectionNavEl?.querySelectorAll("button") ?? []);
+        const bodyTop = this.bodyEl.getBoundingClientRect().top;
+        let currentId = buttons[0]?.getAttribute("data-target-id") ?? "";
+        for (const button of buttons) {
+            const id = button.getAttribute("data-target-id");
+            const target = id ? this.bodyEl.querySelector(`[id="${id}"]`) : null;
+            if (target && target.getBoundingClientRect().top - bodyTop <= 112) currentId = id ?? currentId;
+        }
+        for (const button of buttons) {
+            const id = button.getAttribute("data-target-id");
+            if (id === currentId) button.setAttribute("aria-current", "true");
+            else button.removeAttribute("aria-current");
+        }
+        sectionSelect.value = currentId;
     }
 
     private async validateDisplayedReading(): Promise<void> {
@@ -708,6 +964,12 @@ export class TabView {
         this.readingValidation = null;
         if (valid) {
             candidate.staleStatus = "fresh";
+            if (this.readingInitialSelectionPending) {
+                if (this.options.isViewDisplayed?.() ?? true) {
+                    this.readingInitialSelectionPending = false;
+                    reading.onSelect(candidate);
+                }
+            }
             if (this.readingUnavailable) {
                 this.readingUnavailable = false;
                 this.readingMessage = "";
@@ -778,6 +1040,7 @@ export class TabView {
     ): Promise<void> {
         const reading = this.reading;
         if (!reading || this.disposed) return;
+        this.readingInitialSelectionPending = false;
         this.readingAction?.abort();
         this.readingHandoffPending = false;
         const controller = new AbortController();
@@ -801,7 +1064,8 @@ export class TabView {
         this.readingUnavailable = !valid;
         if (!valid) candidate.staleStatus = "stale";
         this.renderSelectedReading();
-        reading.onSelect(candidate);
+        if (candidates) reading.onSelect(candidate, candidates);
+        else reading.onSelect(candidate);
         this.refreshReadingControls();
         if (valid) this.scheduleReadingExpiry(candidate);
         else this.clearReadingExpiry();
@@ -1095,15 +1359,25 @@ export class TabView {
     private renderRestoredState(): void {
         if (!this.bodyEl) return;
 
+        const hasNoteAnchor = Boolean(
+            this.currentOptions.reading?.anchorPath
+            ?? (this.currentOptions.layoutType === "discover" ? this.currentOptions.sourcePath : undefined),
+        );
+        const titleKey = hasNoteAnchor
+            ? "pagelet.tab.restoredNote.title"
+            : "pagelet.tab.restored.title";
+        const bodyKey = hasNoteAnchor
+            ? "pagelet.tab.restoredNote.body"
+            : "pagelet.tab.restored.body";
         const section = el("div", "pa-pagelet-tab-section");
         section.appendChild(el("h2", undefined,
             pageletT("pagelet.tab.overview", this.locale)));
 
         const card = el("div", "pa-pagelet-tab-empty-card");
         card.appendChild(el("div", "pa-pagelet-tab-empty-title",
-            pageletT("pagelet.tab.restored.title", this.locale)));
+            pageletT(titleKey, this.locale)));
         card.appendChild(el("div", "pa-pagelet-tab-empty-body",
-            pageletT("pagelet.tab.restored.body", this.locale)));
+            pageletT(bodyKey, this.locale)));
         section.appendChild(card);
 
         this.bodyEl.appendChild(section);

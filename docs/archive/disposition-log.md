@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-10-14
+Updated: 2026-10-17
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-10-17 | `docs/development/active/pagelet-note-detail-tabs/**` | deleted-after-absorption | [DEC-067](../product/decisions/dec-067-pagelet-note-detail-tabs.md), [Product Spec](../product/specs/pagelet-note-detail-tabs-product-spec.md), [B-177 validation](./2026/b177-pagelet-note-detail-tabs-validation.md), current source and focused tests | 用户明确授权 B-177 文档收尾与本地 master 提交；按笔记 Detail、全部 14 类内容/Discovery graph、必要模型调用边界及四项修复已验收，无本范围未完成项。稳定设计吸收到 Spec，独有验证和限制紧凑保留；删除未提交的 Home/SDD/Tracker，本机保留原文副本，不声称旧 Git 保存了完整过程包。不推送或发布，不处理其他 Active track。 |
 | 2026-10-14 | `docs/development/active/obsidian-resource-sdk/**` | deleted-after-absorption | [DEC-064](../product/decisions/dec-064-obsidian-resource-sdk.md), [Product Spec](../product/specs/pa-obsidian-resource-sdk-product-spec.md), [Resource SDK Architecture](../architecture/obsidian-resource-sdk.md), [B-174 validation](./2026/b174-obsidian-resource-sdk-validation.md), current source and focused tests | Owner明确授权完整复核、closeout及本地master提交；核心SDK范围A与两项已批准Undo限制、来源/效果连续性和必要边界已吸收。仅保留紧凑验证记录，Home/SDD/Plan/Tracker删除；未提交过程原文留本机临时副本，不声称旧Git保存。最终editor当前路径遗漏已修复并独立验收，无本范围未完成项；无推送或发布授权。 |
 | 2026-10-12 | `docs/development/active/direct-operations/**` | deleted-after-absorption | [DEC-063](../product/decisions/dec-063-direct-operations-and-native-move.md), [Product Spec](../product/specs/pa-direct-operations-product-spec.md), [Operations Architecture](../architecture/pa-agent-architecture-plan.md#operations-agent-providers), [B-173 validation](./2026/b173-direct-operations-validation.md), current source and focused tests | 用户明确授权 B-173 closeout 与本地 master 提交；单次 apply/preview、review/现有 Undo、真实有限结果、收敛和原生 move 已吸收。仅保留故障丢失链、三类模型/双端 UI、F-06/F-07 窄修及证据限制；Home/SDD/Tracker 删除，不完整归档。未提交过程正文备份至本机临时目录，不声称 Git 已保存；无本范围未完成项，B-159/F-24/M3 延期保持，无推送或发布授权。 |
 | 2026-10-11 | `docs/development/active/tool-disclosure/**` | deleted-after-absorption | [DEC-062](../product/decisions/dec-062-agent-hybrid-tool-disclosure.md), [Product Spec](../product/specs/pa-agent-tool-disclosure-product-spec.md), [Agent Architecture](../architecture/pa-agent-architecture-plan.md#capability-model), [B-172 validation](./2026/b172-agent-tool-disclosure-validation.md), current source and focused tests | 用户明确授权 B-172 closeout 与本地 master 提交。稳定 A/V、真实绑定、同轮快照、来源／有限纠错和效果事实合同已吸收；独有四项比较、组合 gate 与 P2 窄修边界压缩保留。Feature Home/SDD/Tracker 删除，不完整归档；未提交过程原文留本机临时副本，不声称 Git 已保存。无推送或发布授权。 |

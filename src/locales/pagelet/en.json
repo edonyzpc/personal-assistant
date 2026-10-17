@@ -117,6 +117,11 @@
     "pagelet.reading.running": "Analyzing this note…",
     "pagelet.reading.newResults": "New results are available.",
     "pagelet.reading.showNew": "Show new results",
+    "pagelet.reading.navigation.ariaLabel": "Reading navigation",
+    "pagelet.reading.currentResultType": "Reading",
+    "pagelet.reading.candidates.ariaLabel": "Results in this collection",
+    "pagelet.reading.candidateCount": "Reading {current} of {total}",
+    "pagelet.reading.sections.ariaLabel": "Sections on this page",
     "pagelet.reading.discover": "Start discovery",
     "pagelet.reading.stale": "This reading is out of date. You can keep reading it, but start a new discovery before continuing in Chat.",
     "pagelet.bubble.agentInsight.view": "View insight",
@@ -518,6 +523,8 @@
     "pagelet.tab.empty.body": "Detail results are temporary. Run Pagelet from the panel, then expand the results here.",
     "pagelet.tab.restored.title": "Result no longer available",
     "pagelet.tab.restored.body": "Pagelet detail results are temporary. Re-run Pagelet or open a saved review or summary note from your vault history.",
+    "pagelet.tab.restoredNote.title": "Reading paused",
+    "pagelet.tab.restoredNote.body": "Pagelet detail results are temporary. Open this note and click Pet to reconnect this tab, or run Pagelet again.",
     "pagelet.tab.tag.findings": "{count} findings",
     "pagelet.tab.tag.insights": "{count} insights",
     "pagelet.tab.tag.sources": "{count} sources",
@@ -803,5 +810,6 @@
     "pagelet.graphDiscovery.none": "No source-backed graph suggestions found for this scope.",
     "pagelet.tab.scopeRecap.title": "Scope Recap",
     "pagelet.summary.save.cancelled": "Summary save cancelled.",
-    "pagelet.tab.titlePrefix": "Pagelet — {title}"
+    "pagelet.tab.titlePrefix": "Pagelet — {title}",
+    "pagelet.tab.newResultIndicator": "New"
 }

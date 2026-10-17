@@ -422,6 +422,11 @@ import {
     type DeliveryReceipt,
 } from '../src/pagelet/attention';
 import { PageletDetailView } from '../src/pagelet/tab';
+import type {
+    PageletDetailOpenOptions,
+    PageletDetailPayload,
+    PageletDetailReadingPayload,
+} from '../src/pagelet/tab/types';
 import { createProviderRequestScope } from '../src/ai-services/obsidian-fetch';
 import type {
     ConfirmedMemoryRecord,
@@ -10434,6 +10439,171 @@ describe('Vault Insights onboarding notice', () => {
 });
 
 describe('Pagelet detail workspace leaf', () => {
+    function makeNoteReadingPayload(sourcePath: string): PageletDetailPayload {
+        const reading: PageletDetailReadingPayload = {
+            anchorPath: sourcePath,
+            candidates: [],
+            selectedId: '',
+            positions: {},
+            onSelect: () => undefined,
+            onPositionChange: () => undefined,
+            validate: async () => true,
+            discuss: async () => ({ status: 'unavailable' as const }),
+            getReadingControls: () => ({ anchorPath: sourcePath, label: '' }),
+            subscribe: () => () => undefined,
+            getLatestCandidates: () => [],
+        };
+        return {
+            title: 'Pagelet — Detail View',
+            content: [],
+            locale: 'en',
+            sourcePath,
+            reading,
+        };
+    }
+
+    it('sends a first-open note reading payload to the newly created Detail leaf', async () => {
+        const detailView = Object.create(PageletDetailView.prototype) as PageletDetailView;
+        detailView.setPayload = jest.fn();
+        detailView.notifyDisplayed = jest.fn();
+        const newLeaf = {
+            view: detailView,
+            setViewState: jest.fn(async (_state: unknown) => undefined),
+            loadIfDeferred: jest.fn(async () => undefined),
+        };
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        installPluginShellOwners(plugin);
+        plugin.app = {
+            workspace: {
+                getLeavesOfType: jest.fn(() => []),
+                getLeaf: jest.fn(() => newLeaf),
+                revealLeaf: jest.fn(async () => undefined),
+                setActiveLeaf: jest.fn((_leaf: unknown, _params: { focus: boolean }) => undefined),
+            },
+        };
+        const payload = makeNoteReadingPayload('notes/first.md');
+
+        await plugin.openPageletDetailView(payload, { noteReading: true });
+
+        expect(newLeaf.setViewState).toHaveBeenCalledWith({
+            type: 'pa-pagelet-detail-view',
+            active: true,
+        });
+        expect(detailView.setPayload).toHaveBeenCalledWith(payload);
+        expect(plugin.app.workspace.setActiveLeaf).toHaveBeenCalledWith(newLeaf, { focus: true });
+        expect(detailView.notifyDisplayed).toHaveBeenCalled();
+    });
+
+    it('hydrates a matching deferred native Detail without loading other leaves', async () => {
+        const liveB = Object.create(PageletDetailView.prototype) as PageletDetailView;
+        liveB.getNoteAnchorPath = jest.fn(() => 'notes/b.md');
+        liveB.isRestoredPlaceholder = jest.fn(() => false);
+        liveB.setPayload = jest.fn();
+        const loadedA = Object.create(PageletDetailView.prototype) as PageletDetailView;
+        loadedA.getNoteAnchorPath = jest.fn(() => 'notes/a.md');
+        loadedA.isRestoredPlaceholder = jest.fn(() => false);
+        loadedA.setPayload = jest.fn();
+        loadedA.notifyDisplayed = jest.fn();
+        const liveBLeaf = { view: liveB, loadIfDeferred: jest.fn(async () => undefined) };
+        const deferredALeaf: {
+            view: { getViewType: () => string } | PageletDetailView;
+            getViewState: ReturnType<typeof jest.fn>;
+            loadIfDeferred: ReturnType<typeof jest.fn>;
+        } = {
+            view: {
+                getViewType: () => 'pa-pagelet-detail-view',
+            },
+            getViewState: jest.fn(() => ({
+                state: {
+                    payload: {
+                        sourcePath: 'notes/a.md',
+                    },
+                },
+            })),
+            loadIfDeferred: jest.fn(async () => {
+                deferredALeaf.view = loadedA;
+            }),
+        };
+        const getLeaf = jest.fn();
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        installPluginShellOwners(plugin);
+        plugin.app = {
+            workspace: {
+                getLeavesOfType: jest.fn(() => [liveBLeaf, deferredALeaf]),
+                getLeaf,
+                revealLeaf: jest.fn(async () => undefined),
+                setActiveLeaf: jest.fn((_leaf: unknown, _params: { focus: boolean }) => undefined),
+            },
+        };
+
+        expect(plugin.getPageletDetailPathState('notes/a.md')).toBe('restored-placeholder');
+        expect(plugin.getPageletDetailLeafAnchorPath(deferredALeaf as never)).toBe('notes/a.md');
+
+        const payload = makeNoteReadingPayload('notes/a.md');
+        await plugin.openPageletDetailView(payload, { noteReading: true, hydrateRestoredFromState: true });
+
+        expect(deferredALeaf.loadIfDeferred).toHaveBeenCalledTimes(1);
+        expect(liveBLeaf.loadIfDeferred).not.toHaveBeenCalled();
+        expect(getLeaf).not.toHaveBeenCalled();
+        expect(loadedA.setPayload).toHaveBeenCalledWith(payload);
+        expect(liveB.setPayload).not.toHaveBeenCalled();
+
+        (plugin.app.workspace.setActiveLeaf as jest.Mock).mockClear();
+        await expect(plugin.revealPageletDetailViewForPath('notes/a.md')).resolves.toBe(true);
+        expect(plugin.app.workspace.setActiveLeaf).toHaveBeenCalledWith(deferredALeaf, { focus: true });
+    });
+
+    it('hydrates a restored note placeholder in its own leaf without replacing another note', async () => {
+        const liveB = Object.create(PageletDetailView.prototype) as PageletDetailView & {
+            getNoteAnchorPath: jest.Mock;
+            isRestoredPlaceholder: jest.Mock;
+        };
+        liveB.getNoteAnchorPath = jest.fn(() => 'notes/b.md');
+        liveB.isRestoredPlaceholder = jest.fn(() => false);
+        liveB.setPayload = jest.fn();
+        liveB.notifyDisplayed = jest.fn();
+        const placeholderA = Object.create(PageletDetailView.prototype) as PageletDetailView & {
+            getNoteAnchorPath: jest.Mock;
+            isRestoredPlaceholder: jest.Mock;
+        };
+        placeholderA.getNoteAnchorPath = jest.fn(() => 'notes/a.md');
+        placeholderA.isRestoredPlaceholder = jest.fn(() => true);
+        placeholderA.setPayload = jest.fn();
+        placeholderA.notifyDisplayed = jest.fn();
+        const liveBLeaf = { view: liveB, loadIfDeferred: jest.fn(async () => undefined) };
+        const placeholderALeaf = { view: placeholderA, loadIfDeferred: jest.fn(async () => undefined) };
+        const revealLeaf = jest.fn<(_leaf: unknown) => Promise<void>>(async () => undefined);
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        installPluginShellOwners(plugin);
+        plugin.app = {
+            workspace: {
+                getLeavesOfType: jest.fn(() => [liveBLeaf, placeholderALeaf]),
+                getLeaf: jest.fn(),
+                revealLeaf,
+                setActiveLeaf: jest.fn((_leaf: unknown, _params: { focus: boolean }) => undefined),
+            },
+        };
+        const payload = makeNoteReadingPayload('notes/a.md');
+        const open = plugin.openPageletDetailView.bind(plugin) as (
+            payload: PageletDetailPayload,
+            options?: PageletDetailOpenOptions,
+        ) => Promise<void>;
+
+        await open(payload, { noteReading: true, hydrateRestoredFromState: true });
+
+        expect(revealLeaf).toHaveBeenLastCalledWith(placeholderALeaf);
+        expect(plugin.app.workspace.setActiveLeaf).toHaveBeenLastCalledWith(placeholderALeaf, { focus: true });
+        expect(placeholderA.setPayload).toHaveBeenCalledWith(payload);
+        expect(liveB.setPayload).not.toHaveBeenCalled();
+
+        placeholderA.isRestoredPlaceholder.mockReturnValue(false);
+        await open(payload, { noteReading: true });
+        expect(revealLeaf).toHaveBeenLastCalledWith(placeholderALeaf);
+        expect(plugin.app.workspace.setActiveLeaf).toHaveBeenLastCalledWith(placeholderALeaf, { focus: true });
+        expect(placeholderA.setPayload).toHaveBeenCalledTimes(1);
+        expect(liveB.setPayload).not.toHaveBeenCalled();
+    });
+
     it('loads a deferred detail leaf before sending the payload', async () => {
         const detailView = Object.create(PageletDetailView.prototype) as PageletDetailView;
         detailView.setPayload = jest.fn();

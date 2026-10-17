@@ -1,5 +1,10 @@
 # Pagelet — Software Design & Development Guide
 
+> 2026-10-17 当前 Detail UI/UX 由 [DEC-067](../../product/decisions/dec-067-pagelet-note-detail-tabs.md) 与
+> [B-177 Spec](../../product/specs/pagelet-note-detail-tabs-product-spec.md) 接续：Pet 直达当前笔记独立 Detail，
+> 保留全部 view/Discovery graph 并改善阅读、导航和窄分屏；[历史验证及限制](../../archive/2026/b177-pagelet-note-detail-tabs-validation.md) 单独保留。
+> 本页旧 Pet → Panel → Tab 和移动端“不适用 Tab”描述不覆盖当前契约；必要洞察调用沿原准入，不新增生成、存储或权限体系。
+
 > Target audience: AI coding agent (Codex / Claude Code)
 > Purpose: Provide all product, UX, and architectural constraints needed to implement Pagelet as an Obsidian plugin feature inside PA.
 > Source of truth: `pagelet-product-design.md` + `pagelet-prototype.html`

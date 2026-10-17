@@ -44,6 +44,7 @@ export interface PanelLayoutRenderOptions {
     app?: App;
     renderComponent?: Component;
     reading?: boolean;
+    collapsibleConnectionGraph?: boolean;
     onMarkdownRendered?: () => void;
 }
 
@@ -382,6 +383,7 @@ export function renderDiscoveryLayout(
             locale,
             options.sourcePath,
             options.onConnectionNodeClick,
+            options.collapsibleConnectionGraph === true,
         ));
         wrapper.appendChild(mapWrap);
     }
@@ -538,6 +540,7 @@ function renderConnectionMap(
     locale: PageletLocale = "en",
     sourcePath?: string,
     onNodeClick?: (noteName: string, sourcePath?: string) => void,
+    collapsible = false,
 ): HTMLElement {
     const map = el("div", "pa-pagelet-panel-connection-map");
     const viewport = el("div", "pa-pagelet-panel-connection-graph-wrap");
@@ -551,7 +554,19 @@ function renderConnectionMap(
     }
 
     renderInteractiveConnectionGraph(viewport, nodeNames, connections, locale, sourcePath, onNodeClick);
-    return map;
+    if (!collapsible) return map;
+
+    const details = el("details", "pa-pagelet-panel-connection-graph-details");
+    details.open = true;
+    const summary = el("summary", "pa-pagelet-panel-connection-graph-summary",
+        pageletT("pagelet.panel.discovery.map", locale));
+    summary.addEventListener("click", event => {
+        event.preventDefault();
+        details.open = !details.open;
+    });
+    details.appendChild(summary);
+    details.appendChild(map);
+    return details;
 }
 
 function collectConnectionNodeNames(

@@ -171,6 +171,7 @@ import {
     type PageletProviderCallReservation,
 } from './pagelet/provider-call-admission';
 import { registerPageletCommands, type PageletCommandCallbacks } from './pagelet/commands';
+import type { PageletDetailOpenOptions, PageletDetailPathState } from './pagelet/tab/types';
 import {
     PAGELET_DETAIL_VIEW_TYPE,
     PageletDetailView,
@@ -591,6 +592,18 @@ function writeVaultInsightsInjectionNoticeFlag(): void {
         /* localStorage unavailable — silently skip */
     }
 }
+
+type PageletDetailSavedViewState = {
+    state?: {
+        payload?: {
+            sourcePath?: unknown;
+        };
+    };
+};
+
+type PageletDetailLeafWithSavedState = {
+    getViewState?: () => unknown;
+};
 
 
 export class PluginManager extends Plugin {
@@ -2144,6 +2157,7 @@ export class PluginManager extends Plugin {
                         onOpenMemorySettings: (targetId) => this.openMemorySettings(targetId),
                         resolveContextualMemory: () => this.getMemoryGovernancePanelState(),
                     },
+                    (view) => this.handlePageletDetailViewClosed(view),
                 );
             },
         }]);
@@ -2975,7 +2989,15 @@ export class PluginManager extends Plugin {
                 this.settingTab.refreshPageletSettingsIfVisible();
             },
             writeReviewNote: (note: GeneratedReviewNote) => this.writePageletReviewNote(note),
-            openPageletDetailView: (payload: PageletDetailPayload) => this.openPageletDetailView(payload),
+            openPageletDetailView: (payload: PageletDetailPayload, options?: PageletDetailOpenOptions) => (
+                this.openPageletDetailView(payload, options)
+            ),
+            getPageletDetailPathState: (path: string) => this.getPageletDetailPathState(path),
+            getPageletDetailLeafAnchorPath: (leaf: WorkspaceLeaf) => this.getPageletDetailLeafAnchorPath(leaf),
+            revealPageletDetailViewForPath: (path: string) => this.revealPageletDetailViewForPath(path),
+            markPageletDetailNewResults: (path: string, hasNewResults: boolean) => (
+                this.markPageletDetailNewResults(path, hasNewResults)
+            ),
             clearScopeRecapDetailSessionCache: () => clearScopeRecapPageletDetailSessionCache(),
             findRelatedNotes: (primarySourcePath, noteContents, sourcePaths) =>
                 this.findPageletRelatedNotes(
@@ -8383,9 +8405,116 @@ export class PluginManager extends Plugin {
         await this.statsIntegration.activateView();
     }
 
-    async openPageletDetailView(payload: PageletDetailPayload): Promise<void> {
+    private getPageletDetailLeafAnchorPathFromSavedState(leaf: WorkspaceLeaf): string | null {
+        if (leaf.view instanceof PageletDetailView) return leaf.view.getNoteAnchorPath();
+        if (leaf.view?.getViewType?.() !== PAGELET_DETAIL_VIEW_TYPE) return null;
+        const savedViewState = (
+            (leaf as PageletDetailLeafWithSavedState).getViewState?.()
+        ) as PageletDetailSavedViewState | undefined;
+        const savedState = savedViewState?.state;
+        const sourcePath = savedState?.payload?.sourcePath;
+        return typeof sourcePath === "string" && sourcePath.trim().length > 0 ? sourcePath : null;
+    }
+
+    private isPageletDetailLeafRestored(leaf: WorkspaceLeaf): boolean {
+        return !(leaf.view instanceof PageletDetailView) || leaf.view.isRestoredPlaceholder();
+    }
+
+    getPageletDetailPathState(path: string): PageletDetailPathState {
+        const targetPath = normalizePath(path).replace(/^\.\//, "");
+        for (const leaf of this.app.workspace.getLeavesOfType(PAGELET_DETAIL_VIEW_TYPE)) {
+            const viewPath = this.getPageletDetailLeafAnchorPathFromSavedState(leaf);
+            if (!viewPath || normalizePath(viewPath).replace(/^\.\//, "") !== targetPath) continue;
+            return this.isPageletDetailLeafRestored(leaf) ? "restored-placeholder" : "live";
+        }
+        return "none";
+    }
+
+    getPageletDetailLeafAnchorPath(leaf: WorkspaceLeaf): string | null {
+        return this.getPageletDetailLeafAnchorPathFromSavedState(leaf);
+    }
+
+    async revealPageletDetailViewForPath(path: string): Promise<boolean> {
+        if (this.getPageletDetailPathState(path) !== "live") return false;
+        const targetPath = normalizePath(path).replace(/^\.\//, "");
+        const leaf = this.app.workspace.getLeavesOfType(PAGELET_DETAIL_VIEW_TYPE)
+            .find(candidate => {
+                if (!(candidate.view instanceof PageletDetailView)) return false;
+                const viewPath = candidate.view.getNoteAnchorPath();
+                return Boolean(viewPath
+                    && normalizePath(viewPath).replace(/^\.\//, "") === targetPath
+                    && !candidate.view.isRestoredPlaceholder());
+            });
+        if (!leaf) return false;
+        await leaf.loadIfDeferred?.();
+        await this.app.workspace.revealLeaf(leaf);
+        this.app.workspace.setActiveLeaf(leaf, { focus: true });
+        if (leaf.view instanceof PageletDetailView) leaf.view.notifyDisplayed?.();
+        return leaf.view instanceof PageletDetailView;
+    }
+
+    markPageletDetailNewResults(path: string, hasNewResults: boolean): void {
+        const targetPath = normalizePath(path).replace(/^\.\//, "");
+        for (const leaf of this.app.workspace.getLeavesOfType(PAGELET_DETAIL_VIEW_TYPE)) {
+            if (!(leaf.view instanceof PageletDetailView) || leaf.view.isRestoredPlaceholder()) continue;
+            const viewPath = leaf.view.getNoteAnchorPath();
+            if (viewPath
+                && normalizePath(viewPath).replace(/^\.\//, "") === targetPath
+                && !leaf.view.isRestoredPlaceholder()) {
+                leaf.view.setHasNewResults(hasNewResults);
+            }
+        }
+    }
+
+    private handlePageletDetailViewClosed(view: PageletDetailView): void {
+        const path = view.getNoteAnchorPath();
+        if (!path) return;
+        const normalizedPath = normalizePath(path).replace(/^\.\//, "");
+        const anotherLiveDetail = this.app.workspace.getLeavesOfType(PAGELET_DETAIL_VIEW_TYPE)
+            .some(leaf => leaf.view instanceof PageletDetailView
+                && leaf.view !== view
+                && !leaf.view.isRestoredPlaceholder()
+                && normalizePath(leaf.view.getNoteAnchorPath() ?? "").replace(/^\.\//, "") === normalizedPath);
+        if (!anotherLiveDetail) this.pageletOrchestrator?.handlePageletDetailClosed(path);
+    }
+
+    async openPageletDetailView(
+        payload: PageletDetailPayload,
+        options?: PageletDetailOpenOptions,
+    ): Promise<void> {
         const { workspace } = this.app;
-        let leaf = workspace.getLeavesOfType(PAGELET_DETAIL_VIEW_TYPE)[0];
+        const targetPath = payload.reading?.anchorPath ?? payload.sourcePath;
+        const normalizedTargetPath = targetPath
+            ? normalizePath(targetPath).replace(/^\.\//, "")
+            : null;
+        const detailLeaves = workspace.getLeavesOfType(PAGELET_DETAIL_VIEW_TYPE);
+        const leafAnchor = (leaf: WorkspaceLeaf): string | null => {
+            const anchorPath = this.getPageletDetailLeafAnchorPathFromSavedState(leaf);
+            return anchorPath ? normalizePath(anchorPath).replace(/^\.\//, "") : null;
+        };
+        const matchingLeaves = normalizedTargetPath
+            ? detailLeaves.filter(leaf => leafAnchor(leaf) === normalizedTargetPath)
+            : [];
+        let leaf: WorkspaceLeaf | undefined;
+        let revealOnly = false;
+        if (normalizedTargetPath) {
+            if (options?.noteReading) {
+                const liveLeaf = matchingLeaves.find(leaf => (
+                    leaf.view instanceof PageletDetailView && !leaf.view.isRestoredPlaceholder()
+                ));
+                if (liveLeaf) {
+                    leaf = liveLeaf;
+                    revealOnly = true;
+                }
+                leaf ??= options.hydrateRestoredFromState
+                    ? matchingLeaves.find(leaf => this.isPageletDetailLeafRestored(leaf))
+                    : undefined;
+            } else {
+                leaf = matchingLeaves[0];
+            }
+        } else {
+            leaf = detailLeaves.find(leaf => leafAnchor(leaf) === null);
+        }
 
         if (!leaf) {
             leaf = workspace.getLeaf('tab');
@@ -8409,9 +8538,15 @@ export class PluginManager extends Plugin {
         }
 
         await workspace.revealLeaf(leaf);
+        if (options?.noteReading) workspace.setActiveLeaf(leaf, { focus: true });
 
         if (leaf.view instanceof PageletDetailView) {
+            if (options?.noteReading && revealOnly && !leaf.view.isRestoredPlaceholder()) {
+                leaf.view.notifyDisplayed?.();
+                return;
+            }
             leaf.view.setPayload(payload);
+            leaf.view.notifyDisplayed?.();
             return;
         }
 

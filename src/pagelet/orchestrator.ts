@@ -114,6 +114,14 @@ interface PageletRecentReading {
     emptyReason?: string;
 }
 
+interface PageletDetailReadingSession {
+    readonly payload: PageletDetailReadingPayload;
+    isActive(): boolean;
+    replaceCandidates(candidates: readonly PageletAgentDeliveryCandidate[]): void;
+    setWaiting(emptyReason: string, waitingRequestId: string | null): void;
+    acceptWaitingResult(requestId: string, candidates: readonly PageletAgentDeliveryCandidate[]): boolean;
+}
+
 export class PageletOrchestrator {
     // ---- Components -------------------------------------------------------
     private petView: PetView | null = null;
@@ -144,6 +152,10 @@ export class PageletOrchestrator {
     private openAgentInsightCandidate: PageletAgentDeliveryCandidate | null = null;
     private readonly recentReadings = new Map<string, PageletRecentReading>();
     private readonly availableAgentInsights = new Map<string, PageletAgentDeliveryCandidate[]>();
+    private readonly detailReadingSessions = new Map<string, PageletDetailReadingSession[]>();
+    private readonly detailReadingSessionsByPayload = new WeakMap<PageletDetailReadingPayload, PageletDetailReadingSession>();
+    private readonly detailReadingOpenings = new Map<string, Promise<void>>();
+    private readonly detailReadingAbortControllers = new Map<string, AbortController>();
     private panelReading: PageletRecentReading | null = null;
     private readingIntent = 0;
     private readingAbortController: AbortController | null = null;
@@ -204,7 +216,7 @@ export class PageletOrchestrator {
 
         // Delegate: bubble coordinator (after proactiveHints)
         this.bubbleCoordinator = new BubbleCoordinator(host, this.proactiveHints, {
-            onReadCurrentNote: () => { void this.openPanel(); },
+            onReadCurrentNote: () => { void this.openReadingDetail(); },
             onExpandPanel: (type) => this.handleExpandPanel(type),
             onSourceClick: (link) => this.handleSourceClick(link),
             onDismiss: () => this.handleBubbleDismiss(),
@@ -433,6 +445,10 @@ export class PageletOrchestrator {
         this.host.cancelDeepDiscover?.();
         this.unsubscribeReadingActivity?.();
         this.unsubscribeReadingActivity = undefined;
+        for (const controller of this.detailReadingAbortControllers.values()) controller.abort();
+        this.detailReadingAbortControllers.clear();
+        this.detailReadingOpenings.clear();
+        this.detailReadingSessions.clear();
         this.readingAbortController?.abort();
         this.readingRevalidationAbortController?.abort();
         this.clearReadingExpiry();
@@ -536,6 +552,109 @@ export class PageletOrchestrator {
         await this.openReadingForPath(path);
     }
 
+    handlePageletDetailClosed(path: string): void {
+        if (this.destroyed || path !== this.currentMarkdownAnchorPath) return;
+        this.reconcilePetNudge();
+    }
+
+    private async openReadingDetail(): Promise<void> {
+        const path = this.host.app.workspace.getActiveFile?.()?.path;
+        if (!path?.endsWith(".md")) return;
+        await this.openReadingDetailForPath(path);
+    }
+
+    private async openReadingDetailForPath(path: string): Promise<void> {
+        if (this.host.getPageletDetailPathState?.(path) === "live") {
+            try {
+                if (await this.host.revealPageletDetailViewForPath?.(path)) return;
+            } catch (error) {
+                this.host.log("Failed to reveal Pagelet detail view", error);
+                new Notice(this.t("pagelet.panel.status.error"), 4000);
+                return;
+            }
+        }
+
+        const pending = this.detailReadingOpenings.get(path);
+        if (pending) {
+            await pending;
+            return;
+        }
+
+        const opening = this.openReadingDetailLeaf(path);
+        this.detailReadingOpenings.set(path, opening);
+        try {
+            await opening;
+        } finally {
+            if (this.detailReadingOpenings.get(path) === opening) {
+                this.detailReadingOpenings.delete(path);
+            }
+        }
+    }
+
+    private async openReadingDetailLeaf(path: string): Promise<void> {
+        this.invalidateAgentInsightIfPolicyChanged();
+        this.detailReadingAbortControllers.get(path)?.abort();
+        const controller = new AbortController();
+        this.detailReadingAbortControllers.set(path, controller);
+        const reading = this.recentReadings.get(path) ?? this.createReading(path);
+        const policyIdentity = this.agentInsightPolicyIdentity;
+        const isReadCurrent = (): boolean => !this.destroyed
+            && !controller.signal.aborted
+            && this.detailReadingAbortControllers.get(path) === controller
+            && this.recentReadings.get(path) === reading;
+
+        if (!this.host.isPathAllowedForPagelet(path)) {
+            reading.emptyReason = "stale";
+            reading.waitingRequestId = null;
+        } else {
+            reading.emptyReason = "checking";
+            const activity = this.host.getDeepDiscoverActivity?.(path);
+            reading.waitingRequestId = reading.candidates.length === 0 && activity && activity.phase !== "idle"
+                ? activity.requestId
+                : null;
+        }
+
+        const payload = this.detailReadingPayload(reading);
+        const session = this.detailReadingSessionsByPayload.get(payload);
+        if (!session) throw new Error("Expected a registered Pagelet Detail reading session");
+
+        let payloadDelivered = false;
+        try {
+            await this.host.openPageletDetailView({
+                title: pageletT("pagelet.tab.title", getPageletUiLanguage()),
+                content: [],
+                locale: getPageletUiLanguage(),
+                layoutType: "discover",
+                sourcePath: path,
+                reading: payload,
+            }, { noteReading: true, hydrateRestoredFromState: true });
+            payloadDelivered = true;
+            const candidates = await this.readReadingCandidates(path, reading, controller.signal, policyIdentity);
+            if (candidates === null || !isReadCurrent()) return;
+            if (candidates.length > 0) {
+                session.replaceCandidates(candidates);
+                return;
+            }
+            const activity = this.host.getDeepDiscoverActivity?.(path);
+            session.setWaiting(
+                reading.emptyReason === "checking" ? "empty" : reading.emptyReason ?? "empty",
+                activity && activity.phase !== "idle" ? activity.requestId : null,
+            );
+        } catch (error) {
+            if (!isReadCurrent()) return;
+            reading.emptyReason = "unavailable";
+            reading.waitingRequestId = null;
+            session.setWaiting("unavailable", null);
+            this.host.log("Failed to open Pagelet detail reading", error);
+            if (!payloadDelivered) new Notice(this.t("pagelet.panel.status.error"), 4000);
+        } finally {
+            if (this.detailReadingAbortControllers.get(path) === controller) {
+                this.detailReadingAbortControllers.delete(path);
+            }
+            if (!payloadDelivered) this.removeDetailReadingSession(path, payload);
+        }
+    }
+
     private rememberPanelReadingPosition(): void {
         const reading = this.panelReading;
         const candidate = this.openAgentInsightCandidate;
@@ -575,46 +694,8 @@ export class PageletOrchestrator {
         this.renderReadingShell(reading);
         if (reading.emptyReason === "stale") return;
         try {
-            let candidates = await this.validateReadingCandidates(reading.candidates, controller.signal, true);
-            if (!isReadCurrent()) return;
-            if (candidates.length === 0) {
-                const available = this.availableAgentInsights.get(path) ?? [];
-                candidates = await this.validateReadingCandidates(available, controller.signal);
-                if (!isReadCurrent()) return;
-            }
-            if (candidates.length === 0 && this.host.readDeepDiscover) {
-                const availableBeforeRead = this.availableAgentInsights.get(path) ?? [];
-                const finishSupersededRead = (): boolean => {
-                    // Source events may filter into a new array without accepting
-                    // new results. Only newly admitted candidate objects supersede this read.
-                    const latest = this.availableAgentInsights.get(path) ?? [];
-                    if (!latest.some(candidate => !availableBeforeRead.includes(candidate))) return false;
-                    if (reading.emptyReason === "checking") reading.emptyReason = "empty";
-                    this.handleReadingActivity(path);
-                    return true;
-                };
-                const result = await this.host.readDeepDiscover({ path, signal: controller.signal });
-                if (!isReadCurrent()) return;
-                if (finishSupersededRead()) return;
-                if (result.status === "cache-hit") {
-                    const cacheIsCurrent = (): boolean => policyIdentity === (this.host.getDeepDiscoverPolicyIdentity?.() ?? null)
-                        && this.host.isPathAllowedForPagelet(path)
-                        && this.host.isDeepDiscoverCommitSealCurrent?.(result.commitSeal, result.collection) === true;
-                    if (cacheIsCurrent()) {
-                        candidates = await this.validateReadingCandidates(
-                            pageletAgentCollectionToDeliveryCandidates(result.collection, getPageletUiLanguage()), controller.signal,
-                        );
-                    }
-                    if (!isReadCurrent()) return;
-                    if (finishSupersededRead()) return;
-                    if (cacheIsCurrent()) this.availableAgentInsights.set(path, candidates);
-                    else candidates = [];
-                    if (candidates.length === 0) reading.emptyReason = "stale";
-                } else {
-                    reading.emptyReason = result.status;
-                }
-            }
-            if (!isReadCurrent()) return;
+            const candidates = await this.readReadingCandidates(path, reading, controller.signal, policyIdentity);
+            if (candidates === null || !isReadCurrent()) return;
             reading.candidates = candidates;
             if (candidates.length > 0) {
                 const selected = candidates.find(candidate => candidate.id === reading.selectedId) ?? candidates[0];
@@ -636,6 +717,54 @@ export class PageletOrchestrator {
             if (this.readingIntentIsCurrent(reading, intent)) this.renderReadingShell(reading);
             for (const listener of this.readingListeners) listener();
         }
+    }
+
+    private async readReadingCandidates(
+        path: string,
+        reading: PageletRecentReading,
+        signal: AbortSignal,
+        policyIdentity: string | null,
+    ): Promise<PageletAgentDeliveryCandidate[] | null> {
+        let candidates = await this.validateReadingCandidates(reading.candidates, signal, true);
+        if (signal.aborted) return null;
+        if (candidates.length === 0) {
+            const available = this.availableAgentInsights.get(path) ?? [];
+            candidates = await this.validateReadingCandidates(available, signal);
+            if (signal.aborted) return null;
+        }
+        if (candidates.length > 0 || !this.host.readDeepDiscover) return candidates;
+
+        const availableBeforeRead = this.availableAgentInsights.get(path) ?? [];
+        const finishSupersededRead = (): boolean => {
+            // Source events may filter into a new array without accepting new
+            // results. Only newly admitted candidate objects supersede this read.
+            const latest = this.availableAgentInsights.get(path) ?? [];
+            if (!latest.some(candidate => !availableBeforeRead.includes(candidate))) return false;
+            return true;
+        };
+        const result = await this.host.readDeepDiscover({ path, signal });
+        if (signal.aborted) return null;
+        if (finishSupersededRead()) return null;
+        if (result.status !== "cache-hit") {
+            reading.emptyReason = result.status;
+            return [];
+        }
+
+        const cacheIsCurrent = (): boolean => policyIdentity === (this.host.getDeepDiscoverPolicyIdentity?.() ?? null)
+            && this.host.isPathAllowedForPagelet(path)
+            && this.host.isDeepDiscoverCommitSealCurrent?.(result.commitSeal, result.collection) === true;
+        if (cacheIsCurrent()) {
+            candidates = await this.validateReadingCandidates(
+                pageletAgentCollectionToDeliveryCandidates(result.collection, getPageletUiLanguage()),
+                signal,
+            );
+        }
+        if (signal.aborted) return null;
+        if (finishSupersededRead()) return null;
+        if (cacheIsCurrent()) this.availableAgentInsights.set(path, candidates);
+        else candidates = [];
+        if (candidates.length === 0) reading.emptyReason = "stale";
+        return candidates;
     }
 
     private readingIntentIsCurrent(reading: PageletRecentReading, intent: number): boolean {
@@ -683,7 +812,7 @@ export class PageletOrchestrator {
             : reading.emptyReason === "stale" ? "pagelet.deepDiscover.stale"
                 : reading.emptyReason === "unavailable" ? "pagelet.reading.unavailable" : "pagelet.reading.empty";
         const label = [activityLabel, hasNew ? this.t("pagelet.reading.newResults") : "",
-            !activityLabel && (reading.candidates.length === 0 || reading.emptyReason === "checking") ? this.t(emptyLabel) : ""].filter(Boolean).join(" ");
+            !activityLabel && !hasNew && (reading.candidates.length === 0 || reading.emptyReason === "checking") ? this.t(emptyLabel) : ""].filter(Boolean).join(" ");
         return {
             anchorPath: reading.anchorPath,
             label,
@@ -705,16 +834,7 @@ export class PageletOrchestrator {
             candidates: [...reading.candidates],
             selectedId: reading.selectedId,
             positions: reading.positions,
-            onSelect: candidate => {
-                if (!reading.candidates.some(item => item.id === candidate.id && item.preparedAt === candidate.preparedAt)) {
-                    const latest = this.availableAgentInsights.get(reading.anchorPath) ?? [];
-                    if (latest.some(item => item.id === candidate.id)) reading.candidates = latest;
-                }
-                reading.selectedId = candidate.id;
-                if (candidate.deliveryReceipt) this.attentionStore.markSeen(candidate.deliveryReceipt, "detail");
-                this.agentInsightNudgeKeys.delete(this.agentInsightTicketKey(candidate));
-                this.reconcilePetNudge();
-            },
+            onSelect: () => undefined,
             onPositionChange: (id, position) => { reading.positions[id] = position; },
             validate: (candidate, signal) => this.validateAgentInsight(candidate, signal),
             discuss: async (candidate, signal) => {
@@ -725,19 +845,97 @@ export class PageletOrchestrator {
             getReadingControls: () => this.readingControls({
                 ...reading, candidates: [...payload.candidates], selectedId: payload.selectedId,
             }, "detail"),
-            subscribe: listener => {
-                const refresh = (): void => {
-                    for (const candidate of payload.candidates) {
-                        if (!this.readingBoundaryIsCurrent(candidate)) candidate.staleStatus = "boundary-changed";
-                    }
-                    listener();
-                };
-                this.readingListeners.add(refresh);
-                return () => { this.readingListeners.delete(refresh); };
-            },
+            subscribe: () => () => undefined,
             getLatestCandidates: () => this.availableAgentInsights.get(reading.anchorPath) ?? [],
         };
+        let activeReadingViews = 0;
+        const notifyReadingListeners = (): void => {
+            for (const listener of this.readingListeners) listener();
+        };
+        const replaceCandidates = (candidates: readonly PageletAgentDeliveryCandidate[]): void => {
+            reading.candidates = [...candidates];
+            const selected = candidates.find(candidate => candidate.id === reading.selectedId) ?? candidates[0];
+            reading.selectedId = selected?.id ?? "";
+            reading.emptyReason = undefined;
+            reading.waitingRequestId = null;
+            payload.candidates = [...candidates];
+            payload.selectedId = reading.selectedId;
+            notifyReadingListeners();
+        };
+        const setWaiting = (emptyReason: string, waitingRequestId: string | null): void => {
+            reading.emptyReason = emptyReason;
+            reading.waitingRequestId = waitingRequestId;
+            reading.selectedId = "";
+            payload.candidates = [];
+            payload.selectedId = "";
+            notifyReadingListeners();
+        };
+        const session: PageletDetailReadingSession = {
+            payload,
+            isActive: () => activeReadingViews > 0,
+            replaceCandidates,
+            setWaiting,
+            acceptWaitingResult: (requestId, candidates) => {
+                if (
+                    reading.candidates.length > 0
+                    || reading.waitingRequestId !== requestId
+                ) return false;
+                replaceCandidates(candidates);
+                return true;
+            },
+        };
+        payload.onSelect = (candidate, acceptedCandidates) => {
+            if (acceptedCandidates) {
+                reading.candidates = [...acceptedCandidates];
+                payload.candidates = [...acceptedCandidates];
+            }
+            reading.selectedId = candidate.id;
+            payload.selectedId = candidate.id;
+            if (candidate.deliveryReceipt) this.attentionStore.markSeen(candidate.deliveryReceipt, "detail");
+            this.agentInsightNudgeKeys.delete(this.agentInsightTicketKey(candidate));
+            const latest = this.availableAgentInsights.get(reading.anchorPath) ?? [];
+            const acceptedIdentity = JSON.stringify(reading.candidates.map(item => [item.id, item.preparedAt]));
+            const latestIdentity = JSON.stringify(latest.map(item => [item.id, item.preparedAt]));
+            if (latest.length > 0 && acceptedIdentity === latestIdentity) {
+                this.host.markPageletDetailNewResults?.(reading.anchorPath, false);
+            }
+            this.reconcilePetNudge();
+        };
+        payload.subscribe = listener => {
+            const refresh = (): void => {
+                for (const candidate of payload.candidates) {
+                    if (!this.readingBoundaryIsCurrent(candidate)) candidate.staleStatus = "boundary-changed";
+                }
+                listener();
+            };
+            activeReadingViews += 1;
+            this.readingListeners.add(refresh);
+            return () => {
+                activeReadingViews -= 1;
+                this.readingListeners.delete(refresh);
+                if (activeReadingViews === 0) {
+                    this.removeDetailReadingSession(reading.anchorPath, payload);
+                }
+            };
+        };
+        this.detailReadingSessionsByPayload.set(payload, session);
+        const sessions = this.detailReadingSessions.get(reading.anchorPath) ?? [];
+        this.detailReadingSessions.set(reading.anchorPath, [
+            ...sessions.filter(item => item !== session && item.isActive()),
+            session,
+        ]);
         return payload;
+    }
+
+    private removeDetailReadingSession(
+        path: string,
+        payload: PageletDetailReadingPayload,
+    ): void {
+        const sessions = this.detailReadingSessions.get(path);
+        if (!sessions?.some(session => session.payload === payload)) return;
+        const remaining = sessions.filter(session => session.payload !== payload);
+        if (remaining.length === 0) this.detailReadingSessions.delete(path);
+        else this.detailReadingSessions.set(path, remaining);
     }
 
     private async selectLatestReading(reading: PageletRecentReading): Promise<void> {
@@ -962,6 +1160,9 @@ export class PageletOrchestrator {
 
     private clearAgentInsight(options: { closePanel?: boolean } = {}): void {
         this.readingRevalidationAbortController?.abort();
+        for (const controller of this.detailReadingAbortControllers.values()) controller.abort();
+        this.detailReadingAbortControllers.clear();
+        this.detailReadingSessions.clear();
         for (const reading of this.recentReadings.values()) {
             for (const candidate of reading.candidates) candidate.staleStatus = "boundary-changed";
             if (reading.candidates.length === 0) reading.emptyReason = "stale";
@@ -1077,11 +1278,21 @@ export class PageletOrchestrator {
     private currentAdmittedNudgeTickets(): NudgeTicket[] {
         const tickets: NudgeTicket[] = [];
         this.currentAgentInsightCandidate();
+        const returnedCandidates = this.admitReturnedAgentInsightsForCurrentNote();
         for (const agentInsight of [
             this.agentInsightCandidate,
             ...this.pendingAgentInsightCandidates,
+            ...returnedCandidates,
         ]) {
             if (!agentInsight || this.deliveryCandidateIsSeen(agentInsight)) continue;
+            const anchorPath = agentInsight.pageletAgent.handoff.anchor.path;
+            if (
+                (
+                    this.currentMarkdownAnchorPath !== null
+                    && anchorPath !== this.currentMarkdownAnchorPath
+                )
+                || this.host.getPageletDetailPathState?.(anchorPath) === "live"
+            ) continue;
             const key = this.agentInsightTicketKey(agentInsight);
             if (this.agentInsightNudgeKeys.has(key)) {
                 tickets.push({
@@ -1107,6 +1318,35 @@ export class PageletOrchestrator {
             }
         }
         return tickets;
+    }
+
+    private admitReturnedAgentInsightsForCurrentNote(): PageletAgentDeliveryCandidate[] {
+        const path = this.currentMarkdownAnchorPath;
+        if (
+            !path
+            || !this.host.settings.pagelet.petVisible
+            || this.host.settings.focusMode
+            || !this.host.isPathAllowedForPagelet(path)
+            || this.host.getPageletDetailPathState?.(path) === "live"
+        ) return [];
+
+        const candidates = (this.availableAgentInsights.get(path) ?? [])
+            .filter(candidate => (
+                !this.deliveryCandidateIsSeen(candidate)
+                && candidate.pageletAgent.handoff.triggerReason !== "explicit"
+            ));
+        const admitted: PageletAgentDeliveryCandidate[] = [];
+        for (const candidate of candidates) {
+            const key = this.agentInsightTicketKey(candidate);
+            if (this.agentInsightNudgeKeys.has(key)) {
+                admitted.push(candidate);
+                continue;
+            }
+            if (!this.proactiveHints.onInsightsReady()) break;
+            this.agentInsightNudgeKeys.add(key);
+            admitted.push(candidate);
+        }
+        return admitted;
     }
 
 
@@ -1524,6 +1764,11 @@ export class PageletOrchestrator {
         }));
         const candidate = candidates[0];
         if (!candidate) return null;
+        const previousAvailable = this.availableAgentInsights.get(options.path) ?? [];
+        const collectionIdentity = (value: readonly PageletAgentDeliveryCandidate[]): string => JSON.stringify(
+            value.map(item => [item.id, item.preparedAt]),
+        );
+        const isSameCollection = collectionIdentity(previousAvailable) === collectionIdentity(candidates);
         this.availableAgentInsights.set(options.path, candidates);
         const actionCandidateId = "candidateId" in this.agentInsightActionState
             ? this.agentInsightActionState.candidateId
@@ -1543,9 +1788,14 @@ export class PageletOrchestrator {
         this.agentInsightPolicyIdentity = policyIdentity;
         this.agentInsightNudgeKeys.clear();
 
+        const canAdmitAtCompletion = (
+            this.currentMarkdownAnchorPath === null
+            || this.currentMarkdownAnchorPath === options.path
+        ) && this.host.getPageletDetailPathState?.(options.path) !== "live";
         const admissionCandidates = options.proactive
             && this.host.settings.pagelet.petVisible
             && !this.host.settings.focusMode
+            && canAdmitAtCompletion
             ? candidates.filter((next) => !this.deliveryCandidateIsSeen(next))
             : [];
         for (const next of admissionCandidates) {
@@ -1559,6 +1809,20 @@ export class PageletOrchestrator {
             this.reconcilePetNudge();
         }
         onAccepted?.(candidates);
+        if (result.requestId) {
+            const currentActivityRequestId = this.host.getDeepDiscoverActivity?.(options.path)?.requestId;
+            if (currentActivityRequestId === result.requestId) {
+                for (const session of [...this.detailReadingSessions.get(options.path) ?? []]) {
+                    session.acceptWaitingResult(result.requestId, candidates);
+                }
+            }
+        }
+        if (
+            !isSameCollection
+            && this.host.getPageletDetailPathState?.(options.path) === "live"
+        ) {
+            this.host.markPageletDetailNewResults?.(options.path, true);
+        }
         const reading = this.panelReading;
         if (reading?.anchorPath === options.path && reading.candidates.length === 0
             && reading.waitingRequestId && this.panelView?.isOpen
@@ -2214,14 +2478,16 @@ export class PageletOrchestrator {
     /** Re-mount Pet on leaf change. */
     private handleLeafChange(leaf: WorkspaceLeaf | null): void {
         const previousPath = this.currentMarkdownAnchorPath;
+        const detailAnchorPath = leaf ? this.host.getPageletDetailLeafAnchorPath?.(leaf) ?? null : null;
         const nextPath = leaf?.view?.getViewType() === "markdown"
             ? (leaf.view as MarkdownView).file?.path ?? null
-            : null;
+            : detailAnchorPath;
+        const sameNoteReadingTransition = Boolean(previousPath && previousPath === nextPath);
         if (previousPath && previousPath !== nextPath) {
             void this.runAutomaticDeepDiscover(previousPath, "leave-note");
         }
         this.currentMarkdownAnchorPath = nextPath;
-        if (nextPath) {
+        if (nextPath && !sameNoteReadingTransition) {
             void this.runAutomaticDeepDiscover(nextPath, "open-changed-note");
         }
 
@@ -2260,6 +2526,7 @@ export class PageletOrchestrator {
         }
 
         this.petView.mount(containerEl);
+        this.reconcilePetNudge();
     }
 
     private handleFileOpen(): void {
