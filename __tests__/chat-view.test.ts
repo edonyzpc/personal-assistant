@@ -1289,14 +1289,60 @@ describe('LLMView turn lifecycle', () => {
         const { view, containerEl } = createView({ panelWidth: 250 });
         await view.onOpen();
         const trigger = getButtonByClass(containerEl, 'pa-chat-source-scope-button');
-        trigger.dispatchEvent('touchstart');
-        await new Promise(resolve => setTimeout(resolve, 580));
-        trigger.dispatchEvent('touchend');
-        expect(allText(getElementByClass(containerEl, 'pa-chat-composer-hint')))
-            .toContain('Combined mode: Use my notes and web sources as needed');
-        trigger.click();
-        expect(getElementByClass(containerEl, 'pa-chat-source-scope-menu').hidden).toBe(false);
-        expect(mockStreamLLM).not.toHaveBeenCalled();
+        jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+        try {
+            trigger.dispatchEvent('touchstart');
+            jest.advanceTimersByTime(549);
+            expect(getElementByClass(containerEl, 'pa-chat-composer-hint').hidden).toBe(true);
+            jest.advanceTimersByTime(1);
+            expect(getElementByClass(containerEl, 'pa-chat-composer-hint').hidden).toBe(false);
+            trigger.dispatchEvent('touchend');
+            expect(allText(getElementByClass(containerEl, 'pa-chat-composer-hint')))
+                .toContain('Combined mode: Use my notes and web sources as needed');
+            trigger.click();
+            expect(getElementByClass(containerEl, 'pa-chat-source-scope-menu').hidden).toBe(false);
+            expect(mockStreamLLM).not.toHaveBeenCalled();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it.each([
+        { input: 'touchend', closeView: false },
+        { input: 'touchcancel', closeView: false },
+        { input: 'view close', closeView: true },
+    ] as const)('cancels a source-scope touch hold on %s without provider work', async ({ input, closeView }) => {
+        const { view, containerEl } = createView({ panelWidth: 250 });
+        await view.onOpen();
+        const trigger = getButtonByClass(containerEl, 'pa-chat-source-scope-button');
+
+        jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+        const setTimeoutSpy = jest.spyOn(globalThis, 'setTimeout');
+        const clearTimeoutSpy = jest.spyOn(globalThis, 'clearTimeout');
+        try {
+            trigger.dispatchEvent('touchstart');
+            const longPressCallIndex = setTimeoutSpy.mock.calls
+                .findIndex(([, delay]) => delay === 550);
+            expect(longPressCallIndex).toBeGreaterThanOrEqual(0);
+            const longPressHandle = setTimeoutSpy.mock.results[longPressCallIndex]?.value as
+                | ReturnType<typeof globalThis.setTimeout>
+                | undefined;
+            expect(longPressHandle).toBeDefined();
+
+            if (closeView) {
+                await view.onClose();
+            } else {
+                trigger.dispatchEvent(input);
+            }
+            expect(clearTimeoutSpy).toHaveBeenCalledWith(longPressHandle);
+
+            jest.advanceTimersByTime(550);
+            expect(getElementByClass(containerEl, 'pa-chat-composer-hint').hidden).toBe(true);
+            expect(mockStreamLLM).not.toHaveBeenCalled();
+        } finally {
+            jest.restoreAllMocks();
+            jest.useRealTimers();
+        }
     });
 
     it('keeps a running request fixed while a failed choice can be retried for the next request', async () => {
@@ -6689,9 +6735,8 @@ describe('LLMView turn lifecycle', () => {
     });
 
     afterEach(() => {
-        jest.clearAllTimers();
-        jest.useRealTimers();
         jest.restoreAllMocks();
+        jest.useRealTimers();
     });
 
     it('aborts and ignores stale stream callbacks when the chat is cleared', async () => {
@@ -6918,11 +6963,13 @@ describe('LLMView turn lifecycle', () => {
         }));
         runAnimationFrames();
 
+        jest.useFakeTimers({ doNotFake: ['setImmediate'] });
         responseDiv.dispatchEvent('pointerdown');
         responseDiv.dispatchEvent('touchstart');
         responseDiv.scrollTop = 100;
         responseDiv.dispatchEvent('scroll');
-        await new Promise(resolve => setTimeout(resolve, 580));
+        jest.advanceTimersByTime(580);
+        jest.useRealTimers();
 
         responseDiv.scrollTop = responseDiv.scrollHeight - responseDiv.clientHeight;
         responseDiv.dispatchEvent('scroll');
@@ -10694,9 +10741,11 @@ describe('LLMView turn lifecycle', () => {
         responseDiv.scrollHeight = 1200;
         responseDiv.clientHeight = 300;
         responseDiv.scrollTop = 0;
+        jest.useFakeTimers({ doNotFake: ['setImmediate'] });
         responseDiv.dispatchEvent('touchstart');
         responseDiv.dispatchEvent('scroll');
-        await new Promise(resolve => setTimeout(resolve, 510));
+        jest.advanceTimersByTime(510);
+        jest.useRealTimers();
 
         const opened: Modal[] = [];
         const open = jest.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {

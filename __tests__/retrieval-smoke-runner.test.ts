@@ -3,7 +3,7 @@ import { createHash, webcrypto } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { runInNewContext } from "node:vm";
+import { Script } from "node:vm";
 
 import { afterEach, describe, expect, it } from "@jest/globals";
 
@@ -687,18 +687,53 @@ describe("B-125 retrieval app-smoke fixture", () => {
         expect(readFileSync(join(vaultRoot, "keep-me.md"), "utf8")).toBe("unrelated vault content");
     });
 
-    it("keeps provider-backed outcomes manual and sanitizes opaque bridge evidence", () => {
+    it("keeps provider-backed outcomes manual and sanitizes opaque bridge evidence", async () => {
         const repositoryRoot = resolve(__dirname, "..");
-        const runner = readFileSync(
-            join(repositoryRoot, "scripts/retrieval-optimization-smoke-runner.js"),
+        const { context, runner } = createRunnerContext(repositoryRoot, { preflightReady: true });
+        const manifest = JSON.parse(readFileSync(
+            join(repositoryRoot, "__fixtures__/retrieval-smoke/manifest.json"),
             "utf8",
+        )) as { requiredCases: string[] };
+
+        await runInNewContext(runner, context);
+        const recorder = context.paRetrievalSmoke as SmokeRecorder;
+        const initialManualCases = (recorder.result as unknown as {
+            manualCases: Record<string, {
+                id: string;
+                status: string;
+                detail: string;
+                recordedAt: string | null;
+            }>;
+        }).manualCases;
+        expect(Object.keys(initialManualCases)).toEqual(manifest.requiredCases);
+        for (const id of manifest.requiredCases) {
+            expect(initialManualCases[id]).toEqual({
+                id,
+                status: "PENDING",
+                detail: "",
+                recordedAt: null,
+            });
+        }
+
+        await expect((recorder.recordCase as unknown as (
+            id: string,
+            status: string,
+            detail?: string,
+        ) => Promise<unknown>)("lexical", "SKIP")).rejects.toThrow(
+            "Case status must be PASS, FAIL, or BLOCKED.",
         );
 
-        expect(runner).toContain("performs no provider call");
-        expect(runner).toContain("status: \"PENDING\"");
-        expect(runner).toContain("Case status must be PASS, FAIL, or BLOCKED");
-        expect(runner).toContain("[opaque-redacted]");
-        expect(runner).not.toContain("manualCases[id].status = \"PASS\"");
+        const receipt = await recorder.recordCase(
+            "lexical",
+            "PASS",
+            "checked NEVER_EXPOSE_OPAQUE_B_92F7 and retrieval-smoke/excluded/20-opaque-bridge.md",
+        ) as { id: string; status: string; detail: string; recordedAt: string };
+        expect(receipt).toMatchObject({
+            id: "lexical",
+            status: "PASS",
+            detail: "checked [opaque-redacted] and [opaque-redacted]",
+        });
+        expect(receipt.recordedAt).toEqual(expect.any(String));
     });
 
     it("binds the frozen recovery target to one pre-freeze two-attempt topology", async () => {
@@ -11209,6 +11244,66 @@ function createRecoveryChatView(
     };
 }
 
+const compiledRunnerScripts = new Map<string, Script>();
+
+function runInNewContext(source: string, context: Record<string, unknown>): unknown {
+    let script = compiledRunnerScripts.get(source);
+    if (!script) {
+        script = new Script(source);
+        compiledRunnerScripts.set(source, script);
+    }
+    return script.runInNewContext(context);
+}
+
+interface RunnerFixtureArtifacts {
+    runner: string;
+    manifest: string;
+    manifestData: { temporalFixtureMtimes: Record<string, string> };
+}
+
+const runnerFixtureArtifactsCache = new Map<string, RunnerFixtureArtifacts>();
+const fixtureFileCache = new Map<string, string>();
+const fixtureBinaryCache = new Map<string, Buffer>();
+
+function loadRunnerFixtureArtifacts(repositoryRoot: string): RunnerFixtureArtifacts {
+    let artifacts = runnerFixtureArtifactsCache.get(repositoryRoot);
+    if (!artifacts) {
+        const runner = readFileSync(
+            join(repositoryRoot, "scripts/retrieval-optimization-smoke-runner.js"),
+            "utf8",
+        );
+        const manifest = readFileSync(
+            join(repositoryRoot, "__fixtures__/retrieval-smoke/manifest.json"),
+            "utf8",
+        );
+        artifacts = {
+            runner,
+            manifest,
+            manifestData: JSON.parse(manifest) as RunnerFixtureArtifacts["manifestData"],
+        };
+        runnerFixtureArtifactsCache.set(repositoryRoot, artifacts);
+    }
+    return artifacts;
+}
+
+function readFixtureText(absolutePath: string): string {
+    let content = fixtureFileCache.get(absolutePath);
+    if (content === undefined) {
+        content = readFileSync(absolutePath, "utf8");
+        fixtureFileCache.set(absolutePath, content);
+    }
+    return content;
+}
+
+function readFixtureBinaryCopy(absolutePath: string): Uint8Array {
+    let bytes = fixtureBinaryCache.get(absolutePath);
+    if (bytes === undefined) {
+        bytes = readFileSync(absolutePath);
+        fixtureBinaryCache.set(absolutePath, bytes);
+    }
+    return Uint8Array.from(bytes);
+}
+
 function createRunnerContext(
     repositoryRoot: string,
     options: {
@@ -11272,17 +11367,7 @@ function createRunnerContext(
     settingsControl: SmokeSettingsControl;
     compactIdentityControl: SmokeCompactIdentityControl;
 } {
-    const runner = readFileSync(
-        join(repositoryRoot, "scripts/retrieval-optimization-smoke-runner.js"),
-        "utf8",
-    );
-    const manifest = readFileSync(
-        join(repositoryRoot, "__fixtures__/retrieval-smoke/manifest.json"),
-        "utf8",
-    );
-    const manifestData = JSON.parse(manifest) as {
-        temporalFixtureMtimes: Record<string, string>;
-    };
+    const { runner, manifest, manifestData } = loadRunnerFixtureArtifacts(repositoryRoot);
     const fixtureRoot = join(repositoryRoot, "__fixtures__/retrieval-smoke/vault");
     const writes = new Map<string, string>();
     let resultWriteCount = 0;
@@ -12079,7 +12164,7 @@ function createRunnerContext(
                             return new TextDecoder().decode(externalMemoryRawExportBytes);
                         }
                         if (path === options.tamperedFixture) return "tampered fixture";
-                        return readFileSync(join(fixtureRoot, path), "utf8");
+                        return readFixtureText(join(fixtureRoot, path));
                     },
                     readBinary: async (path: string): Promise<ArrayBuffer> => {
                         if (path === "retrieval-smoke/evidence/system-memory-envelope.json") {
@@ -12104,7 +12189,7 @@ function createRunnerContext(
                             completeExternalBinaryRead();
                             return bytes.buffer;
                         }
-                        return Uint8Array.from(readFileSync(join(fixtureRoot, path))).buffer;
+                        return readFixtureBinaryCopy(join(fixtureRoot, path)).buffer;
                     },
                     exists: async (path: string): Promise<boolean> => {
                         if (path === "retrieval-smoke/evidence/system-memory-envelope.json") {

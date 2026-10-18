@@ -1,17 +1,19 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { setImmediate } from 'node:timers';
 import { VSS } from '../src/vss';
 import { VSS_SCHEMA_VERSION, type EmbeddingProfile, type VectorIndex, type VectorIndexStatus, type VectorSearchResult, type VSSChunk, type VSSFileRecord, type VSSFileState, type VSSIndexMarker, type VSSIndexStats } from '../src/vss/types';
 import { MemoryVSSIndexStateStore } from '../src/vss/local-state-store';
 import { getVSSDeviceId } from '../src/vss/state';
 import { TFile } from 'obsidian';
 
-// Holders that allow each test to configure the embed and rewrite delays without
-// re-instantiating the AIUtils mock. embed delay: configurable per test; embed
-// resolves to a fixed vector. createEmbeddings is async so embedQuery is reset
-// each call.
-const embedDelayHolder = { current: 0 };
+// Holders that allow each test to control the physical embed attempt without
+// re-instantiating the AIUtils mock. A test-local Promise gates embedQuery,
+// while createEmbeddings remains async as in production.
+const embedBarrierHolder = { current: undefined as Promise<void> | undefined };
 const embedQueryCalls: { count: number; lastPrompt: string | null } = { count: 0, lastPrompt: null };
 const embeddingAdmission = { current: undefined as (() => void) | undefined };
+
+const waitForNextEventLoopPhase = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 jest.mock('obsidian', () => {
     class MockTFile {
@@ -70,9 +72,7 @@ jest.mock('../src/ai-services/ai-utils', () => {
                         embeddingAdmission.current?.();
                         embedQueryCalls.count++;
                         embedQueryCalls.lastPrompt = prompt;
-                        if (embedDelayHolder.current > 0) {
-                            await new Promise<void>(r => setTimeout(r, embedDelayHolder.current));
-                        }
+                        if (embedBarrierHolder.current) await embedBarrierHolder.current;
                         return [0.1, 0.2];
                     },
                 };
@@ -213,7 +213,7 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
 
     beforeEach(() => {
         jest.useRealTimers();
-        embedDelayHolder.current = 0;
+        embedBarrierHolder.current = undefined;
         embedQueryCalls.count = 0;
         embedQueryCalls.lastPrompt = null;
         embeddingAdmission.current = undefined;
@@ -359,6 +359,8 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
         await expect(vss.searchHybrid('retryable semantic query', {
             executeEmbeddingInvoke: rejected,
         })).rejects.toThrow('admission rejected');
+        expect(rejected).toHaveBeenCalledTimes(1);
+        expect(embedQueryCalls.count).toBe(0);
 
         const retry = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
         await vss.searchHybrid('retryable semantic query', { executeEmbeddingInvoke: retry });
@@ -390,18 +392,37 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
         const { plugin } = createPlugin();
         const vss = new VSS(plugin, 'cache');
         attachReadyIndex(vss, new FakeVectorIndex());
-        embedDelayHolder.current = 10;
+        let releaseEmbedding!: () => void;
+        embedBarrierHolder.current = new Promise<void>((resolve) => {
+            releaseEmbedding = resolve;
+        });
+        let resolveFirstProviderStarted!: () => void;
+        const firstProviderStarted = new Promise<void>((resolve) => {
+            resolveFirstProviderStarted = resolve;
+        });
         const executeEmbeddingInvoke = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
 
-        await Promise.all([
-            vss.searchHybrid('concurrent semantic query', { executeEmbeddingInvoke }),
-            vss.searchHybrid('concurrent semantic query', { executeEmbeddingInvoke }),
-        ]);
+        const first = vss.searchHybrid('concurrent semantic query', {
+            executeEmbeddingInvoke,
+            onProviderRequestStart: () => resolveFirstProviderStarted(),
+        });
+        let second: Promise<unknown> | undefined;
+        try {
+            await firstProviderStarted;
+            second = vss.searchHybrid('concurrent semantic query', { executeEmbeddingInvoke });
+            await waitForNextEventLoopPhase();
+            expect(executeEmbeddingInvoke).toHaveBeenCalledTimes(1);
 
-        expect(executeEmbeddingInvoke).toHaveBeenCalledTimes(1);
-        expect(embedQueryCalls.count).toBe(1);
+            releaseEmbedding();
+            await Promise.all([first, second]);
 
-        vss.dispose();
+            expect(executeEmbeddingInvoke).toHaveBeenCalledTimes(1);
+            expect(embedQueryCalls.count).toBe(1);
+        } finally {
+            releaseEmbedding();
+            await Promise.allSettled([first, second ?? Promise.resolve()]);
+            await vss.dispose();
+        }
     });
 
     it('does not let the first waiter abort poison a concurrent current waiter', async () => {
@@ -409,7 +430,10 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
         const vss = new VSS(plugin, 'cache');
         const index = new FakeVectorIndex();
         attachReadyIndex(vss, index);
-        embedDelayHolder.current = 10;
+        let releaseEmbedding!: () => void;
+        embedBarrierHolder.current = new Promise<void>((resolve) => {
+            releaseEmbedding = resolve;
+        });
         const firstController = new AbortController();
         let resolveOwnerStarted!: () => void;
         const ownerStarted = new Promise<void>((resolve) => {
@@ -428,42 +452,79 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
             executeEmbeddingInvoke: firstAdmission,
         });
         const firstOutcome = expect(first).rejects.toThrow();
-        await ownerStarted;
-        const second = vss.searchHybrid('shared semantic query', {
-            executeEmbeddingInvoke: secondAdmission,
-        });
+        let second: Promise<unknown> | undefined;
+        try {
+            await ownerStarted;
+            second = vss.searchHybrid('shared semantic query', {
+                executeEmbeddingInvoke: secondAdmission,
+            });
+            await waitForNextEventLoopPhase();
+            expect(secondAdmission).not.toHaveBeenCalled();
 
-        await firstOutcome;
-        await expect(second).resolves.toEqual([]);
+            releaseEmbedding();
+            await firstOutcome;
+            await expect(second).resolves.toEqual([]);
 
-        expect(firstAdmission).toHaveBeenCalledTimes(1);
-        expect(secondAdmission).not.toHaveBeenCalled();
-        expect(embedQueryCalls.count).toBe(1);
-        expect(index.search).toHaveBeenCalledTimes(1);
+            expect(firstAdmission).toHaveBeenCalledTimes(1);
+            expect(secondAdmission).not.toHaveBeenCalled();
+            expect(embedQueryCalls.count).toBe(1);
+            expect(index.search).toHaveBeenCalledTimes(1);
 
-        const cachedAdmission = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
-        await vss.searchHybrid('shared semantic query', { executeEmbeddingInvoke: cachedAdmission });
-        expect(cachedAdmission).toHaveBeenCalledTimes(1);
-        expect(embedQueryCalls.count).toBe(2);
-
-        vss.dispose();
+            const cachedAdmission = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
+            await vss.searchHybrid('shared semantic query', { executeEmbeddingInvoke: cachedAdmission });
+            expect(cachedAdmission).toHaveBeenCalledTimes(1);
+            expect(embedQueryCalls.count).toBe(2);
+        } finally {
+            releaseEmbedding();
+            await Promise.allSettled([firstOutcome, first, second ?? Promise.resolve()]);
+            await vss.dispose();
+        }
     });
 
-    it('does not call embedQuery when the Pagelet admission wrapper rejects', async () => {
+    it('does not cache a source-invalid embedding result when its signal is not aborted', async () => {
         const { plugin } = createPlugin();
         const vss = new VSS(plugin, 'cache');
         attachReadyIndex(vss, new FakeVectorIndex());
-        const executeEmbeddingInvoke = jest.fn(async (_invoke: () => Promise<number[]>) => {
-            throw new Error('admission rejected');
+        let sourceCurrent = true;
+        let releaseEmbedding!: () => void;
+        embedBarrierHolder.current = new Promise<void>((resolve) => {
+            releaseEmbedding = resolve;
         });
+        const canCacheEmbeddingResult = jest.fn(() => sourceCurrent);
+        const executeEmbeddingInvoke = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
 
-        await expect(vss.searchHybrid('raw prompt', { executeEmbeddingInvoke }))
-            .rejects.toThrow('admission rejected');
+        let resolveFirstProviderStarted!: () => void;
+        const firstProviderStarted = new Promise<void>((resolve) => {
+            resolveFirstProviderStarted = resolve;
+        });
+        const first = vss.searchHybrid('source-invalid semantic query', {
+            executeEmbeddingInvoke,
+            canCacheEmbeddingResult,
+            onProviderRequestStart: () => resolveFirstProviderStarted(),
+        });
+        let retry: Promise<unknown> | undefined;
+        try {
+            await firstProviderStarted;
+            sourceCurrent = false;
+            releaseEmbedding();
+            await expect(first).resolves.toEqual([]);
 
-        expect(executeEmbeddingInvoke).toHaveBeenCalledTimes(1);
-        expect(embedQueryCalls.count).toBe(0);
+            expect(canCacheEmbeddingResult).toHaveBeenCalledTimes(1);
+            expect(executeEmbeddingInvoke).toHaveBeenCalledTimes(1);
 
-        vss.dispose();
+            const retryAdmission = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
+            retry = vss.searchHybrid('source-invalid semantic query', {
+                executeEmbeddingInvoke: retryAdmission,
+                canCacheEmbeddingResult,
+            });
+            await retry;
+            expect(retryAdmission).toHaveBeenCalledTimes(1);
+            expect(embedQueryCalls.count).toBe(2);
+        } finally {
+            releaseEmbedding();
+            await Promise.allSettled([first, retry ?? Promise.resolve()]);
+            await vss.dispose();
+        }
     });
 
     it('has no abort gate between a successful Pagelet admission and embedQuery', async () => {

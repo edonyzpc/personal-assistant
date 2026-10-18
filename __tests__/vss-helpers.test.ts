@@ -33,29 +33,25 @@ describe('computeContentHash', () => {
 });
 
 describe('selectFlushCandidates', () => {
-    it('respects quiet window and max delay with limit', () => {
-        const now = Date.now();
+    it('applies the quiet-window boundary before applying the flush limit', () => {
+        const now = 1_800_000_000_000;
         const dirty = new Map<string, DirtyTimestamps>([
-            ['recent.md', { first: now - 5_000, last: now - 5_000 }],           // should be skipped by quiet window
-            ['old.md', { first: now - 40_000, last: now - 40_000 }],           // should pass quiet window
-            ['stale.md', { first: now - 700_000, last: now - 700_000 }],       // should pass maxDelay
-            ['another.md', { first: now - 35_000, last: now - 35_000 }],       // should pass but may be limited
+            ['almost-quiet.md', { first: now - 29_999, last: now - 29_999 }],
+            ['older.md', { first: now - 40_000, last: now - 40_000 }],
+            ['quiet.md', { first: now - 30_000, last: now - 30_000 }],
+            ['third-eligible.md', { first: now - 35_000, last: now - 35_000 }],
         ]);
 
-        const candidates = selectFlushCandidates(dirty, now, 30_000, 600_000, 2);
-        expect(candidates).toContain('old.md');
-        expect(candidates).toContain('stale.md');
-        expect(candidates).not.toContain('recent.md');
-        expect(candidates.length).toBe(2); // limited to 2
+        expect(selectFlushCandidates(dirty, now, 30_000, 600_000, 2)).toEqual(['older.md', 'quiet.md']);
     });
 
-    it('flushes frequently edited files once maxDelay is reached', () => {
-        const now = Date.now();
+    it('applies the max-delay boundary while a file is still being edited', () => {
+        const now = 1_800_000_000_000;
         const dirty = new Map<string, DirtyTimestamps>([
-            ['busy.md', { first: now - 700_000, last: now - 1_000 }], // quiet window not met, but maxDelay exceeded
+            ['almost-max-delay.md', { first: now - 599_999, last: now - 1_000 }],
+            ['max-delay.md', { first: now - 600_000, last: now - 1_000 }],
         ]);
 
-        const candidates = selectFlushCandidates(dirty, now, 30_000, 600_000, 5);
-        expect(candidates).toContain('busy.md');
+        expect(selectFlushCandidates(dirty, now, 30_000, 600_000, 5)).toEqual(['max-delay.md']);
     });
 });

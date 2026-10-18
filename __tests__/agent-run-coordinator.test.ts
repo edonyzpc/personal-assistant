@@ -1,42 +1,42 @@
 import { describe, expect, it } from "@jest/globals";
+import { setImmediate } from "node:timers";
 
 import { AgentRunCoordinator } from "../src/ai-services/agent-run-coordinator";
 
+const waitForEventLoopPhase = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 describe("AgentRunCoordinator", () => {
-    it("keeps capacity at one within each lane", async () => {
-        const coordinator = new AgentRunCoordinator();
-        const first = await coordinator.acquirePageletTurnLease();
-        let secondGranted = false;
-        const secondPromise = coordinator.acquirePageletTurnLease().then((lease) => {
-            secondGranted = true;
-            return lease;
-        });
-
-        await Promise.resolve();
-        expect(secondGranted).toBe(false);
-
-        first.release();
-        const second = await secondPromise;
-        expect(secondGranted).toBe(true);
-        second.release();
-    });
-
-    it("lets Chat and Pagelet progress concurrently while keeping Pagelet FIFO", async () => {
+    it("lets Chat and Pagelet progress concurrently while keeping Pagelet FIFO at capacity one", async () => {
         const coordinator = new AgentRunCoordinator();
         const currentPageletTurn = await coordinator.acquirePageletTurnLease();
-        let nextPageletGranted = false;
-        const nextPageletPromise = coordinator.acquirePageletTurnLease().then((lease) => {
-            nextPageletGranted = true;
-            return lease;
-        });
+        const nextPageletNames: string[] = [];
+        const acquirePagelet = (name: string) =>
+            coordinator.acquirePageletTurnLease().then((lease) => {
+                nextPageletNames.push(name);
+                return lease;
+            });
+        const firstPageletPromise = acquirePagelet("first");
+        const secondPageletPromise = acquirePagelet("second");
+
         const chat = await coordinator.acquireChatLease();
-        expect(nextPageletGranted).toBe(false);
+        expect(nextPageletNames).toEqual([]);
 
         currentPageletTurn.release();
-        const nextPageletTurn = await nextPageletPromise;
-        expect(nextPageletGranted).toBe(true);
+        const firstPageletTurn = await firstPageletPromise;
+        expect(nextPageletNames).toEqual(["first"]);
+
+        // A stale release must not drain the lane and grant another waiter.
+        currentPageletTurn.release();
+        await waitForEventLoopPhase();
+        expect(nextPageletNames).toEqual(["first"]);
+
+        firstPageletTurn.release();
+        const secondPageletTurn = await secondPageletPromise;
+        expect(nextPageletNames).toEqual(["first", "second"]);
+
+        // The Chat lease remained usable throughout Pagelet serialization.
         chat.release();
-        nextPageletTurn.release();
+        secondPageletTurn.release();
     });
 
     it("removes an aborted waiter without leaking capacity", async () => {

@@ -552,9 +552,8 @@ describe("StatsManager incremental snapshot", () => {
         await manager.flush();
     }
 
-    // Triggers a second incremental snapshot directly. Vault events no longer
-    // schedule a background refresh, so tests that exercise an event + snapshot
-    // sequence must drive the private background path themselves.
+    // Triggers the same background snapshot path that a vault event schedules,
+    // but with an awaitable promise for tests that need deterministic completion.
     async function invokeRefreshDirectly(manager: StatsManager): Promise<void> {
         const internals = manager as unknown as { refreshSnapshotInBackground: () => Promise<void> };
         await internals.refreshSnapshotInBackground();
@@ -820,25 +819,35 @@ describe("StatsManager incremental snapshot", () => {
         manager.dispose();
     });
 
-    it("rebuilds the cache when the sampling check detects drift", async () => {
-        // SAMPLE_MIN_CACHE_SIZE = 5 — fixture must clear it for sampling to actually run.
-        const files = [
-            fakeFile("a.md", 10, 5),
-            fakeFile("b.md", 20, 6),
-            fakeFile("c.md", 30, 7),
-            fakeFile("d.md", 40, 8),
-            fakeFile("e.md", 50, 9),
-        ];
-        // Pre-load with wildly wrong wordCounts so the sampling check fails.
-        const preload = files.map((file) => entryFor(file, { wordCount: 9999 }));
-        const cachedRead = jest.fn(async () => "hello") as jest.Mock<(file: unknown) => Promise<string>>;
-        const { manager, clearSpy } = setupHarness({ files, cachedRead, preload });
+    it.each([
+        { cachedWordCount: 19, withinTolerance: true },
+        { cachedWordCount: 18, withinTolerance: false },
+    ])("applies the five-percent sample boundary (19 passes, 18 fails)", async ({ cachedWordCount, withinTolerance }) => {
+        const files = Array.from({ length: 6 }, (unused, index) =>
+            fakeFile(`note-${index}.md`, 10 + index, 5 + index));
+        const actualText = Array.from({ length: 20 }, (unused, index) => `word${index}`).join(" ");
+        const preload = files.map((file) => entryFor(file, { wordCount: cachedWordCount }));
+        const cachedRead = jest.fn(async () => actualText) as jest.Mock<(file: unknown) => Promise<string>>;
+        const { manager, clearSpy, store } = setupHarness({ files, cachedRead, preload });
 
         const clearCallsBefore = clearSpy.mock.calls.length;
         await runSnapshot(manager);
-        // Sampling should clear + rebuild.
-        expect(clearSpy.mock.calls.length).toBeGreaterThan(clearCallsBefore);
-        expect(cachedRead).toHaveBeenCalled();
+        const entries = await store.getAllFileCountEntries();
+        const storeWords = entries.reduce((total, entry) => total + entry.wordCount, 0);
+        const totalWords = await manager.getTotalWords();
+
+        expect(totalWords).toBe(storeWords);
+        if (withinTolerance) {
+            expect(cachedRead).toHaveBeenCalledTimes(5);
+            expect(new Set(cachedRead.mock.calls.map((call) => (call[0] as FakeFile).path)).size).toBe(5);
+            expect(clearSpy).toHaveBeenCalledTimes(clearCallsBefore);
+            expect(storeWords).toBe(cachedWordCount * files.length);
+        } else {
+            expect(clearSpy.mock.calls.length).toBeGreaterThan(clearCallsBefore);
+            expect(cachedRead.mock.calls.length).toBeGreaterThan(files.length);
+            expect(entries.map((entry) => entry.wordCount)).toEqual(files.map(() => 20));
+            expect(storeWords).toBe(20 * files.length);
+        }
         manager.dispose();
     });
 
@@ -890,52 +899,56 @@ describe("StatsManager incremental snapshot", () => {
         manager.dispose();
     });
 
-    it("completes the integrity sample within the time budget (SDD §6.19)", async () => {
-        // 5 files, controlled 10ms-each reads. Sampling reads up to SAMPLE_SIZE=5 files,
-        // so the total sampling I/O should be bounded by ~50ms of virtual time.
-        const files = [
-            fakeFile("a.md", 10, 5),
-            fakeFile("b.md", 20, 6),
-            fakeFile("c.md", 30, 7),
-            fakeFile("d.md", 40, 8),
-            fakeFile("e.md", 50, 9),
-        ];
-        const preload = files.map((file) => entryFor(file, { wordCount: 1 }));
-        const cachedRead = jest.fn(async () => {
-            await new Promise<void>((resolve) => setTimeout(resolve, 10));
-            return "hello";
-        }) as jest.Mock<(file: unknown) => Promise<string>>;
-        const { manager } = setupHarness({ files, cachedRead, preload });
+    it("samples five distinct matching cache entries and keeps their totals", async () => {
+        const files = Array.from({ length: 6 }, (unused, index) =>
+            fakeFile(`sample-${index}.md`, 10 + index, 5 + index));
+        const preload = files.map((file) => entryFor(file, { wordCount: 2 }));
+        const cachedRead = jest.fn(async () => "hello world") as jest.Mock<(file: unknown) => Promise<string>>;
+        const { manager, clearSpy, store } = setupHarness({ files, cachedRead, preload });
 
-        // runSnapshot already advances 3000ms, well above the 50ms sampling budget.
         await runSnapshot(manager);
 
-        // Sampling reads at most SAMPLE_SIZE (5) files; with 5 cached entries it can hit
-        // anywhere from 1 to 5. The contract is: completes (no hang) and stays bounded.
-        expect(cachedRead.mock.calls.length).toBeLessThanOrEqual(files.length);
+        const readPaths = cachedRead.mock.calls.map((call) => (call[0] as FakeFile).path);
+        const uniqueReadPaths = Array.from(new Set(readPaths));
+        const expectedPaths = files.map((file) => file.path);
+        expect(readPaths).toHaveLength(5);
+        expect(uniqueReadPaths).toHaveLength(5);
+        for (const path of uniqueReadPaths) expect(expectedPaths).toContain(path);
+        expect(clearSpy).not.toHaveBeenCalled();
+
+        const entries = await store.getAllFileCountEntries();
+        const storeWords = entries.reduce((total, entry) => total + entry.wordCount, 0);
+        const totalWords = await manager.getTotalWords();
+        expect(storeWords).toBe(12);
+        expect(totalWords).toBe(storeWords);
         manager.dispose();
     });
 
-    it("keeps cache when sampling is within tolerance and only reads dirty files", async () => {
-        const files = [fakeFile("a.md", 10, 5), fakeFile("b.md", 11, 6)];
-        // Use accurate counts so sampling passes.
-        const preload = [
-            entryFor(files[0], { wordCount: 2 }),
-            entryFor(files[1], { wordCount: 2 }),
-        ];
-        // cachedRead returns "hello world" → getWordCount = 2.
+    it("keeps a validated warm cache and re-reads only the modified file", async () => {
+        const files = Array.from({ length: 6 }, (unused, index) =>
+            fakeFile(`warm-${index}.md`, 10 + index, 5 + index));
+        const preload = files.map((file) => entryFor(file, { wordCount: 2 }));
         const cachedRead = jest.fn(async () => "hello world") as jest.Mock<(file: unknown) => Promise<string>>;
-        const { manager } = setupHarness({ files, cachedRead, preload });
+        const { manager, triggerVaultEvent, store } = setupHarness({ files, cachedRead, preload });
 
         await runSnapshot(manager);
-        // recalcTotals clears the cache then rebuilds, so all files get read once.
-        // Reset and run a second pass that should hit the warm-cache path.
         cachedRead.mockClear();
-        jest.useFakeTimers();
-        await jest.advanceTimersByTimeAsync(3000);
-        // Sampling may read up to 5 files but never more than the cached file count.
-        expect(cachedRead.mock.calls.length).toBeLessThanOrEqual(files.length);
+        cachedRead.mockImplementation(async () => "one two three four");
+        const modified = files[2]!;
+        await triggerVaultEvent("modify", modified);
+        await invokeRefreshDirectly(manager);
+        await manager.flush();
+
+        expect(cachedRead.mock.calls.map((call) => (call[0] as FakeFile).path)).toEqual([modified.path]);
+        const entries = await store.getAllFileCountEntries();
+        expect(entries).toHaveLength(files.length);
+        expect(entries.find((entry) => entry.path === modified.path)?.wordCount).toBe(4);
+        for (const file of files.filter((candidate) => candidate !== modified)) {
+            expect(entries.find((entry) => entry.path === file.path)?.wordCount).toBe(2);
+        }
+        const storeWords = entries.reduce((total, entry) => total + entry.wordCount, 0);
+        expect(await manager.getTotalWords()).toBe(storeWords);
+        expect(storeWords).toBe(14);
         manager.dispose();
-        jest.useRealTimers();
     });
 });

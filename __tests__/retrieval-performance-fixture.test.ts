@@ -129,6 +129,9 @@ const pollutionLinkCases = [
     ["relative Markdown link", "[D01](../performance/200-wave1-direct-01.md)"],
     ["basename Markdown link", "[D01](200-wave1-direct-01.md)"],
 ] as const;
+let cachedFixtureFiles: string[] | null = null;
+const fixtureTextCache = new Map<string, string>();
+const fixtureBytesCache = new Map<string, Buffer>();
 
 describe("retrieval performance fixture", () => {
     it("adds an independent compact proxy without changing strict v9 topology", () => {
@@ -412,7 +415,7 @@ describe("retrieval performance fixture", () => {
 
         expect(manifestPaths).toEqual(actualPaths);
         for (const fixturePath of actualPaths) {
-            const bytes = readFileSync(join(fixtureVaultRoot, fixturePath));
+            const bytes = readFixtureBytes(fixturePath);
             expect(manifest.files[fixturePath]).toBe(sha256(bytes));
         }
     });
@@ -446,7 +449,21 @@ function expandFixtureRange(range: PerformanceWorkload["fixtureCase"]["wave1Dire
 }
 
 function readFixture(fixturePath: string): string {
-    return readFileSync(join(fixtureVaultRoot, fixturePath), "utf8");
+    let content = fixtureTextCache.get(fixturePath);
+    if (content === undefined) {
+        content = readFileSync(join(fixtureVaultRoot, fixturePath), "utf8");
+        fixtureTextCache.set(fixturePath, content);
+    }
+    return content;
+}
+
+function readFixtureBytes(fixturePath: string): Buffer {
+    let bytes = fixtureBytesCache.get(fixturePath);
+    if (bytes === undefined) {
+        bytes = readFileSync(join(fixtureVaultRoot, fixturePath));
+        fixtureBytesCache.set(fixturePath, bytes);
+    }
+    return Buffer.from(bytes);
 }
 
 function readWikiLinks(markdown: string): string[] {
@@ -521,6 +538,7 @@ function countPromptSignals(markdown: string): number {
 }
 
 function listFixtureFiles(directory: string): string[] {
+    if (cachedFixtureFiles) return [...cachedFixtureFiles];
     const paths: string[] = [];
     const visit = (current: string): void => {
         for (const entry of readdirSync(current, { withFileTypes: true })) {
@@ -530,7 +548,9 @@ function listFixtureFiles(directory: string): string[] {
         }
     };
     visit(directory);
-    return paths.sort();
+    paths.sort();
+    cachedFixtureFiles = paths;
+    return [...paths];
 }
 
 function sha256(value: Buffer): string {

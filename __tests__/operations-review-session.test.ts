@@ -128,19 +128,6 @@ function makeFixture() {
 }
 
 describe("OperationsReviewSession", () => {
-    it("observes direct execution without activation or a UI execution port", async () => {
-        const fixture = makeFixture();
-        const session = await fixture.makeSession();
-        expect(fixture.vault.files.get("notes/a.md")).toBe("before");
-        expect(session.canUndo()).toBe(false);
-        const result = await fixture.controller.executeIntent(session.getSnapshot().intentId);
-        expect(result.state).toBe("completed");
-        expect(fixture.vault.files.get("notes/a.md")).toBe("before\nafter");
-        expect(session.getSnapshot()).toMatchObject({ status: "completed", execution: result });
-        expect(fixture.snapshots.some(snapshot => snapshot.status === "executing")).toBe(true);
-        fixture.controller.dispose();
-    });
-
     it("keeps Undo receipts one-time and shared across UI surfaces", async () => {
         const fixture = makeFixture();
         const chatSession = await fixture.makeSession();
@@ -233,8 +220,11 @@ describe("OperationsReviewSession", () => {
         });
         const seen: string[] = [];
         session.subscribe(snapshot => seen.push(snapshot.status));
+        expect(vault.files.get("notes/a.md")).toBe("before");
+        expect(session.canUndo()).toBe(false);
         const result = await controller.executeIntent(intent.id);
 
+        expect(result.state).toBe("completed");
         expect(events.map(event => event.type)).toEqual(expect.arrayContaining([
             "intent-state-changed",
             "operation-result",

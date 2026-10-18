@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@jest/globals";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -80,6 +80,33 @@ describe("scripts/publish-release.mjs", () => {
     it("allows prerelease publish when the tagged release commit is directly above master", () => {
         const repo = createPublishRepo("2.8.4");
         const remote = createBareRemote();
+        const tools = mkdtempSync(join(tmpdir(), "pa-publish-tools-"));
+        const pushLog = join(tools, "git-push.jsonl");
+        writeExecutable(join(tools, "git"), `
+const fs = require("node:fs");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (args[0] === "push") {
+    fs.appendFileSync(process.env.PUBLISH_TEST_PUSH_LOG, JSON.stringify(args) + "\\n");
+}
+let realGit = null;
+for (const directory of (process.env.PUBLISH_TEST_ORIGINAL_PATH ?? "").split(path.delimiter)) {
+    if (!directory) continue;
+    const candidate = path.join(directory, "git");
+    try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        realGit = candidate;
+        break;
+    } catch {}
+}
+if (!realGit) {
+    process.stderr.write("Real git executable was not found on the original PATH.\\n");
+    process.exit(1);
+}
+const result = spawnSync(realGit, args, { stdio: "inherit" });
+process.exit(result.status ?? 1);
+`);
         const script = join(process.cwd(), "scripts/publish-release.mjs");
 
         git(repo, ["remote", "add", "origin", remote]);
@@ -92,9 +119,31 @@ describe("scripts/publish-release.mjs", () => {
             script,
             "--no-watch",
             "2.9.0-beta.1",
-        ], { cwd: repo, encoding: "utf8" });
+        ], {
+            cwd: repo,
+            encoding: "utf8",
+            env: {
+                ...process.env,
+                PATH: `${tools}:${process.env.PATH ?? ""}`,
+                PUBLISH_TEST_PUSH_LOG: pushLog,
+                PUBLISH_TEST_ORIGINAL_PATH: process.env.PATH ?? "",
+            },
+        });
 
         expect(output).toContain("Pushed beta/2.9.0-beta.1 and tag 2.9.0-beta.1.");
+        const pushes = readFileSync(pushLog, "utf8").trim().split("\n")
+            .filter(Boolean)
+            .map((line) => JSON.parse(line) as string[]);
+        expect(pushes).toEqual([[
+            "push",
+            "--atomic",
+            "origin",
+            "beta/2.9.0-beta.1",
+            "2.9.0-beta.1",
+        ]]);
+        const pushArguments = pushes.flat();
+        expect(pushArguments).not.toContain("master");
+        expect(pushArguments.filter((argument) => argument.startsWith("--force"))).toEqual([]);
         expect(git(remote, ["rev-parse", "refs/heads/beta/2.9.0-beta.1"])).toBe(git(repo, ["rev-parse", "HEAD"]));
         expect(git(remote, ["rev-parse", "refs/tags/2.9.0-beta.1^{}"])).toBe(git(repo, ["rev-parse", "HEAD"]));
     });
@@ -178,13 +227,6 @@ describe("scripts/publish-release.mjs", () => {
         expect(() => git(remote, ["show-ref", "--verify", "--quiet", "refs/tags/2.9.0-beta.1"])).toThrow();
     });
 
-    it("pushes the prerelease branch and tag atomically after live master preflight", () => {
-        const script = readFileSync(join(process.cwd(), "scripts/publish-release.mjs"), "utf8");
-
-        expect(script).toContain('"--atomic"');
-        expect(script).not.toContain("--force-with-lease=refs/heads/master");
-        expect(script).not.toContain('"master:master"');
-    });
 });
 
 function createBareRemote(): string {
@@ -286,4 +328,9 @@ function expectPublishFailure(repo: string, script: string, version: string): st
 
 function git(repo: string, args: string[]): string {
     return execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+}
+
+function writeExecutable(path: string, source: string): void {
+    writeFileSync(path, `#!${process.execPath}\n${source}`);
+    chmodSync(path, 0o755);
 }

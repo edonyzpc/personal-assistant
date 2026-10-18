@@ -77,8 +77,17 @@ describe("native writing complete argument boundary", () => {
         for (const budget of [0, -1, 1.5, NaN, Infinity]) {
             expect(decodeNativeWritingOutput(raw, contextHandle, budget)).toBeUndefined();
         }
-        for (const handle of ["", "invalid handle", "x".repeat(129)]) {
-            expect(decodeNativeWritingOutput(raw, handle, 20_000)).toBeUndefined();
-        }
+        const maxLengthHandle = "h".repeat(256);
+        const maxLengthRaw = JSON.stringify({ ...args, contextHandle: maxLengthHandle });
+        expect(decodeNativeWritingOutput(maxLengthRaw, maxLengthHandle, 20_000))
+            .toEqual({ body, explanation });
     });
+
+    it.each(["", " ", "x".repeat(257)])(
+        "rejects an invalid expected context handle without relying on mismatch: %j",
+        (handle) => {
+            const input = JSON.stringify({ ...args, contextHandle: handle });
+            expect(decodeNativeWritingOutput(input, handle, 20_000)).toBeUndefined();
+        },
+    );
 });

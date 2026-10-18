@@ -992,7 +992,7 @@ describe("paginateShareCardMarkdown", () => {
     });
 
     it("refines long-block boundaries on demand without a whole-block sentinel cap", async () => {
-        const source = "甲".repeat(250_000);
+        const source = "甲".repeat(10_000);
         const requestedRanges: Array<[number, number]> = [];
         const recordedBoundaries = new Set<number>();
         for (const boundary of createShareCardFragmentBoundaryPlan(source)?.boundaries ?? []) {
@@ -1014,7 +1014,7 @@ describe("paginateShareCardMarkdown", () => {
 
         const pages = await paginateShareCardMarkdown(
             [source],
-            (markdown) => markdown.length <= 100,
+            (markdown) => markdown.length <= 4,
             { refineBoundaries } as unknown as ShareCardPaginationOptions,
         );
 

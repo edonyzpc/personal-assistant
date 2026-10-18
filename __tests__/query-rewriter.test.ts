@@ -39,9 +39,9 @@ describe("rewriteQuery", () => {
     });
 
     it("invokes for 4+ token query", async () => {
-        const invoke = makeInvoker('{"keywords":"React hooks performance memo"}');
-        const result = await rewriteQuery("React hooks performance with memo", invoke);
-        expect(result).toBe("React hooks performance memo");
+        const invoke = makeInvoker('{"keywords":"a b c d"}');
+        const result = await rewriteQuery("a b c d", invoke);
+        expect(result).toBe("a b c d");
         expect(invoke).toHaveBeenCalled();
     });
 
@@ -102,12 +102,16 @@ describe("rewriteQueryForSearch", () => {
 });
 
 describe("isShortQuery", () => {
-    it("short English: 2 tokens", () => expect(isShortQuery("React hooks")).toBe(true));
-    it("short English: 3 tokens", () => expect(isShortQuery("one two three")).toBe(true));
-    it("long English: 4+ tokens", () => expect(isShortQuery("React hooks with memo")).toBe(false));
+    it.each([
+        ["a b c", true],
+        ["a b c d", false],
+        ["x".repeat(15), true],
+        ["x".repeat(16), false],
+    ] as const)("classifies %j independently", (query, expected) => {
+        expect(isShortQuery(query)).toBe(expected);
+    });
     it("long CJK: 1 token, >15 chars", () => expect(isShortQuery("猫类行为研究有哪些常见的观察方法和记录")).toBe(false));
     it("short CJK: 1 token, few chars", () => expect(isShortQuery("你好")).toBe(true));
-    it("medium CJK: borderline ≤15", () => expect(isShortQuery("猫类行为研究")).toBe(true));
 });
 
 describe("parseKeywordQuery", () => {

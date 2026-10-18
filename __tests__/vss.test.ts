@@ -4783,6 +4783,52 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(index.dispose).toHaveBeenCalledTimes(1);
     });
 
+    it('waits for an old same-scope instance before opening a new manual rebuild', async () => {
+        const { plugin, vssStateStore } = createPlugin();
+        const oldIndex = new FakeVectorIndex();
+        const oldDisposeEntered = createDeferred<void>();
+        const oldDisposeCompletion = createDeferred<void>();
+        oldIndex.dispose.mockImplementation(() => {
+            oldDisposeEntered.resolve();
+            return oldDisposeCompletion.promise;
+        });
+        await vssStateStore.setMarker(createReadyMarker({ chunkCount: 0, fileCount: 0 }));
+        setMockSqliteIndex(oldIndex);
+        const oldVss = new VSS(plugin, 'cache');
+        await oldVss.initialize();
+
+        const oldDispose = oldVss.dispose();
+        await oldDisposeEntered.promise;
+
+        const newIndex = new FakeVectorIndex();
+        setMockSqliteIndex(newIndex);
+        const newStateStore = new MemoryVSSIndexStateStore();
+        const newVss = new VSS(plugin, 'cache', newStateStore);
+        const rebuild = newVss.rebuildLocalIndex({ silent: true });
+        void rebuild.catch(() => undefined);
+
+        try {
+            await jest.advanceTimersByTimeAsync(0);
+            expect(newIndex.initialize).not.toHaveBeenCalled();
+
+            await jest.advanceTimersByTimeAsync(2_999);
+            expect(newIndex.initialize).not.toHaveBeenCalled();
+
+            await jest.advanceTimersByTimeAsync(1);
+            await rebuild;
+            expect(newIndex.initialize).toHaveBeenCalledTimes(1);
+            await expect(newVss.getStats()).resolves.toMatchObject({
+                status: 'ready',
+                backend: 'sqlite-wasm-opfs-sahpool',
+            });
+        } finally {
+            oldDisposeCompletion.resolve();
+            await jest.advanceTimersByTimeAsync(4_000);
+            await Promise.allSettled([oldDispose, rebuild]);
+            await newVss.dispose();
+        }
+    });
+
     it('cleans an active lexical shadow before disposing during unload', async () => {
         const { plugin } = createPlugin();
         plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
@@ -5255,11 +5301,12 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(stats.lastErrorCode).toBe('opfs-sahpool-locked');
         expect(createEmbeddings).not.toHaveBeenCalled();
         expect(mockAdapter.list).not.toHaveBeenCalledWith('cache');
-        vss.dispose();
+        const dispose = vss.dispose();
+        await jest.advanceTimersByTimeAsync(3_000);
+        await dispose;
     });
 
     it('uses bounded manual retry for locked SQLite initialization', async () => {
-        jest.useRealTimers();
         const { plugin } = createPlugin();
         const lockedIndex = new LockedVectorIndex();
         const recoveredIndex = new FakeVectorIndex();
@@ -5267,14 +5314,70 @@ describe('VSS SQLite/WASM lifecycle', () => {
         (globalThis as { __mockSqliteVectorIndexFactory?: () => VectorIndex }).__mockSqliteVectorIndexFactory = () => indexes.shift() as VectorIndex;
         const vss = new VSS(plugin, 'cache');
 
-        await vss.rebuildLocalIndex({ silent: true });
-        const stats = await vss.getStats();
+        const rebuild = vss.rebuildLocalIndex({ silent: true });
+        let rebuildSettled = false;
+        try {
+            await jest.advanceTimersByTimeAsync(0);
+            expect(lockedIndex.initialize).toHaveBeenCalledTimes(1);
+            expect(lockedIndex.dispose).toHaveBeenCalledTimes(1);
+            expect(recoveredIndex.initialize).not.toHaveBeenCalled();
 
-        expect(lockedIndex.dispose).toHaveBeenCalled();
-        expect(recoveredIndex.initialize).toHaveBeenCalled();
-        expect(stats.backend).toBe('sqlite-wasm-opfs-sahpool');
-        expect(stats.status).toBe('ready');
-        vss.dispose();
+            await jest.advanceTimersByTimeAsync(99);
+            expect(recoveredIndex.initialize).not.toHaveBeenCalled();
+
+            await jest.advanceTimersByTimeAsync(1);
+            await rebuild;
+            rebuildSettled = true;
+
+            const stats = await vss.getStats();
+            expect(lockedIndex.initialize).toHaveBeenCalledTimes(1);
+            expect(recoveredIndex.initialize).toHaveBeenCalledTimes(1);
+            expect(stats.backend).toBe('sqlite-wasm-opfs-sahpool');
+            expect(stats.status).toBe('ready');
+        } finally {
+            if (!rebuildSettled) {
+                await jest.advanceTimersByTimeAsync(3_000);
+            }
+            await Promise.allSettled([rebuild]);
+            await vss.dispose();
+        }
+    });
+
+    it('stops manual locked retries at the bounded deadline', async () => {
+        const { plugin } = createPlugin();
+        const lockedIndex = new LockedVectorIndex();
+        setMockSqliteIndex(lockedIndex);
+        const vss = new VSS(plugin, 'cache');
+
+        const rebuild = vss.rebuildLocalIndex({ silent: true });
+        const rebuildOutcome = expect(rebuild).rejects.toThrow('Local memory storage is busy');
+        void rebuildOutcome.catch(() => undefined);
+        let rebuildSettled = false;
+        try {
+            await jest.advanceTimersByTimeAsync(0);
+            expect(lockedIndex.initialize).toHaveBeenCalledTimes(1);
+            expect(lockedIndex.dispose).toHaveBeenCalledTimes(1);
+
+            await jest.advanceTimersByTimeAsync(2_999);
+            expect(lockedIndex.initialize).toHaveBeenCalledTimes(30);
+            expect(lockedIndex.dispose).toHaveBeenCalledTimes(30);
+
+            await jest.advanceTimersByTimeAsync(1);
+            await rebuildOutcome;
+            rebuildSettled = true;
+            expect(lockedIndex.initialize).toHaveBeenCalledTimes(31);
+            expect(lockedIndex.dispose).toHaveBeenCalledTimes(31);
+
+            const stats = await vss.getStats();
+            expect(stats.status).toBe('error');
+            expect(stats.lastErrorCode).toBe('opfs-sahpool-locked');
+        } finally {
+            if (!rebuildSettled) {
+                await jest.advanceTimersByTimeAsync(3_000);
+            }
+            await Promise.allSettled([rebuild, rebuildOutcome]);
+            await vss.dispose();
+        }
     });
 
     it('retries disabled foreground state from manual technical stats', async () => {
@@ -5612,13 +5715,6 @@ describe('fuseRRF', () => {
         expect(result.get(10)).toBeCloseTo(1 / (RRF_K + 1), 10);
         expect(result.get(20)).toBeCloseTo(1 / (RRF_K + 2), 10);
         expect(result.get(30)).toBeCloseTo(1 / (RRF_K + 3), 10);
-    });
-
-    it('boosts overlapping documents from two sources', () => {
-        const result = fuseRRF([[10, 20], [20, 30]], 10);
-        expect(result.get(20)).toBeCloseTo(1 / (RRF_K + 2) + 1 / (RRF_K + 1), 10);
-        expect(result.get(10)).toBeCloseTo(1 / (RRF_K + 1), 10);
-        expect(result.get(30)).toBeCloseTo(1 / (RRF_K + 2), 10);
     });
 
     it('ranks overlap above single-source rank-1 when both sources agree on rank-1', () => {

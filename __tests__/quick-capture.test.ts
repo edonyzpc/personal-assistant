@@ -358,12 +358,30 @@ describe("QuickCaptureService", () => {
         expect(mockNotices).toContain("Note saved, but the index could not be updated. Check the index note path in Record settings.");
     });
 
-    it.each([".obsidian/index.md", "../index.md", "2026-06-28.md"])(
-        "does not write an invalid or self-referencing index: %s", async (recordIndexPath) => {
+    it.each([
+        { recordIndexPath: ".obsidian/index.md", preseedSentinel: true },
+        { recordIndexPath: "../index.md", preseedSentinel: true },
+        { recordIndexPath: "2026-06-28.md", preseedSentinel: false },
+    ])(
+        "does not write an invalid or self-referencing index: %s", async ({ recordIndexPath, preseedSentinel }) => {
             const harness = makeAppHarness();
+            const sentinel = createTFile(recordIndexPath);
+            if (preseedSentinel) {
+                harness.vault.getAbstractFileByPath.mockImplementation((path: string) => {
+                    if (path === recordIndexPath) return sentinel;
+                    if (harness.files.has(path)) return harness.files.get(path)?.file ?? null;
+                    if (harness.folders.has(path)) return { path };
+                    return null;
+                });
+            }
             const service = makeService(harness.app, undefined, undefined, undefined, undefined, { recordIndexPath });
             await expect(service.captureText("saved safely")).resolves.toMatchObject({ status: "saved" });
             expect(harness.vault.process).not.toHaveBeenCalled();
+            if (preseedSentinel) {
+                expect(harness.vault.read).not.toHaveBeenCalledWith(sentinel);
+                expect(harness.vault.process).not.toHaveBeenCalledWith(sentinel, expect.any(Function));
+            }
+            expect(harness.files.get("2026-06-28.md")?.content).toContain("\n\nsaved safely\n");
         },
     );
 
@@ -538,58 +556,112 @@ describe("QuickCaptureService", () => {
 
     it("rejects protected vault paths before writing", async () => {
         const harness = makeAppHarness();
+        const postProcessCapture = jest.fn(async (_input: QuickCapturePostProcessInput) => undefined);
+        const onCaptureSaved = jest.fn((_result: Extract<QuickCaptureResult, { status: "saved" }>) => undefined);
         const service = makeService(harness.app, {
             destination: "inbox",
             inboxPath: ".obsidian/plugins/personal-assistant/capture.md",
-        });
+        }, postProcessCapture, undefined, onCaptureSaved);
 
         await expect(service.captureText("should not write")).rejects.toThrow("Quick Capture target is not allowed");
 
         expect(harness.vault.create).not.toHaveBeenCalled();
         expect(harness.vault.modify).not.toHaveBeenCalled();
+        expect(postProcessCapture).not.toHaveBeenCalled();
+        expect(onCaptureSaved).not.toHaveBeenCalled();
         expect(mockNotices).toEqual(["Could not save Quick Capture."]);
     });
 
-    it("schedules post-processing only after raw capture succeeds", async () => {
-        const harness = makeAppHarness();
-        const postProcessCapture = jest.fn(async (_input: QuickCapturePostProcessInput) => undefined);
-        const service = makeService(harness.app, {
-            postProcessingEnabled: true,
-        }, postProcessCapture);
+    it.each(["create", "modify"] as const)(
+        "schedules both success callbacks only after the deferred %s persists", async (operation) => {
+            const harness = operation === "create"
+                ? makeAppHarness()
+                : makeAppHarness({ "2026-06-28.md": "existing\n" });
+            const postProcessCapture = jest.fn(async (_input: QuickCapturePostProcessInput) => undefined);
+            const onCaptureSaved = jest.fn((_result: Extract<QuickCaptureResult, { status: "saved" }>) => undefined);
+            const service = makeService(harness.app, {
+                postProcessingEnabled: true,
+            }, postProcessCapture, undefined, onCaptureSaved);
+            const writeMock = (operation === "create" ? harness.vault.create : harness.vault.modify) as jest.Mock<
+                (...args: unknown[]) => Promise<unknown>
+            >;
+            const originalWrite = writeMock.getMockImplementation();
+            let resolveWriteStarted!: () => void;
+            const writeStarted = new Promise<void>((resolve) => {
+                resolveWriteStarted = resolve;
+            });
+            let resolveWrite!: () => void;
+            const writeGate = new Promise<void>((resolve) => {
+                resolveWrite = resolve;
+            });
+            writeMock.mockImplementationOnce(async (...args: unknown[]) => {
+                resolveWriteStarted();
+                await writeGate;
+                return await originalWrite?.(...args);
+            });
 
-        const result = await service.captureText("maybe turn this into a task");
+            const capture = service.captureText("deferred capture");
+            try {
+                await writeStarted;
+                expect(writeMock).toHaveBeenCalledTimes(1);
+                expect(postProcessCapture).not.toHaveBeenCalled();
+                expect(onCaptureSaved).not.toHaveBeenCalled();
 
-        expect(result.status).toBe("saved");
-        expect(postProcessCapture).toHaveBeenCalledWith(expect.objectContaining({
-            rawText: "maybe turn this into a task",
-            path: "2026-06-28.md",
-            destination: "daily",
-            captureId: expect.stringMatching(/^qc-/),
-        }));
-        const createdContent = (harness.vault.create as jest.Mock).mock.calls[0][1] as string;
-        expect(createdContent).toContain("\n\nmaybe turn this into a task\n");
-    });
+                resolveWrite();
+                await expect(capture).resolves.toMatchObject({
+                    status: "saved",
+                    path: "2026-06-28.md",
+                });
+                const expectedCapture = expect.objectContaining({
+                    rawText: "deferred capture",
+                    path: "2026-06-28.md",
+                    destination: "daily",
+                    captureId: expect.stringMatching(/^qc-/),
+                });
+                expect(postProcessCapture).toHaveBeenCalledWith(expectedCapture);
+                expect(postProcessCapture).toHaveBeenCalledTimes(1);
+                expect(onCaptureSaved).toHaveBeenCalledWith(expect.objectContaining({
+                    status: "saved",
+                    path: "2026-06-28.md",
+                    captureId: expect.stringMatching(/^qc-/),
+                }));
+                expect(onCaptureSaved).toHaveBeenCalledTimes(1);
+                expect(harness.files.get("2026-06-28.md")?.content).toContain("\n\ndeferred capture\n");
+            } finally {
+                resolveWrite();
+                await Promise.allSettled([capture]);
+            }
+        },
+    );
 
-    it("calls the saved callback only after a raw capture succeeds", async () => {
-        const harness = makeAppHarness();
-        const onCaptureSaved = jest.fn((_result: Extract<QuickCaptureResult, { status: "saved" }>) => undefined);
-        const service = makeService(harness.app, undefined, undefined, undefined, onCaptureSaved);
+    it.each(["create", "modify"] as const)(
+        "suppresses both success callbacks when the real %s rejects", async (operation) => {
+            const harness = operation === "create"
+                ? makeAppHarness()
+                : makeAppHarness({ "2026-06-28.md": "original\n" });
+            const postProcessCapture = jest.fn(async (_input: QuickCapturePostProcessInput) => undefined);
+            const onCaptureSaved = jest.fn((_result: Extract<QuickCaptureResult, { status: "saved" }>) => undefined);
+            const service = makeService(harness.app, {
+                postProcessingEnabled: true,
+            }, postProcessCapture, undefined, onCaptureSaved);
+            const writeMock = (operation === "create" ? harness.vault.create : harness.vault.modify) as jest.Mock<
+                (...args: unknown[]) => Promise<unknown>
+            >;
+            writeMock.mockRejectedValueOnce(new Error("disk failed"));
 
-        await service.captureText("bridge this capture later");
+            await expect(service.captureText("failed capture")).rejects.toThrow("disk failed");
 
-        expect(onCaptureSaved).toHaveBeenCalledWith(expect.objectContaining({
-            status: "saved",
-            path: "2026-06-28.md",
-            captureId: expect.stringMatching(/^qc-/),
-        }));
-
-        const blocked = makeService(harness.app, {
-            destination: "inbox",
-            inboxPath: ".obsidian/plugins/personal-assistant/capture.md",
-        }, undefined, undefined, onCaptureSaved);
-        await expect(blocked.captureText("blocked")).rejects.toThrow("Quick Capture target is not allowed");
-        expect(onCaptureSaved).toHaveBeenCalledTimes(1);
-    });
+            expect(writeMock).toHaveBeenCalledTimes(1);
+            expect(postProcessCapture).not.toHaveBeenCalled();
+            expect(onCaptureSaved).not.toHaveBeenCalled();
+            expect(mockNotices).toEqual(["Could not save Quick Capture."]);
+            if (operation === "create") {
+                expect(harness.files.has("2026-06-28.md")).toBe(false);
+            } else {
+                expect(harness.files.get("2026-06-28.md")?.content).toBe("original\n");
+            }
+        },
+    );
 
     it("can skip post-processing for one-action Pagelet capture", async () => {
         const harness = makeAppHarness();

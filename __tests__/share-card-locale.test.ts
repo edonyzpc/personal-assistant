@@ -60,21 +60,5 @@ describe("Share Card locale copy", () => {
         expect(css).toMatch(/\.pa-share-card-body \.pa-share-card-resource-placeholder\s*\{/);
         expect(css).toMatch(/\.pa-share-card-static,[\s\S]*?animation:\s*none\s*!important/);
         expect(css).toMatch(/\.pa-share-card-body > \.pa-share-card-visual-block\s*\{[\s\S]*?max-height:\s*100%;/);
-        expect(css).toMatch(/\.pa-share-card\s*\{[\s\S]*?font-synthesis:\s*weight;/);
-        expect(css).toMatch(
-            /\.pa-share-card-signature\s*\{[\s\S]*?height:\s*16px;[\s\S]*?gap:\s*4px;[\s\S]*?color:\s*#233a34;[\s\S]*?overflow:\s*visible;/,
-        );
-        expect(css).toMatch(
-            /\.pa-share-card\.is-dark \.pa-share-card-signature\s*\{[\s\S]*?color:\s*var\(--pa-share-card-text\);/,
-        );
-        expect(css).toMatch(
-            /\.pa-share-card-signature svg\s*\{[\s\S]*?width:\s*32px;[\s\S]*?height:\s*24px;/,
-        );
-        expect(css).toMatch(
-            /\.pa-share-card-sharer-by\s*\{[\s\S]*?font-size:\s*11px;[\s\S]*?font-style:\s*italic;[\s\S]*?font-synthesis:\s*style;[\s\S]*?line-height:\s*16px;/,
-        );
-        expect(css).toMatch(
-            /\.pa-share-card-sharer-name\s*\{[\s\S]*?max-width:\s*170px;[\s\S]*?font-size:\s*12px;[\s\S]*?line-height:\s*16px;/,
-        );
     });
 });

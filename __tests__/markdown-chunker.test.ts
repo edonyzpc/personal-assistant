@@ -96,8 +96,8 @@ describe("createHeadingAwareMarkdownChunks", () => {
         }
     });
 
-    it("splits a single very long line into chunks none exceeding chunkSize significantly", () => {
-        const longLine = "A".repeat(5000);
+    it("splits a single very long line without losing or extending its content", () => {
+        const longLine = "0123456789".repeat(500);
         const chunks = createHeadingAwareMarkdownChunks({
             path: "test.md",
             markdown: longLine,
@@ -108,11 +108,11 @@ describe("createHeadingAwareMarkdownChunks", () => {
             chunkOverlap: 0,
         });
 
-        expect(chunks.length).toBeGreaterThanOrEqual(2);
+        expect(chunks).toHaveLength(5);
         for (const chunk of chunks) {
-            // Allow some headroom for frontmatter prefix but should not wildly exceed chunkSize
-            expect(chunk.content.length).toBeLessThanOrEqual(1200);
+            expect(chunk.content.length).toBeLessThanOrEqual(1000);
         }
+        expect(chunks.map((chunk) => chunk.content).join("")).toBe(longLine);
     });
 
     it("returns an empty array for an empty document", () => {

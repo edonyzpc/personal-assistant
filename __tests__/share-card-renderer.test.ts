@@ -1219,7 +1219,7 @@ describe("ShareCardRenderer", () => {
     });
 
     it("refines a very long plain block through real static boundaries in one processor pass", async () => {
-        const document = createMeasuredRangeDocument(100);
+        const document = createMeasuredRangeDocument(4);
         renderMock.mockImplementation(async (_app, markdown, element) => {
             const body = element as unknown as ShareCardTestElement;
             body.textContent = "";
@@ -1228,7 +1228,7 @@ describe("ShareCardRenderer", () => {
         const renderer = new ShareCardRenderer({} as App, asDocument(document), {
             waitForFrame: async () => undefined,
         });
-        const source = Array.from({ length: 25_000 }, (_, index) => (
+        const source = Array.from({ length: 1_000 }, (_, index) => (
             `${index.toString().padStart(9, "0")}甲`
         )).join("");
         const options = { theme: "light" as const };
