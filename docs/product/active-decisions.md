@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-070 | Chat 渲染复用与生命周期性能优化 | 保留原生和完整内容，减少历史重建、分批恢复与无关观察；不含表格流式增量 | [Decision](./decisions/dec-070-chat-rendering-lifecycle-performance.md), [Spec](./specs/pa-chat-rendering-performance-product-spec.md), [验证](../archive/2026/b180-chat-rendering-performance-validation.md) | 需要改变内容/媒体/权限边界，或优化后仍由单条原生构建主导卡顿 |
 | DEC-069 | Chat 表格显示兼容 | 结构识别后仅补显示副本的必要空行，保留原文、原生 renderer 与现有调度；稳定 DOM 为后续候选 | [Decision](./decisions/dec-069-chat-markdown-table-display-compatibility.md), [Spec](./specs/pa-chat-markdown-table-display-product-spec.md), [验证](../archive/2026/b179-chat-markdown-table-display-validation.md) | 新边界复现、兼容成本成为主要阶段或真实 Chat 大表格卡顿 |
 | DEC-068 | Chat 本次修改单卡汇总 | 同一用户请求跨批次/SDK 汇总完整变化，整次「撤销 / Undo」保留原恢复保护；中英文、无持久历史或新事务系统 | [Decision](./decisions/dec-068-chat-request-change-summary.md), [Spec](./specs/pa-chat-request-change-summary-product-spec.md), [验证](../archive/2026/b178-chat-request-change-summary-validation.md) | 跨请求/持久恢复、局部 Undo 或现有 owner 无法兑现真实效果与恢复时另议 |
 | DEC-067 | Pagelet 按笔记独立 Detail 与阅读布局 | Pet 直接打开或定位当前笔记；A/B 独立保留，提示跟随笔记；全 view/graph 保留，顶部导航与宽窄布局优化；必要洞察调用沿原准入，不新增生成或持久化体系 | [Decision](./decisions/dec-067-pagelet-note-detail-tabs.md), [Spec](./specs/pagelet-note-detail-tabs-product-spec.md), [验证](../archive/2026/b177-pagelet-note-detail-tabs-validation.md) | 标签覆盖、提示错位、阅读现场丢失或窄容器不可操作 |

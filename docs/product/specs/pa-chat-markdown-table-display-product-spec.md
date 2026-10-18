@@ -4,7 +4,7 @@ Document status: Current
 Updated: 2026-10-18
 Work item: B-179
 Decision: [DEC-069](../decisions/dec-069-chat-markdown-table-display-compatibility.md)
-Authority: 本文持有已实现的显示兼容范围与原文边界；Owner 于 2026-10-18 授权开发测试，并在独立审查后明确确认收尾 B-179 及提交本地 master。后续性能优化仍需单独决定。
+Authority: 本文持有已实现的显示兼容范围与原文边界；Owner 于 2026-10-18 授权开发测试，并在独立审查后明确确认收尾 B-179 及提交本地 master。后续性能优化由独立决定承接，不属于 B-179 已交付范围。
 
 ## Problem And Product Outcome
 
@@ -71,6 +71,10 @@ Chat 正文含有完整 Markdown 表格时，部分段落/表格相邻写法被�
 - 无数据迁移。回退只移除显示适配接线及 helper，不回写消息、历史或笔记。
 
 ## Performance Follow-up Boundary
+
+[B-180 / DEC-070](../decisions/dec-070-chat-rendering-lifecycle-performance.md)已独立承接 PA 侧
+历史整轮复用、分批恢复、状态栏观察与 Mermaid 稳定处理；保留本文的原生及原文
+契约。下述表格流式子树复用仍是独立候选，不因 B-180 的整轮复用而获准实施。
 
 全文原生构建与 DOM 发布后的样式/布局仍是大表的主要成本；现有调度没有已确认缺陷。
 稳定表格 DOM 是后续优先候选，未在本次实现。进入实施前须证明稳定行可保留、可变末行

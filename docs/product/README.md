@@ -13,6 +13,7 @@
 
 ## Capture、Recall 与 Context
 
+- [Chat 渲染性能](./specs/pa-chat-rendering-performance-product-spec.md) — B-180：历史整轮视图复用、分批恢复、状态栏与 Mermaid 生命周期；[验证与性能边界](../archive/2026/b180-chat-rendering-performance-validation.md)。
 - [Chat 表格显示兼容](./specs/pa-chat-markdown-table-display-product-spec.md) — B-179：显示副本结构兼容、原文保护与原生渲染；[验证与性能边界](../archive/2026/b179-chat-markdown-table-display-validation.md)。
 - [Chat 本次修改单卡汇总](./specs/pa-chat-request-change-summary-product-spec.md) — B-178：本次请求的完整变化与整次「撤销 / Undo」、中英文 UI；[架构](../architecture/pa-agent-architecture-plan.md#operations-agent-providers)、[验证与边界](../archive/2026/b178-chat-request-change-summary-validation.md)。
 - [Obsidian 内部通用执行与资源 SDK](./specs/pa-obsidian-resource-sdk-product-spec.md) — B-174：核心资源SDK、可组合执行与现有owner；[架构](../architecture/obsidian-resource-sdk.md)、[验证与边界](../archive/2026/b174-obsidian-resource-sdk-validation.md)。

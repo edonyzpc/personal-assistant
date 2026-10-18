@@ -331,6 +331,7 @@ const getMonotonicTimeMs = () => {
 
 type MarkdownRenderOptions = {
     forceScroll?: boolean;
+    observeMermaidLayout?: boolean;
     deferMermaid?: boolean;
     onScrollSettled?: () => void;
 };
@@ -392,10 +393,11 @@ export class LLMView extends ItemView {
     private memoryStatusUnsubscribe: (() => void) | null = null;
     private settingsChangeUnsubscribe: (() => void) | null = null;
     private markdownRenderOwners = new Set<Component>();
+    private readonly knownChatRenderBuffers = new WeakSet<HTMLElement>();
     private chatDrawerHost: HTMLElement | null = null;
     private composerTextArea: HTMLTextAreaElement | null = null;
     private composerDraft: ComposerDraft<MessageImage> | null = null;
-    private readonly imageRenderCleanups = new Map<HTMLElement, () => void>();
+    private readonly messageElementCleanups = new Map<HTMLElement, () => void>();
     private syncComposerControlsForExternalPrefill: (() => void) | null = null;
     private pendingPageletHandoff: PageletChatHandoffContext | null = null;
     private renderPageletHandoffForOpenView: (() => void) | null = null;
@@ -508,8 +510,8 @@ export class LLMView extends ItemView {
     }
 
     private unloadAllMarkdownRenderOwners() {
-        for (const cleanup of this.imageRenderCleanups.values()) cleanup();
-        this.imageRenderCleanups.clear();
+        for (const cleanup of this.messageElementCleanups.values()) cleanup();
+        this.messageElementCleanups.clear();
         for (const owner of this.markdownRenderOwners) {
             owner.unload();
         }
@@ -1147,6 +1149,28 @@ export class LLMView extends ItemView {
         let historyDeleteButtons: HTMLButtonElement[] = [];
         const mobileActionProxies = new WeakMap<HTMLButtonElement, HTMLButtonElement>();
         let timelineEntries: TimelineEntry[] = [];
+        type HistoryTurnView = {
+            userRendered?: RenderedMessage;
+            assistantRendered?: RenderedMessage;
+            statusView?: ThinkingStatusView;
+        };
+        let historyViews = new WeakMap<HistoryTurnEntry, HistoryTurnView>();
+        type HistoryRenderTask = {
+            entry: HistoryTurnEntry;
+            run: () => Promise<unknown> | unknown;
+        };
+        type HistoryRenderEpoch = {
+            conversationId: string | null;
+            sourcePath: string;
+            boundary: HTMLElement;
+            tasks: HistoryRenderTask[];
+            inFlight: Map<Promise<unknown>, HistoryTurnEntry>;
+            frame: PlatformAnimationFrameHandle | null;
+            pendingImageMessageIds: Set<string>;
+            removedImageMessageIds: Set<string>;
+            imageLoadScheduled: boolean;
+        };
+        let historyRenderEpoch: HistoryRenderEpoch | null = null;
         let emptyStateEl: HTMLElement | null = null;
         let isStopping = false;
         let isFinalizing = false;
@@ -1876,7 +1900,7 @@ export class LLMView extends ItemView {
             });
         };
         const removeElement = (element?: HTMLElement | null) => {
-            if (element) { this.imageRenderCleanups.get(element)?.(); this.imageRenderCleanups.delete(element); }
+            if (element) { this.messageElementCleanups.get(element)?.(); this.messageElementCleanups.delete(element); }
             if (element?.parentElement) {
                 element.parentElement.removeChild(element);
             }
@@ -2122,6 +2146,8 @@ export class LLMView extends ItemView {
         };
         const renderImageTaskCard = (task: ImageGenerationTask) => {
             if (!imageGeneration || !isCurrentSession() || task.conversationId !== imageTasksConversationId) return;
+            if (historyRenderEpoch?.pendingImageMessageIds.has(task.stableMessageId)
+                || historyRenderEpoch?.removedImageMessageIds.has(task.stableMessageId)) return;
             if (task.deliverySuppressed) {
                 const suppressedTarget = imageTaskMessageTargets.get(task.stableMessageId);
                 dropImageTaskCard(task.taskId);
@@ -2540,6 +2566,11 @@ export class LLMView extends ItemView {
                 tasks.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
                 for (const task of tasks) renderImageTaskCard(task);
             } catch (error) { this.host.log('Could not load image tasks', error); }
+        };
+        const scheduleCompletedHistoryImageLoad = (epoch: HistoryRenderEpoch | null) => {
+            if (!epoch || epoch.pendingImageMessageIds.size > 0 || epoch.imageLoadScheduled) return;
+            epoch.imageLoadScheduled = true;
+            void loadImageTaskCards();
         };
         const refreshImageHistoryState = async (task: ImageGenerationTask) => {
             if (!isCurrentSession() || task.conversationId !== this.conversationPersistence.activeConversationId) return;
@@ -3131,8 +3162,10 @@ export class LLMView extends ItemView {
             this.registerEvent(workspaceWithEvents.on('file-open', refreshEmptyStateForWorkspace));
         }
         const createRenderBuffer = (): HTMLElement => {
-            return getOptionalPlatformDocument()?.win.createDiv()
+            const buffer = getOptionalPlatformDocument()?.win.createDiv()
                 ?? this.responseDiv.createDiv({ cls: 'message-render-buffer-detached-fallback' });
+            this.knownChatRenderBuffers.add(buffer);
+            return buffer;
         };
         const debugRenderedTurns = new WeakMap<RenderedMessage, UiTurn>();
         const debugCommittedMessages = new WeakSet<RenderedMessage>();
@@ -3169,6 +3202,12 @@ export class LLMView extends ItemView {
             let settleFrameId: PlatformAnimationFrameHandle | null = null;
             let timeoutId: PlatformTimeoutHandle | null = null;
             let settleFrameCount = 0;
+            let stableFrameCount = 0;
+            let hasSizeSample = false;
+            let lastWidth = -1;
+            let lastHeight = -1;
+            let initialPositionDone = false;
+            let activeFramesStopped = false;
 
             const stop = () => {
                 stopped = true;
@@ -3196,7 +3235,15 @@ export class LLMView extends ItemView {
                     stop();
                     return;
                 }
-                stabilizeChatViewport({ force, behavior: 'auto' });
+                stabilizeChatViewport({ force: force && !initialPositionDone, behavior: 'auto' });
+                initialPositionDone = true;
+            };
+            const stopActiveFrames = () => {
+                activeFramesStopped = true;
+                if (settleFrameId !== null) {
+                    cancelPlatformAnimationFrame(settleFrameId);
+                    settleFrameId = null;
+                }
             };
             const scheduleObservedStabilize = () => {
                 if (stopped || observerFrameId !== null) return;
@@ -3207,12 +3254,18 @@ export class LLMView extends ItemView {
             };
             const settleNextFrame = () => {
                 settleFrameId = null;
+                if (activeFramesStopped) return;
                 if (!isStillCurrent()) {
                     stop();
                     return;
                 }
                 stabilize();
                 settleFrameCount += 1;
+                stableFrameCount += 1;
+                if (typeof ResizeObserver !== 'undefined' && hasSizeSample && stableFrameCount >= 3) {
+                    stopActiveFrames();
+                    return;
+                }
                 if (settleFrameCount >= MERMAID_LAYOUT_STABILIZE_FRAME_COUNT) return;
                 settleFrameId = requestPlatformAnimationFrame(settleNextFrame);
             };
@@ -3220,7 +3273,21 @@ export class LLMView extends ItemView {
             renderOwner.register(stop);
 
             if (typeof ResizeObserver !== 'undefined') {
-                observer = new ResizeObserver(scheduleObservedStabilize);
+                observer = new ResizeObserver(entries => {
+                    for (const entry of entries) {
+                        const width = entry.contentRect.width;
+                        const height = entry.contentRect.height;
+                        if (hasSizeSample && Math.abs(width - lastWidth) < 0.5 && Math.abs(height - lastHeight) < 0.5) {
+                            stableFrameCount += 1;
+                        } else {
+                            stableFrameCount = 0;
+                        }
+                        hasSizeSample = true;
+                        lastWidth = width;
+                        lastHeight = height;
+                    }
+                    scheduleObservedStabilize();
+                });
                 observer.observe(rendered.messageDiv);
                 observer.observe(rendered.contentDiv);
             }
@@ -3288,7 +3355,12 @@ export class LLMView extends ItemView {
                     this.updateClickableLink(buffer);
                     recordDebugTextCommit(rendered, buffer, content);
                     if (!options.deferMermaid) {
-                        if (hasMermaidSources && (options.forceScroll || isGenerating() || isFinalizing)) {
+                        if (hasMermaidSources && (
+                            options.observeMermaidLayout
+                            || options.forceScroll
+                            || isGenerating()
+                            || isFinalizing
+                        )) {
                             stabilizeMermaidMessageLayout(
                                 rendered,
                                 renderToken,
@@ -3304,7 +3376,7 @@ export class LLMView extends ItemView {
                                 && buffer.parentElement === rendered.contentDiv,
                             renderOwner,
                             () => stabilizeChatViewport({
-                                force: options.forceScroll,
+                                force: false,
                                 behavior: 'auto',
                             }),
                         );
@@ -3848,9 +3920,11 @@ export class LLMView extends ItemView {
                 showAssistantLoader?: boolean;
                 skipInitialRender?: boolean;
                 sourcePath?: string;
+                insertBefore?: HTMLElement;
             } = {},
         ): RenderedMessage => {
             const messageDiv = this.responseDiv.createDiv({ cls: `llm-message pa-chat-message ${message.role}` });
+            if (options.insertBefore) this.responseDiv.insertBefore(messageDiv, options.insertBefore);
             if (options.animate) {
                 messageDiv.classList.add('llm-message-enter');
                 messageDiv.classList.add('pa-chat-message-enter');
@@ -3867,7 +3941,7 @@ export class LLMView extends ItemView {
                 renderSavedPageletAttachment(messageDiv, message.pageletAttachment);
             }
             if (message.images?.length && this.host.imageAssetService) {
-                this.imageRenderCleanups.set(messageDiv, renderImageAttachments(
+                this.messageElementCleanups.set(messageDiv, renderImageAttachments(
                     messageDiv, message.images, this.host.imageAssetService, this.app,
                 ));
             }
@@ -3917,6 +3991,11 @@ export class LLMView extends ItemView {
                 rendered.actionMenu.hidden = true;
                 menuButton.setAttribute('aria-expanded', 'false');
                 if (activeMobileMessageMenu?.rendered === rendered) activeMobileMessageMenu = null;
+            });
+            const previousMessageCleanup = this.messageElementCleanups.get(messageDiv);
+            this.messageElementCleanups.set(messageDiv, () => {
+                previousMessageCleanup?.();
+                actionMenuAutoClose.dispose();
             });
             const openMessageActionMenu = (focusFirst = false) => {
                 if (Platform.isMobile) {
@@ -4054,6 +4133,7 @@ export class LLMView extends ItemView {
                 },
             });
             rendered.messageDiv.insertBefore(card, rendered.actionDiv);
+            this.messageElementCleanups.set(card, () => cleanupCard());
             const header = card.createDiv({ cls: 'pa-operations-intent-card__header' });
             header.createDiv({
                 cls: 'pa-operations-intent-card__title',
@@ -4365,6 +4445,7 @@ export class LLMView extends ItemView {
                 unsubscribe();
                 session.invalidate('unavailable');
                 this.operationsReviewSessions.delete(`request:${runId}`);
+                this.messageElementCleanups.delete(card);
                 unregisterTeardown();
             };
             state.discard = cleanupCard;
@@ -4387,6 +4468,54 @@ export class LLMView extends ItemView {
             return state.session;
         };
 
+        const removeHistoryEntryView = (entry: HistoryTurnEntry) => {
+            const view = historyViews.get(entry);
+            const imageEpoch = historyRenderEpoch;
+            const stableMessageId = entry.user.hostProvenance?.messageId;
+            if (stableMessageId) {
+                imageEpoch?.pendingImageMessageIds.delete(stableMessageId);
+                imageEpoch?.removedImageMessageIds.add(stableMessageId);
+                imageTaskMessageTargets.delete(stableMessageId);
+                for (const [taskId, target] of imageTaskCardTargets) {
+                    if (target.parent === view?.assistantRendered?.messageDiv) dropImageTaskCard(taskId);
+                }
+            }
+            for (const rendered of [view?.userRendered, view?.assistantRendered]) {
+                cancelLiveMarkdownRender(rendered);
+                this.unloadMarkdownRenderOwner(rendered?.renderOwner);
+                if (rendered) {
+                    const elementCleanup = this.messageElementCleanups.get(rendered.messageDiv);
+                    if (elementCleanup) {
+                        elementCleanup();
+                        this.messageElementCleanups.delete(rendered.messageDiv);
+                    }
+                    historyDeleteButtons = historyDeleteButtons.filter(button => button !== rendered.deleteButton);
+                }
+                removeElement(rendered?.messageDiv);
+            }
+            removeElement(view?.statusView?.messageDiv);
+            historyViews.delete(entry);
+            scheduleCompletedHistoryImageLoad(imageEpoch);
+        };
+        const refreshHistoryTimelineAfterLocalRemoval = () => {
+            const lastAssistant = [...this.chatHistory].reverse().find((message) => message.role === 'assistant' && !isInterruptedAssistant(message));
+            this.result = lastAssistant?.content ?? '';
+            renderEmptyState();
+            const lastEntry = timelineEntries.at(-1);
+            for (const entry of timelineEntries) {
+                if (entry.kind !== 'history') continue;
+                const rendered = historyViews.get(entry)?.assistantRendered;
+                if (!rendered) continue;
+                for (const message of [historyViews.get(entry)?.userRendered, rendered]) {
+                    message?.messageDiv.classList.remove('llm-message-enter', 'pa-chat-message-enter');
+                }
+                for (const child of Array.from(rendered.messageDiv.children)) {
+                    if (child.classList.contains('pa-chat-source-decision-actions')) child.remove();
+                }
+                if (entry === lastEntry) renderLegacySourceDecisionActions(rendered, entry);
+            }
+        };
+
         const deleteHistoryPairForMessages = async (expectedUser: ChatMessage, expectedAssistant: ChatMessage) => {
             if (isGenerating()) return;
             const pairStart = this.chatHistory.indexOf(expectedUser);
@@ -4402,6 +4531,13 @@ export class LLMView extends ItemView {
             if (isGenerating()) return;
             const currentPairStart = this.chatHistory.indexOf(expectedUser);
             if (currentPairStart < 0 || this.chatHistory[currentPairStart + 1] !== expectedAssistant) return;
+            mobileLongPress?.cancel();
+            closeMobileMessageMenu();
+            discardPendingOperations();
+            for (const card of Array.from(this.responseDiv.querySelectorAll<HTMLElement>('.pa-operations-request-card'))) {
+                removeElement(card);
+            }
+            this.cancelScheduledScroll();
             this.chatHistory.splice(currentPairStart, 2);
             this.chatService.resetContext?.();
             const removedEntries: TimelineEntry[] = [];
@@ -4410,8 +4546,8 @@ export class LLMView extends ItemView {
                 if (!keep) removedEntries.push(entry);
                 return keep;
             });
-            renderTimeline();
             for (const entry of removedEntries) {
+                if (entry.kind === 'history') removeHistoryEntryView(entry);
                 void this.conversationPersistence.deletePersistedTurnForEntry(entry);
                 if (entry.kind === 'history') for (const state of entry.assistant.actionStates ?? entry.assistant.canonicalTurn?.actionStates ?? []) {
                     if (state.owner === 'image') imageGeneration?.unregisterContextPersistence(state.operationId);
@@ -4419,16 +4555,8 @@ export class LLMView extends ItemView {
                     if (state.owner === 'ghost' && entry.user.hostProvenance) ghostSessions.get(entry.user.hostProvenance.messageId)?.unregisterContextPersistence?.();
                 }
             }
+            refreshHistoryTimelineAfterLocalRemoval();
             new Notice(t("plugin.chat.notice.messageDeleted"));
-        };
-
-        const deleteHistoryPair = async (messageIndex: number) => {
-            const pairStart = messageIndex % 2 === 0 ? messageIndex : messageIndex - 1;
-            if (pairStart < 0 || pairStart >= this.chatHistory.length) return;
-            const expectedUser = this.chatHistory[pairStart];
-            const expectedAssistant = this.chatHistory[pairStart + 1];
-            if (!expectedAssistant) return;
-            await deleteHistoryPairForMessages(expectedUser, expectedAssistant);
         };
 
         const isLegacySourceDecisionResult = (message: PaAgentMessage) => message.role === 'toolResult'
@@ -4454,6 +4582,8 @@ export class LLMView extends ItemView {
             if (timelineEntries.at(-1) !== entry) return;
             const decision = readPendingSourceDecision(entry.assistant);
             if (!decision) return;
+            if (Array.from(rendered.messageDiv.children)
+                .some(child => child.classList.contains('pa-chat-source-decision-actions'))) return;
             const actions = rendered.messageDiv.createDiv({ cls: 'pa-chat-source-decision-actions' });
             rendered.messageDiv.insertBefore(actions, rendered.actionDiv);
             actions.createEl('p', { text: t('plugin.chat.sourceDecision.legacyUnavailable') });
@@ -4482,28 +4612,51 @@ export class LLMView extends ItemView {
             };
         };
 
-        const renderTimeline = () => {
-            mobileLongPress?.cancel();
-            closeMobileMessageMenu();
-            discardPendingOperations();
-            this.cancelScheduledScroll();
-            this.unloadAllMarkdownRenderOwners();
-            clearImageTaskCards();
-            this.responseDiv.empty();
-            historyDeleteButtons = [];
-            timelineEntries.forEach((entry, entryIndex) => {
-                const forceScroll = entryIndex === timelineEntries.length - 1;
-                if (entry.kind === 'history') {
-                    const pairStart = this.chatHistory.indexOf(entry.user);
-                    if (pairStart === -1 || this.chatHistory[pairStart + 1] !== entry.assistant) return;
-                    const metadata = readChatHistoryTurnMetadata(entry.assistant, entry.memoryMetadata);
-                    const contextUsedItems = metadata?.contextUsed ?? entry.contextUsedItems ?? [];
-                    const runtimeWarnings = entry.assistant.runtimeWarnings ?? [];
-                    createMessageElement(entry.user, {
-                        onDelete: () => deleteHistoryPair(pairStart),
-                        disableDeleteWhileGenerating: true,
-                    });
-                    if (
+        const renderTimelineEntry = (
+            entry: TimelineEntry,
+            entryIndex: number,
+            historyOptions: {
+                sourcePath?: string;
+                insertBefore?: HTMLElement;
+                isLive?: () => boolean;
+                part?: 'user' | 'metadata' | 'assistant';
+                isRestoreTail?: boolean;
+            } = {},
+        ) => {
+            const forceScroll = entryIndex === timelineEntries.length - 1;
+            if (entry.kind === 'history') {
+                const pairStart = this.chatHistory.indexOf(entry.user);
+                if (pairStart === -1 || this.chatHistory[pairStart + 1] !== entry.assistant) return;
+                const metadata = readChatHistoryTurnMetadata(entry.assistant, entry.memoryMetadata);
+                const contextUsedItems = metadata?.contextUsed ?? entry.contextUsedItems ?? [];
+                const runtimeWarnings = entry.assistant.runtimeWarnings ?? [];
+                    const historyPart = historyOptions.part;
+                    const historyView = historyViews.get(entry) ?? {};
+                    historyViews.set(entry, historyView);
+                    let userRendered: RenderedMessage | undefined;
+                    if (historyPart !== 'assistant' && historyPart !== 'metadata') {
+                        userRendered = createMessageElement(entry.user, {
+                            onDelete: () => deleteHistoryPairForMessages(entry.user, entry.assistant),
+                            disableDeleteWhileGenerating: true,
+                            skipInitialRender: historyOptions.sourcePath !== undefined,
+                            sourcePath: historyOptions.sourcePath,
+                            insertBefore: historyOptions.insertBefore,
+                        });
+                        historyView.userRendered = userRendered;
+                    }
+                    if (historyPart === 'user') {
+                        if (historyOptions.sourcePath !== undefined && userRendered) {
+                            return {
+                                userRender: renderMarkdownInto(
+                                    userRendered,
+                                    entry.user.content,
+                                    historyOptions.isLive ?? (() => true),
+                                ),
+                            };
+                        }
+                        return;
+                    }
+                    if ((historyPart === undefined || historyPart === 'metadata') && (
                         entry.providerReasoningObserved
                         || contextUsedItems.length > 0
                         || metadata?.contextTrace?.reduction
@@ -4514,8 +4667,9 @@ export class LLMView extends ItemView {
                         || entry.executionSummary?.elapsedMs !== undefined
                         || (entry.executionSummary?.debug?.nodes.length ?? 0) > 0
                         || runtimeWarnings.length > 0
-                    ) {
-                        const statusView = createThinkingStatusView();
+                    )) {
+                        const statusView = createThinkingStatusView(undefined, historyOptions.insertBefore);
+                        historyView.statusView = statusView;
                         const persistedElapsedMs = entry.executionSummary?.elapsedMs ?? entry.thinkingElapsedMs;
                         if (persistedElapsedMs !== undefined) {
                             statusView.timerStartedAt = 0;
@@ -4591,9 +4745,10 @@ export class LLMView extends ItemView {
                                 : formatCanonicalTerminalSummary(entry.assistant.canonicalTurn?.status, runtimeWarnings, thinkingLocale),
                         );
                     }
+                    if (historyPart === 'metadata') return;
                     const assistantRendered = createMessageElement(entry.assistant, {
-                        forceScroll,
-                        onDelete: () => deleteHistoryPair(pairStart + 1),
+                        forceScroll: historyOptions.sourcePath === undefined && forceScroll,
+                        onDelete: () => deleteHistoryPairForMessages(entry.user, entry.assistant),
                         onAddToEditor: isInterruptedAssistant(entry.assistant) ? undefined : (content) => addContentToEditor(content),
                         onShareAsCard: isShareCardEligibleAssistant(entry.assistant)
                             ? (content, sourcePath) => {
@@ -4607,7 +4762,11 @@ export class LLMView extends ItemView {
                             : undefined,
                         disableDeleteWhileGenerating: true,
                         memoryMetadata: metadata,
+                        skipInitialRender: historyOptions.sourcePath !== undefined,
+                        sourcePath: historyOptions.sourcePath,
+                        insertBefore: historyOptions.insertBefore,
                     });
+                    historyView.assistantRendered = assistantRendered;
                     if (entry.assistant.agentExecution?.state === 'interrupted') {
                         const resume = assistantRendered.actionDiv.createEl('button', {
                             cls: 'message-action-button retry-message-button',
@@ -4657,6 +4816,20 @@ export class LLMView extends ItemView {
                         before: assistantRendered.actionDiv,
                         rendered: assistantRendered,
                     });
+                    if (stableMessageId) {
+                        const imageEpoch = historyRenderEpoch;
+                        imageEpoch?.pendingImageMessageIds.delete(stableMessageId);
+                        scheduleCompletedHistoryImageLoad(imageEpoch);
+                    }
+                    if (historyOptions.sourcePath !== undefined) {
+                        const isLive = historyOptions.isLive ?? (() => true);
+                        return {
+                            assistantRender: renderMarkdownInto(assistantRendered, entry.assistant.content, isLive, {
+                                forceScroll: false,
+                                observeMermaidLayout: historyOptions.isRestoreTail === true,
+                            }),
+                        };
+                    }
                     return;
                 }
 
@@ -4669,11 +4842,139 @@ export class LLMView extends ItemView {
                 if (terminalOperation && entry.terminalRow) {
                     imageTaskMessageTargets.set(terminalOperation.stableMessageId, { parent: entry.terminalRow });
                 }
+        };
+        const cancelHistoryRendering = () => {
+            const epoch = historyRenderEpoch;
+            if (!epoch) return;
+            if (epoch.frame !== null) cancelPlatformAnimationFrame(epoch.frame);
+            epoch.tasks = [];
+            epoch.pendingImageMessageIds.clear();
+            epoch.removedImageMessageIds.clear();
+            removeElement(epoch.boundary);
+            historyRenderEpoch = null;
+        };
+        this.registerViewTeardown(cancelHistoryRendering);
+        const isHistoryEpochCurrent = (epoch: HistoryRenderEpoch, entry?: HistoryTurnEntry) => isCurrentSession()
+            && this.conversationPersistence.activeConversationId === epoch.conversationId
+            && historyRenderEpoch === epoch
+            && (!entry || timelineEntries.includes(entry));
+        const trackHistoryRenderPromise = (epoch: HistoryRenderEpoch, entry: HistoryTurnEntry, promise: Promise<unknown>) => {
+            const tracked = promise.finally(() => {
+                if (epoch.inFlight.get(tracked) === entry) epoch.inFlight.delete(tracked);
             });
+            epoch.inFlight.set(tracked, entry);
+        };
+        const runHistoryRenderTask = (task: HistoryRenderTask) => {
+            const result = task.run() as Record<string, Promise<unknown> | unknown> | undefined;
+            for (const value of Object.values(result ?? {})) {
+                if (value instanceof Promise) trackHistoryRenderPromise(historyRenderEpoch!, task.entry, value);
+            }
+        };
+        const drainHistoryRenderEpoch = async (epoch: HistoryRenderEpoch) => {
+            const startedAt = performance.now();
+            let batchTaskCount = 0;
+            while (isHistoryEpochCurrent(epoch) && epoch.tasks.length > 0) {
+                if (batchTaskCount >= 8) break;
+                if (epoch.inFlight.size >= 4) {
+                    await Promise.race(epoch.inFlight.keys());
+                    if (!isHistoryEpochCurrent(epoch)) return;
+                }
+                const task = epoch.tasks.shift()!;
+                if (!isHistoryEpochCurrent(epoch, task.entry)) continue;
+                try {
+                    runHistoryRenderTask(task);
+                } catch (error) {
+                    this.host.log('Failed to render restored chat history', error);
+                }
+                batchTaskCount += 1;
+                if (performance.now() - startedAt >= 8) break;
+            }
+            if (!isHistoryEpochCurrent(epoch)) return;
+            if (epoch.tasks.length > 0) {
+                epoch.frame = requestPlatformAnimationFrame(() => {
+                    epoch.frame = null;
+                    void drainHistoryRenderEpoch(epoch);
+                });
+                return;
+            }
+            if (epoch.inFlight.size > 0) {
+                void Promise.all([...epoch.inFlight.keys()]).then(() => {
+                    if (isHistoryEpochCurrent(epoch)
+                        && epoch.tasks.length === 0
+                        && epoch.inFlight.size === 0) {
+                        removeElement(epoch.boundary);
+                    }
+                });
+                return;
+            }
+            removeElement(epoch.boundary);
+        };
+        const scheduleHistoryRenderEpoch = (epoch: HistoryRenderEpoch) => {
+            if (epoch.frame !== null || epoch.tasks.length === 0) return;
+            void drainHistoryRenderEpoch(epoch);
+        };
+        const renderTimeline = (options: { queueHistory?: boolean } = {}) => {
+            cancelHistoryRendering();
+            mobileLongPress?.cancel();
+            closeMobileMessageMenu();
+            discardPendingOperations();
+            this.cancelScheduledScroll();
+            this.unloadAllMarkdownRenderOwners();
+            clearImageTaskCards();
+            this.responseDiv.empty();
+            historyDeleteButtons = [];
+            historyViews = new WeakMap();
+            const boundary = this.responseDiv.createDiv({
+                cls: 'pa-chat-history-boundary',
+                attr: { 'aria-hidden': 'true' },
+            });
+            boundary.hidden = true;
+            if (options.queueHistory) {
+                const epoch: HistoryRenderEpoch = {
+                    conversationId: this.conversationPersistence.activeConversationId,
+                    sourcePath: this.getMarkdownRenderSourcePath(),
+                    boundary,
+                    tasks: [],
+                    inFlight: new Map(),
+                    frame: null,
+                    pendingImageMessageIds: new Set(),
+                    removedImageMessageIds: new Set(),
+                    imageLoadScheduled: false,
+                };
+                historyRenderEpoch = epoch;
+                timelineEntries.forEach((entry, entryIndex) => {
+                    if (entry.kind === 'history') {
+                        const stableMessageId = entry.user.hostProvenance?.messageId;
+                        if (stableMessageId) epoch.pendingImageMessageIds.add(stableMessageId);
+                        const isRestoreTail = entryIndex === timelineEntries.length - 1;
+                        for (const part of ['user', 'metadata', 'assistant'] as const) {
+                            epoch.tasks.push({
+                                entry,
+                                run: () => renderTimelineEntry(entry, entryIndex, {
+                                    sourcePath: epoch.sourcePath,
+                                    insertBefore: epoch.boundary,
+                                    isLive: () => isHistoryEpochCurrent(epoch, entry),
+                                    part,
+                                    isRestoreTail,
+                                }),
+                            });
+                        }
+                        return;
+                    }
+                });
+                scheduleHistoryRenderEpoch(epoch);
+            } else {
+                timelineEntries.forEach((entry, entryIndex) => renderTimelineEntry(entry, entryIndex));
+                removeElement(boundary);
+            }
             const lastAssistant = [...this.chatHistory].reverse().find((message) => message.role === 'assistant' && !isInterruptedAssistant(message));
             this.result = lastAssistant?.content ?? '';
             renderEmptyState();
-            void loadImageTaskCards();
+            if (!historyRenderEpoch) {
+                void loadImageTaskCards();
+            } else {
+                scheduleCompletedHistoryImageLoad(historyRenderEpoch);
+            }
         };
 
         const removeTerminalEntry = (entry: TerminalTurnEntry) => {
@@ -4685,9 +4986,7 @@ export class LLMView extends ItemView {
             renderEmptyState();
         };
 
-        const createTerminalRow = (
-            entry: TerminalTurnEntry,
-        ) => {
+        const createTerminalRow = (entry: TerminalTurnEntry) => {
             const row = this.responseDiv.createDiv({ cls: `llm-message pa-chat-message system turn-${entry.terminalKind}` });
             createRoleLabel(row, entry.terminalKind === 'error' ? t("plugin.chat.role.error") : t("plugin.chat.role.cancelled"));
             row.createDiv({ cls: 'message-content', text: entry.content });
@@ -4834,11 +5133,14 @@ export class LLMView extends ItemView {
             return entry;
         };
 
-        const createThinkingStatusView = (turn?: UiTurn): ThinkingStatusView => {
+        const createThinkingStatusView = (turn?: UiTurn, insertBefore?: HTMLElement): ThinkingStatusView => {
             const messageDiv = this.responseDiv.createDiv({ cls: 'llm-message pa-chat-message system thinking-status' });
             const assistantMessageDiv = turn?.assistantMessage?.messageDiv;
-            if (assistantMessageDiv?.parentElement === this.responseDiv) {
-                this.responseDiv.insertBefore(messageDiv, assistantMessageDiv);
+            const referenceChild = assistantMessageDiv?.parentElement === this.responseDiv
+                ? assistantMessageDiv
+                : insertBefore;
+            if (referenceChild) {
+                this.responseDiv.insertBefore(messageDiv, referenceChild);
             }
             messageDiv.setAttribute('aria-busy', 'true');
             const headerDiv = messageDiv.createDiv({ cls: 'thinking-status-header' });
@@ -6322,6 +6624,11 @@ export class LLMView extends ItemView {
                 executionSummary,
             };
             timelineEntries.push(historyEntry);
+            historyViews.set(historyEntry, {
+                userRendered: userRendered,
+                assistantRendered: turn.assistantMessage,
+                statusView: turn.statusView,
+            });
             if (!sawLegacyPartialFailure) this.result = sourceChanged ? '' : visibleContent;
             readConversationImageAnchor();
             let createdWritingVersion: WritingVersion | undefined;
@@ -7678,6 +7985,7 @@ export class LLMView extends ItemView {
             isStopping = false;
             isFinalizing = false;
             this.cancelScheduledScroll();
+            cancelHistoryRendering();
             const conversationIdToDelete = this.conversationPersistence.activeConversationId;
             imageTasksConversationId = null;
             imageOperationByTurn.clear();
@@ -8034,6 +8342,9 @@ export class LLMView extends ItemView {
         ) => {
             const hydrated = this.conversationPersistence.hydrateConversation(conversation, turns);
             if (!hydrated) return;
+            shouldAutoScroll = true;
+            explicitAutoScrollPause = false;
+            clearUserScrollIntent();
             syncSourceScopeControl();
             if (this.conversationPersistence.currentSourceSelection.basis === 'conservative-fallback') {
                 showComposerHint(t('plugin.chat.sourceScope.legacyChoice'));
@@ -8071,7 +8382,7 @@ export class LLMView extends ItemView {
             this.unloadAllMarkdownRenderOwners();
             this.responseDiv.empty();
             this.result = '';
-            renderTimeline();
+            renderTimeline({ queueHistory: true });
         };
         const getReadyHistoryManager = async (showNotice = false): Promise<ChatHistoryManager | null> => {
             const manager = await this.conversationPersistence.getReadyManager();
@@ -8140,6 +8451,7 @@ export class LLMView extends ItemView {
             isStopping = false;
             isFinalizing = false;
             this.cancelScheduledScroll();
+            cancelHistoryRendering();
             this.chatHistory = [];
             timelineEntries = [];
             imageTasksConversationId = null;
@@ -8192,6 +8504,7 @@ export class LLMView extends ItemView {
                         isStopping = false;
                         isFinalizing = false;
                         this.cancelScheduledScroll();
+                        cancelHistoryRendering();
                         this.chatHistory = [];
                         timelineEntries = [];
                         clearGhostCards();
@@ -8536,11 +8849,20 @@ export class LLMView extends ItemView {
             return elementIsStatusBarOrChild(element)
                 || Boolean(typeof element.find === 'function' && element.find('.status-bar'));
         };
+        const elementIsKnownChatContent = (value: unknown): boolean => {
+            const element = value as HTMLElement | null;
+            if (!element || typeof element !== 'object') return false;
+            if (element === this.responseDiv || this.knownChatRenderBuffers.has(element)) return true;
+            return typeof this.responseDiv.contains === 'function' && this.responseDiv.contains(element);
+        };
         const mutationTouchesStatusBar = (mutations: MutationRecord[]): boolean => mutations.some((mutation) => {
             if (elementIsStatusBarOrChild(mutation.target)) return true;
+            const knownChatNodes = [mutation.target, ...Array.from(mutation.addedNodes ?? [])];
+            if (knownChatNodes.some(elementIsKnownChatContent)) return false;
             const addedNodes = Array.from(mutation.addedNodes ?? []);
             if (addedNodes.some(elementContainsStatusBar)) return true;
             const removedNodes = Array.from(mutation.removedNodes ?? []);
+            if (removedNodes.some(elementIsKnownChatContent)) return false;
             return removedNodes.some(elementContainsStatusBar);
         });
 

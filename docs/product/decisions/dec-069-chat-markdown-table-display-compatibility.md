@@ -3,7 +3,7 @@
 Decision ID: DEC-069
 Status: Accepted
 Updated: 2026-10-18
-Authority: Owner 在本会话确认当前表格修复路线，要求分析三处性能成本并给出方案，随后要求按规范完成设计文档；2026-10-18 授权按 B-179 完成全部开发测试并避免过度设计/测试，独立审查后明确确认收尾 B-179 及提交本地 master。性能候选、推送和发布未授权。
+Authority: Owner 在本会话确认当前表格修复路线，要求分析三处性能成本并给出方案，随后要求按规范完成设计文档；2026-10-18 授权按 B-179 完成全部开发测试并避免过度设计/测试，独立审查后明确确认收尾 B-179 及提交本地 master。该次授权不含性能候选、推送或发布；后续 PA 侧四项优化的独立设计授权见 DEC-070，不追溯扩大 B-179。
 Work item: B-179
 
 ## Context
@@ -57,3 +57,4 @@ test vault 原型验证显示兼容及成本分段后，正式接线与桌面/mo
 - [Product Spec](../specs/pa-chat-markdown-table-display-product-spec.md)
 - [当前实现与兼容约束](../specs/pa-chat-markdown-table-display-product-spec.md#implementation-and-compatibility-contract)
 - [B-179 验证与性能证据](../../archive/2026/b179-chat-markdown-table-display-validation.md)
+- [DEC-070：PA 侧四项性能优化](./dec-070-chat-rendering-lifecycle-performance.md)独立承接历史整轮复用、恢复调度和观察生命周期；不覆盖本记录的表格流式增量候选。

@@ -1116,6 +1116,22 @@ describe('LLMView turn lifecycle', () => {
         }
     }
 
+    async function yieldToRestoreScheduler() {
+        runAnimationFrames();
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        await flushPromises();
+        runAnimationFrames();
+     }
+
+    async function runOneRestoreBoundary() {
+        for (let index = 0; index < 10 && animationFrames.length === 0; index++) {
+            await flushPromises();
+        }
+        expect(animationFrames.length).toBeGreaterThan(0);
+        runAnimationFrames();
+        await flushPromises();
+    }
+
     beforeEach(() => {
         streamCalls = [];
         animationFrames = [];
@@ -7757,6 +7773,238 @@ describe('LLMView turn lifecycle', () => {
         modalOpenSpy.mockRestore();
     });
 
+    it('B-180 stops active Mermaid frames after stable sizes and respects a later user pause', async () => {
+        const mutationCallbacks: MutationCallback[] = [];
+        const resizeCallbacks: ResizeObserverCallback[] = [];
+        const mutationObserverTargets = new Map<MutationCallback, MockElement[]>();
+        const resizeObserverTargets = new Map<ResizeObserverCallback, MockElement[]>();
+        class MockMutationObserver {
+            readonly observe: jest.Mock<(target: MockElement) => void>;
+            readonly disconnect = jest.fn();
+
+            constructor(callback: MutationCallback) {
+                this.observe = jest.fn((target: MockElement) => {
+                    const targets = mutationObserverTargets.get(callback) ?? [];
+                    targets.push(target);
+                    mutationObserverTargets.set(callback, targets);
+                });
+                mutationCallbacks.push(callback);
+                mutationObserverTargets.set(callback, []);
+            }
+        }
+        class MockResizeObserver {
+            readonly observe: jest.Mock<(target: MockElement) => void>;
+            readonly disconnect = jest.fn();
+
+            constructor(callback: ResizeObserverCallback) {
+                this.observe = jest.fn((target: MockElement) => {
+                    const targets = resizeObserverTargets.get(callback) ?? [];
+                    targets.push(target);
+                    resizeObserverTargets.set(callback, targets);
+                });
+                resizeCallbacks.push(callback);
+                resizeObserverTargets.set(callback, []);
+            }
+        }
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: withMockDomHelpers({
+                createElement: (tagName: string) => new MockElement(tagName),
+            }),
+        });
+        Object.defineProperty(globalThis, 'MutationObserver', {
+            configurable: true,
+            value: MockMutationObserver,
+        });
+        Object.defineProperty(globalThis, 'ResizeObserver', {
+            configurable: true,
+            value: MockResizeObserver,
+        });
+        const nativeRender = MarkdownRenderer.render as unknown as jest.Mock<
+            (app: unknown, markdown: string, el: MockElement) => void | Promise<void>
+        >;
+        nativeRender
+            .mockImplementation((_app, markdown, el) => {
+                el.setText(markdown);
+            });
+
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        getTextArea(containerEl).value = 'draw a delayed graph';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('```mermaid\ngraph TD\nA --> B\n```');
+        await flushPromises();
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(view);
+        await flushPromises();
+        await flushPromises();
+        runAnimationFrames(true);
+
+        const assistantMessage = getElementsByClass(containerEl, 'assistant')[0];
+        if (!assistantMessage) throw new Error('Mermaid assistant message was not rendered');
+        const messageContent = getElementByClass(assistantMessage, 'message-content');
+        const attachedBuffer = (nativeRender.mock.calls as Array<[unknown, string, MockElement]>)
+            .filter(([, markdown]) => markdown.includes('```mermaid'))
+            .at(-1)?.[2];
+        if (!attachedBuffer || attachedBuffer.parentElement !== messageContent) {
+            throw new Error('final Mermaid buffer was not attached to its message');
+        }
+        const mermaidResizeCallbacks = resizeCallbacks.filter(callback => {
+            const targets = resizeObserverTargets.get(callback) ?? [];
+            return targets.includes(assistantMessage) && targets.includes(messageContent);
+        });
+        expect(mermaidResizeCallbacks).toHaveLength(1);
+        const stableEntries = [assistantMessage, messageContent].map(target => ({
+            target,
+            contentRect: { x: 0, y: 0, top: 0, left: 0, right: 100, bottom: 50, width: 100, height: 50, toJSON: () => ({}) },
+        })) as unknown as ResizeObserverEntry[];
+        mermaidResizeCallbacks.forEach(callback => callback(stableEntries, {} as ResizeObserver));
+        expect(animationFrames.length).toBeGreaterThan(0);
+        expect(animationFrames.length).toBeLessThanOrEqual(3);
+        for (let frame = 0; frame < 3; frame++) {
+            runAnimationFrames();
+        }
+        expect(animationFrames.some(frame => !frame.cancelled)).toBe(false);
+
+        const responseDiv = getResponseDiv(view);
+        responseDiv.scrollHeight = 1200;
+        responseDiv.clientHeight = 320;
+        responseDiv.scrollTop = 0;
+        responseDiv.dispatchEvent('touchstart');
+        responseDiv.dispatchEvent('scroll');
+        const scrollCallCountBeforeLateResize = responseDiv.scrollToCalls.length;
+
+        const changedEntries = stableEntries.map(entry => ({
+            target: entry.target,
+            contentRect: { ...entry.contentRect, width: 140, right: 140 },
+        })) as unknown as ResizeObserverEntry[];
+        mermaidResizeCallbacks.forEach(callback => callback(changedEntries, {} as ResizeObserver));
+        expect(animationFrames.length).toBeGreaterThan(0);
+        runAnimationFrames();
+        expect(responseDiv.scrollToCalls.slice(scrollCallCountBeforeLateResize)).toEqual([]);
+
+        const mermaidMutationCallbacks = mutationCallbacks.filter(callback =>
+            (mutationObserverTargets.get(callback) ?? []).includes(attachedBuffer));
+        expect(mermaidMutationCallbacks).toHaveLength(1);
+        const lateDiagram = attachedBuffer.createDiv({ cls: 'block-language-mermaid' });
+        mermaidMutationCallbacks.forEach(callback => callback([{
+            type: 'childList',
+            target: attachedBuffer,
+            addedNodes: [lateDiagram],
+            removedNodes: [],
+        } as unknown as MutationRecord], {} as MutationObserver));
+        expect(animationFrames).toHaveLength(1);
+        runAnimationFrames();
+        expect(getElementsByClass(containerEl, 'pa-chat-mermaid-shell')).toHaveLength(1);
+        expect(getButtonsByClass(containerEl, 'pa-chat-mermaid-open-button')).toHaveLength(1);
+        expect(responseDiv.scrollToCalls.slice(scrollCallCountBeforeLateResize)).toEqual([]);
+    });
+
+    it('B-180 keeps the restored tail Mermaid size observer active after enhancement', async () => {
+        const mutationCallbacks: MutationCallback[] = [];
+        const resizeCallbacks: ResizeObserverCallback[] = [];
+        const mutationObserverTargets = new Map<MutationCallback, MockElement[]>();
+        const resizeObserverTargets = new Map<ResizeObserverCallback, MockElement[]>();
+        class MockMutationObserver {
+            readonly observe: jest.Mock<(target: MockElement) => void>;
+            readonly disconnect = jest.fn();
+
+            constructor(callback: MutationCallback) {
+                this.observe = jest.fn((target: MockElement) => {
+                    const targets = mutationObserverTargets.get(callback) ?? [];
+                    targets.push(target);
+                    mutationObserverTargets.set(callback, targets);
+                });
+                mutationCallbacks.push(callback);
+                mutationObserverTargets.set(callback, []);
+            }
+        }
+        class MockResizeObserver {
+            readonly observe: jest.Mock<(target: MockElement) => void>;
+            readonly disconnect = jest.fn();
+
+            constructor(callback: ResizeObserverCallback) {
+                this.observe = jest.fn((target: MockElement) => {
+                    const targets = resizeObserverTargets.get(callback) ?? [];
+                    targets.push(target);
+                    resizeObserverTargets.set(callback, targets);
+                });
+                resizeCallbacks.push(callback);
+                resizeObserverTargets.set(callback, []);
+            }
+        }
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: withMockDomHelpers({
+                createElement: (tagName: string) => new MockElement(tagName),
+            }),
+        });
+        Object.defineProperty(globalThis, 'MutationObserver', { configurable: true, value: MockMutationObserver });
+        Object.defineProperty(globalThis, 'ResizeObserver', { configurable: true, value: MockResizeObserver });
+        const nativeRender = MarkdownRenderer.render as unknown as jest.Mock<
+            (app: unknown, markdown: string, el: MockElement) => void | Promise<void>
+        >;
+        nativeRender.mockImplementation((_app, markdown, el) => {
+            el.setText(markdown);
+        });
+
+        const { manager, messages } = createRestoredConversationFixture(2, 'B-180 restored mermaid');
+        const mermaid = '```mermaid\ngraph TD\nA --> B\n```';
+        messages[1].content = mermaid;
+        messages[3].content = mermaid;
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+        await flushPromises();
+        await flushPromises();
+        runAnimationFrames(true);
+
+        const assistants = getElementsByClass(containerEl, 'assistant');
+        expect(assistants).toHaveLength(2);
+        const mermaidTargets = (nativeRender.mock.calls as Array<[unknown, string, MockElement]>)
+            .filter(([, markdown]) => markdown.includes('```mermaid'))
+            .map(([, , target]) => target);
+        expect(mermaidTargets).toHaveLength(2);
+        const tailContent = getElementByClass(assistants[1], 'message-content');
+        const tailBuffer = mermaidTargets[1];
+        expect(tailBuffer.parentElement).toBe(tailContent);
+        const observerFor = (message: MockElement) => resizeCallbacks.filter(callback => {
+            const targets = resizeObserverTargets.get(callback) ?? [];
+            return targets.includes(message) && targets.includes(getElementByClass(message, 'message-content'));
+        });
+        expect(observerFor(assistants[0])).toHaveLength(0);
+        expect(observerFor(assistants[1])).toHaveLength(1);
+
+        const enhancementCallbacks = mutationCallbacks.filter(callback =>
+            (mutationObserverTargets.get(callback) ?? []).includes(tailBuffer));
+        expect(enhancementCallbacks).toHaveLength(1);
+        const diagram = tailBuffer.createDiv({ cls: 'block-language-mermaid' });
+        enhancementCallbacks.forEach(callback => callback([{
+            type: 'childList',
+            target: tailBuffer,
+            addedNodes: [diagram],
+            removedNodes: [],
+        } as unknown as MutationRecord], {} as MutationObserver));
+        runAnimationFrames();
+        expect(getElementsByClass(containerEl, 'pa-chat-mermaid-shell')).toHaveLength(1);
+
+        const responseDiv = getResponseDiv(view);
+        responseDiv.scrollHeight = 1200;
+        responseDiv.clientHeight = 320;
+        responseDiv.scrollTop = 0;
+        responseDiv.dispatchEvent('touchstart');
+        responseDiv.dispatchEvent('scroll');
+        const scrollCallCount = responseDiv.scrollToCalls.length;
+        const tailObserver = observerFor(assistants[1])[0];
+        tailObserver([assistants[1], tailContent].map(target => ({
+            target,
+            contentRect: { x: 0, y: 0, top: 0, left: 0, right: 140, bottom: 60, width: 140, height: 60, toJSON: () => ({}) },
+        })) as unknown as ResizeObserverEntry[], {} as ResizeObserver);
+        expect(animationFrames.length).toBeGreaterThan(0);
+        runAnimationFrames();
+        expect(responseDiv.scrollToCalls.slice(scrollCallCount)).toEqual([]);
+    });
+
     it('waits for all Mermaid candidates before binding multiple preview sources', async () => {
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
@@ -10145,6 +10393,695 @@ describe('LLMView turn lifecycle', () => {
         });
     });
 
+    function createRestoredConversationFixture(turnCount: number, prefix: string) {
+        const messages: ChatMessage[] = [];
+        const persistedTurns = Array.from({ length: turnCount }, (_, index) => {
+            const user = { role: 'user' as const, content: `${prefix} prompt ${index}` };
+            const assistant = { role: 'assistant' as const, content: `${prefix} answer ${index}` };
+            messages.push(user, assistant);
+            return {
+                conversationId: `conv_${prefix}`,
+                turnIndex: index,
+                user,
+                assistant,
+            };
+        });
+        const deleteTurn = jest.fn(async (_conversationId: string, _turnIndex: number) => true);
+        const manager = {
+            initialize: jest.fn(async () => undefined),
+            isAvailable: jest.fn(() => true),
+            getActiveConversationId: jest.fn(async () => `conv_${prefix}`),
+            findConversation: jest.fn(async () => ({
+                id: `conv_${prefix}`,
+                title: prefix,
+                createdAt: '2026-01-01T00:00:00.000Z',
+                updatedAt: '2026-01-01T00:00:00.000Z',
+                turnCount,
+                preview: `${prefix} prompt 0`,
+            })),
+            getTurns: jest.fn(async () => persistedTurns),
+            deserializeTurn: jest.fn((turn: { turnIndex: number }) => ({
+                userMessage: messages[turn.turnIndex * 2],
+                assistantMessage: messages[turn.turnIndex * 2 + 1],
+                historyEntry: {
+                    kind: 'history' as const,
+                    user: messages[turn.turnIndex * 2],
+                    assistant: messages[turn.turnIndex * 2 + 1],
+                    ...(turn.turnIndex === 0 ? { activityDetails: [`${prefix} activity`] } : {}),
+                },
+            })),
+            deleteTurn,
+            setActiveConversationId: jest.fn(async () => undefined),
+        };
+        return { manager, messages, deleteTurn };
+    }
+
+    it('B-180 keeps unchanged history DOM and Markdown owners while deleting target turns', async () => {
+        const { manager, messages, deleteTurn } = createRestoredConversationFixture(10, 'B-180 delete');
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        const nativeRender = MarkdownRenderer.render as unknown as jest.Mock<
+            (app: unknown, markdown: string, el: MockElement, sourcePath: string, owner: Component) => void | Promise<void>
+        >;
+        await view.onOpen();
+        await flushPromises();
+        await flushPromises();
+        for (let index = 0; index < 20 && nativeRender.mock.calls.length < 20; index++) {
+            await yieldToRestoreScheduler();
+        }
+        await flushPromises();
+
+        const originalContentNodes = getElementsByClass(containerEl, 'message-content');
+        const ownerTracker = view as unknown as { markdownRenderOwners: Set<Component> };
+        const originalOwnerSet = new Set(ownerTracker.markdownRenderOwners);
+        const originalCalls = nativeRender.mock.calls as Array<[unknown, string, MockElement, string, Component]>;
+        const originalOwnersByContent = new Map(originalCalls.map(([app, markdown, target, sourcePath, owner]) => [markdown, owner]));
+        expect(originalContentNodes).toHaveLength(20);
+        expect(originalOwnersByContent.size).toBe(20);
+
+        const firstTarget = getElementsByClass(containerEl, 'llm-message')
+            .find(element => allText(element).includes('B-180 delete prompt 2'));
+        if (!firstTarget) throw new Error('first delete target was not rendered');
+        const firstAssistantTarget = getElementsByClass(containerEl, 'llm-message')
+            .find(element => allText(element).includes('B-180 delete answer 2'));
+        if (!firstAssistantTarget) throw new Error('first assistant delete target was not rendered');
+        const targetMenuControls = [firstTarget, firstAssistantTarget].flatMap(message => [
+            getElementByClass(message, 'pa-chat-message-menu'),
+            getButtonByClass(message, 'message-more-button'),
+        ]);
+        const teardownTracker = view as unknown as { viewTeardownCallbacks: Set<() => void> };
+        const teardownCountBeforeDelete = teardownTracker.viewTeardownCallbacks.size;
+        getButtonByClass(firstTarget, 'delete-message-button').click();
+        for (let index = 0; index < 4; index++) await flushPromises();
+
+        const afterFirstMessages = messages.filter((_, index) => index < 4 || index > 5);
+        let currentContentNodes = getElementsByClass(containerEl, 'message-content');
+        expect(currentContentNodes).toHaveLength(18);
+        afterFirstMessages.forEach((message, index) => {
+            expect(allText(currentContentNodes[index])).toContain(message.content);
+            expect(currentContentNodes[index]).toBe(originalContentNodes[messages.indexOf(message)]);
+        });
+        expect(nativeRender).toHaveBeenCalledTimes(20);
+        expect(ownerTracker.markdownRenderOwners).toEqual(new Set(
+            afterFirstMessages.map(message => originalOwnersByContent.get(message.content)),
+        ));
+        expect(teardownTracker.viewTeardownCallbacks.size).toBe(teardownCountBeforeDelete - 2);
+        expect(targetMenuControls.every(control => Array.from(control.listeners.values())
+            .every(listeners => listeners.length === 0))).toBe(true);
+        for (const message of afterFirstMessages) {
+            const calls = (nativeRender.mock.calls as Array<[unknown, string, MockElement, string, Component]>)
+                .filter(([, markdown]) => markdown === message.content);
+            expect(calls).toHaveLength(1);
+            expect(calls[0][4]).toBe(originalOwnersByContent.get(message.content));
+            expect(originalOwnerSet.has(calls[0][4])).toBe(true);
+            expect(ownerTracker.markdownRenderOwners.has(calls[0][4])).toBe(true);
+        }
+
+        const secondTarget = getElementsByClass(containerEl, 'llm-message')
+            .find(element => allText(element).includes('B-180 delete prompt 4'));
+        if (!secondTarget) throw new Error('second delete target was not rendered');
+        getButtonByClass(secondTarget, 'delete-message-button').click();
+        for (let index = 0; index < 4; index++) await flushPromises();
+
+        currentContentNodes = getElementsByClass(containerEl, 'message-content');
+        const afterSecondMessages = messages.filter((_, index) => index < 4
+            || (index > 5 && index < 8)
+            || index > 9);
+        expect(currentContentNodes).toHaveLength(16);
+        afterSecondMessages.forEach((message, index) => {
+            expect(allText(currentContentNodes[index])).toContain(message.content);
+            expect(currentContentNodes[index]).toBe(originalContentNodes[messages.indexOf(message)]);
+        });
+        expect(nativeRender).toHaveBeenCalledTimes(20);
+        expect(ownerTracker.markdownRenderOwners).toEqual(new Set(
+            afterSecondMessages.map(message => originalOwnersByContent.get(message.content)),
+        ));
+        expect(deleteTurn.mock.calls).toEqual([
+            ['conv_B-180 delete', 2],
+            ['conv_B-180 delete', 4],
+        ]);
+    });
+
+    it('B-180 removes an invalidated Operations card while retaining unrelated history DOM', async () => {
+        const chatHistoryManager = new ChatHistoryManager({
+            store: new MemoryChatHistoryStore(),
+            generateId: () => 'conv_local_delete',
+        });
+        const deleteTurn = jest.spyOn(chatHistoryManager, 'deleteTurn');
+        const { view, containerEl } = createView({ chatHistoryManager, operationsEnabled: true });
+        await view.onOpen();
+        const nativeRender = MarkdownRenderer.render as unknown as jest.Mock<
+            (app: unknown, markdown: string, el: MockElement, sourcePath: string, owner: Component) => void | Promise<void>
+        >;
+        const operation: PreparedOperation = {
+            id: 'operation_local_delete',
+            toolCallId: 'call_local_delete',
+            name: 'vault_create',
+            input: { path: 'notes/local-delete.md', content: '# Local delete' },
+            path: 'notes/local-delete.md',
+            expectedBefore: null,
+            expectedAfter: '# Local delete',
+        };
+        const intent: OperationsIntent = {
+            id: 'intent_local_delete',
+            runId: 'run_local_delete',
+            turnId: 'turn_local_delete',
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 60_000,
+            operations: [operation],
+            state: 'pending',
+        };
+        const execution: OperationsExecutionResult = {
+            intentId: intent.id,
+            state: 'completed',
+            operations: [{
+                operationId: operation.id,
+                toolCallId: operation.toolCallId,
+                name: operation.name,
+                path: operation.path,
+                status: 'succeeded',
+                receiptId: 'receipt_local_delete',
+            }],
+        };
+
+        getTextArea(containerEl).value = 'Save the first result';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        emitCanonical(streamCalls[0], canonicalEvent({
+            type: 'agent_start', scope: 'run', turnId: '__run__', runId: intent.runId,
+        }));
+        emitCanonical(streamCalls[0], canonicalEvent({ type: 'turn_start', turnId: intent.turnId, runId: intent.runId }));
+        streamCalls[0].options.onOperationsIntentStaged?.(intent);
+        emitOperationsExecution(execution);
+        await flushPromises();
+        emitCanonical(streamCalls[0], canonicalEvent({
+            type: 'message_end',
+            turnId: intent.turnId,
+            runId: intent.runId,
+            message: assistantMessage('operations_local_answer', [{ type: 'text', text: 'Operations answer' }]),
+        }));
+        emitCanonical(streamCalls[0], canonicalEvent({
+            type: 'turn_end', status: 'completed', turnId: intent.turnId, runId: intent.runId,
+        }));
+        emitCanonical(streamCalls[0], canonicalEvent({
+            type: 'agent_end',
+            status: 'completed',
+            scope: 'run',
+            turnId: '__run__',
+            runId: intent.runId,
+            metadata: { finalTurnId: intent.turnId },
+        }));
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(view);
+        await flushPromises();
+
+        const operationsCard = getElementByClass(containerEl, 'pa-operations-request-card');
+        expect(allText(operationsCard)).toContain('Updated 1 notes');
+        getButtonByText(operationsCard, 'View all changes').click();
+        await flushPromises();
+        expect(getElementByClass(operationsCard, 'pa-operations-request-card__details').hidden).toBe(false);
+        const retainedContentNode = getElementsByClass(containerEl, 'message-content')[1];
+        const retainedRenderCall = (nativeRender.mock.calls as Array<[unknown, string, MockElement, string, Component]>)
+            .find(([, markdown]) => markdown === 'Operations answer');
+        if (!retainedRenderCall) throw new Error('Operations answer was not rendered');
+        const retainedOwner = retainedRenderCall[4];
+        mockUnmountOperationsDiff.mockClear();
+
+        getTextArea(containerEl).value = 'Ask an ordinary follow-up';
+        void getButtonByText(containerEl, 'Ask').click();
+        await waitForStreamCallCount(streamCalls, 2);
+        streamCalls[1].onChunk('Ordinary answer');
+        streamCalls[1].resolve();
+        await waitForTurnCompletion(view);
+        await flushPromises();
+
+        const nativeRenderCountBeforeDelete = nativeRender.mock.calls.length;
+        const deleteButtons = getButtonsByClass(containerEl, 'delete-message-button');
+        deleteButtons.at(-1)!.click();
+        for (let index = 0; index < 4; index++) await flushPromises();
+
+        expect(view.chatHistory.map(({ role, content }) => ({ role, content }))).toEqual([
+            { role: 'user', content: 'Save the first result' },
+            { role: 'assistant', content: 'Operations answer' },
+        ]);
+        expect(getElementsByClass(containerEl, 'message-content')[1]).toBe(retainedContentNode);
+        expect(nativeRender).toHaveBeenCalledTimes(nativeRenderCountBeforeDelete);
+        expect((view as unknown as { markdownRenderOwners: Set<Component> }).markdownRenderOwners.has(retainedOwner)).toBe(true);
+        expect(getElementsByClass(containerEl, 'pa-operations-request-card')).toHaveLength(0);
+        expect(mockUnmountOperationsDiff).toHaveBeenCalledTimes(1);
+        expect(deleteTurn).toHaveBeenCalledWith('conv_local_delete', 1);
+    });
+
+    it('B-180 initializes follow-scroll for a restored conversation and respects a new pause between batches', async () => {
+        const createTurns = (conversationId: string, prefix: string, turnCount: number) => Array.from({ length: turnCount }, (_, index) => ({
+            conversationId,
+            turnIndex: index,
+            user: { role: 'user' as const, content: `${prefix} prompt ${index}` },
+            assistant: { role: 'assistant' as const, content: `${prefix} answer ${index}` },
+        }));
+        const conversationA = {
+            id: 'conv_scroll_a', title: 'A', createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z', turnCount: 1, preview: 'A prompt',
+        };
+        const conversationB = {
+            id: 'conv_scroll_b', title: 'B', createdAt: '2026-01-02T00:00:00.000Z',
+            updatedAt: '2026-01-02T00:00:00.000Z', turnCount: 6, preview: 'B prompt',
+        };
+        const turnsByConversation = new Map([
+            [conversationA.id, createTurns(conversationA.id, 'A', 1)],
+            [conversationB.id, createTurns(conversationB.id, 'B', 6)],
+        ]);
+        const conversations = [conversationA, conversationB];
+        let activeConversationId = conversationA.id;
+        const chatHistoryManager = {
+            initialize: jest.fn(async () => undefined),
+            isAvailable: jest.fn(() => true),
+            getActiveConversationId: jest.fn(async () => activeConversationId),
+            findConversation: jest.fn(async (id: string) => conversations.find(conversation => conversation.id === id)),
+            getTurns: jest.fn(async (id: string) => turnsByConversation.get(id)),
+            deserializeTurn: jest.fn((turn: { turnIndex: number; user: ChatMessage; assistant: ChatMessage }) => ({
+                userMessage: turn.user,
+                assistantMessage: turn.assistant,
+                historyEntry: { kind: 'history' as const, user: turn.user, assistant: turn.assistant },
+            })),
+            listConversations: jest.fn(async () => [...conversations]),
+            setActiveConversationId: jest.fn(async (id: string) => {
+                activeConversationId = id;
+            }),
+        };
+        const { view, containerEl } = createView({ chatHistoryManager });
+        await view.onOpen();
+        await yieldToRestoreScheduler();
+        const nativeRender = MarkdownRenderer.render as unknown as jest.Mock<
+            (app: unknown, markdown: string, el: MockElement, sourcePath: string, owner: Component) => void | Promise<void>
+        >;
+        let restoredBRenderCount = 0;
+        const suspendedNativeRenders: Array<() => void> = [];
+        jest.spyOn(performance, 'now').mockImplementation(() => 0);
+        nativeRender.mockImplementation((_app, markdown, el) => {
+            if (!markdown.startsWith('B ')) {
+                el.setText(markdown);
+                return;
+            }
+            restoredBRenderCount += 1;
+            el.setText(markdown);
+            if (restoredBRenderCount <= 5) return;
+            return new Promise<void>(resolve => {
+                suspendedNativeRenders.push(resolve);
+            });
+        });
+
+        const responseDiv = getResponseDiv(view);
+        responseDiv.scrollHeight = 1200;
+        responseDiv.clientHeight = 300;
+        responseDiv.scrollTop = 0;
+        responseDiv.dispatchEvent('touchstart');
+        responseDiv.dispatchEvent('scroll');
+        await new Promise(resolve => setTimeout(resolve, 510));
+
+        const opened: Modal[] = [];
+        const open = jest.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
+            opened.push(this);
+        });
+        try {
+            getButtonByText(containerEl, 'History').click();
+            for (let index = 0; index < 8 && opened.length === 0; index++) await flushPromises();
+            const picker = opened[0] as ChatHistoryPickerModal;
+            (picker as unknown as { contentEl: MockElement }).contentEl = new MockElement('div');
+            picker.onOpen();
+            getElementsByClass((picker as unknown as { contentEl: MockElement }).contentEl, 'pa-chat-history-open')
+                .find(button => allText(button).includes('B prompt'))!.click();
+            for (let index = 0; index < 8 && restoredBRenderCount === 0; index++) await flushPromises();
+            expect(restoredBRenderCount).toBeGreaterThan(0);
+        } finally {
+            open.mockRestore();
+        }
+
+        responseDiv.scrollHeight = 2000;
+        responseDiv.clientHeight = 300;
+        const renderedBMessages = () => getElementsByClass(containerEl, 'message-content')
+            .filter(element => allText(element).startsWith('B '));
+        expect(renderedBMessages().length).toBeGreaterThan(0);
+        expect(renderedBMessages().length).toBeLessThan(12);
+        const scrollCallsAtRestoreStart = responseDiv.scrollToCalls.length;
+        runAnimationFrames();
+        expect(responseDiv.scrollToCalls.length).toBeGreaterThan(scrollCallsAtRestoreStart);
+        expect(responseDiv.scrollToCalls.at(-1)).toEqual({ top: 1700, behavior: 'auto' });
+
+        for (let index = 0; index < 20 && suspendedNativeRenders.length === 0; index++) {
+            await yieldToRestoreScheduler();
+        }
+        expect(suspendedNativeRenders.length).toBeGreaterThan(0);
+        expect(renderedBMessages().length).toBeLessThan(12);
+
+        responseDiv.scrollTop = 0;
+        responseDiv.dispatchEvent('touchstart');
+        responseDiv.dispatchEvent('scroll');
+        const scrollCallsAfterNewPause = responseDiv.scrollToCalls.length;
+        for (const resolveNativeRender of suspendedNativeRenders.splice(0)) resolveNativeRender();
+        for (let index = 0; index < 20 && renderedBMessages().length < 12; index++) {
+            for (const resolveNativeRender of suspendedNativeRenders.splice(0)) resolveNativeRender();
+            await yieldToRestoreScheduler();
+        }
+        expect(renderedBMessages()).toHaveLength(12);
+        expect(responseDiv.scrollToCalls).toHaveLength(scrollCallsAfterNewPause);
+    });
+
+    it('B-180 restores complete data while one slow native render leaves later text usable', async () => {
+        const { manager, messages } = createRestoredConversationFixture(4, 'B-180 slow');
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        const nativeRender = MarkdownRenderer.render as unknown as jest.Mock<
+            (app: unknown, markdown: string, el: MockElement, sourcePath: string, owner: Component) => void | Promise<void>
+        >;
+        let nativeCallCount = 0;
+        let resolveFirstStarted!: () => void;
+        const firstStarted = new Promise<void>(resolve => { resolveFirstStarted = resolve; });
+        let resolveFirstNative!: () => void;
+        const firstNative = new Promise<void>(resolve => { resolveFirstNative = resolve; });
+        nativeRender.mockImplementation((_app, markdown, el) => {
+            nativeCallCount += 1;
+            if (nativeCallCount === 1) {
+                el.setText(markdown);
+                resolveFirstStarted();
+                return firstNative;
+            }
+            el.setText(markdown);
+        });
+
+        await view.onOpen();
+        await flushPromises();
+        await yieldToRestoreScheduler();
+        await firstStarted;
+        for (let index = 0; index < 8 && nativeCallCount < messages.length; index++) {
+            await yieldToRestoreScheduler();
+        }
+        await flushPromises();
+        await flushPromises();
+
+        expect(nativeCallCount).toBeGreaterThan(1);
+        expect(view.chatHistory).toEqual(messages);
+        let contentTexts = getElementsByClass(containerEl, 'message-content').map(allText);
+        expect(contentTexts.some(text => text.includes(messages[2].content))).toBe(true);
+        expect(contentTexts[0]).not.toContain(messages[0].content);
+
+        getTextArea(containerEl).value = 'B-180 live during slow restore';
+        void getButtonByText(containerEl, 'Ask').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const liveUserDuringRestore = getElementsByClass(containerEl, 'llm-message')
+            .find(element => allText(element).includes('B-180 live during slow restore'));
+        if (!liveUserDuringRestore) throw new Error('live message during restore was not rendered');
+        const restoreBoundary = getElementByClass(getResponseDiv(view), 'pa-chat-history-boundary');
+        expect(getResponseDiv(view).children.indexOf(liveUserDuringRestore))
+            .toBeGreaterThan(getResponseDiv(view).children.indexOf(restoreBoundary));
+
+        resolveFirstNative();
+        for (let index = 0; index < 12 && nativeCallCount < messages.length; index++) {
+            await yieldToRestoreScheduler();
+        }
+        await flushPromises();
+        await flushPromises();
+        runAnimationFrames();
+        await flushPromises();
+
+        contentTexts = getElementsByClass(containerEl, 'message-content').map(allText);
+        const positions = messages.map(message => contentTexts.findIndex(text => text.includes(message.content)));
+        expect(positions.every(position => position >= 0)).toBe(true);
+        expect([...positions].sort((left, right) => left - right)).toEqual(positions);
+        const responseChildren = getResponseDiv(view).children;
+        const firstUser = getElementsByClass(containerEl, 'llm-message')
+            .find(element => allText(element).includes(messages[0].content));
+        const thinkingStatus = getElementByClass(containerEl, 'thinking-status');
+        const firstAssistant = getElementsByClass(containerEl, 'llm-message')
+            .find(element => allText(element).includes(messages[1].content));
+        const lastHistoryAssistant = getElementsByClass(containerEl, 'llm-message')
+            .find(element => allText(element).includes(messages.at(-1)!.content));
+        if (!firstUser || !firstAssistant || !lastHistoryAssistant) throw new Error('ordered history nodes were not rendered');
+        expect(responseChildren.indexOf(firstUser)).toBeLessThan(responseChildren.indexOf(thinkingStatus));
+        expect(responseChildren.indexOf(thinkingStatus)).toBeLessThan(responseChildren.indexOf(firstAssistant));
+        expect(responseChildren.indexOf(lastHistoryAssistant)).toBeLessThan(responseChildren.indexOf(liveUserDuringRestore));
+    });
+
+    it('B-180 batches restored display and keeps the restore-time source path across a note switch', async () => {
+        const { manager, messages } = createRestoredConversationFixture(10, 'B-180 batch');
+        const { view, containerEl, app } = createView({
+            chatHistoryManager: manager,
+            withMarkdownLeaf: true,
+        });
+        const restoredSourcePath = '0.unsorted/Dog.md';
+        const switchedSourcePath = 'switched/Active.md';
+        const nativeRender = MarkdownRenderer.render as unknown as jest.Mock<
+            (app: unknown, markdown: string, el: MockElement, sourcePath: string, owner: Component) => void | Promise<void>
+        >;
+        let logicalNow = 0;
+        let nativeCallCount = 0;
+        let resolveFirstBatch!: (count: number) => void;
+        const firstBatch = new Promise<number>(resolve => { resolveFirstBatch = resolve; });
+        const performanceNow = jest.spyOn(performance, 'now').mockImplementation(() => logicalNow);
+        nativeRender.mockImplementation((_app, markdown, el) => {
+            nativeCallCount += 1;
+            logicalNow += 3;
+            if (nativeCallCount === 1) {
+                queueMicrotask(() => resolveFirstBatch(nativeCallCount));
+            }
+            el.setText(markdown);
+        });
+
+        try {
+            await view.onOpen();
+            await yieldToRestoreScheduler();
+            const firstBatchCount = await firstBatch;
+            const switchCount = nativeCallCount;
+
+            expect(firstBatchCount).toBeGreaterThan(0);
+            expect(firstBatchCount).toBeLessThan(messages.length);
+            expect(switchCount).toBeGreaterThan(0);
+            expect(switchCount).toBeLessThan(messages.length);
+            expect(view.chatHistory).toEqual(messages);
+
+            app.workspace.getActiveFile.mockImplementation(() => ({
+                path: switchedSourcePath,
+                basename: 'Active',
+                extension: 'md',
+            }));
+            for (let index = 0; index < 20 && nativeCallCount < messages.length; index++) {
+                await yieldToRestoreScheduler();
+            }
+            await flushPromises();
+            runAnimationFrames();
+            await flushPromises();
+
+            expect(nativeCallCount).toBe(messages.length);
+            const calls = nativeRender.mock.calls as Array<[unknown, string, MockElement, string, Component]>;
+            const callsAfterSwitch = calls.slice(switchCount);
+            expect(callsAfterSwitch.length).toBeGreaterThan(0);
+            expect(calls.map(([, , , sourcePath]) => sourcePath))
+                .toEqual(Array.from({ length: messages.length }, () => restoredSourcePath));
+            const contentTexts = getElementsByClass(containerEl, 'message-content').map(allText);
+            const positions = messages.map(message => contentTexts.findIndex(text => text.includes(message.content)));
+            expect(positions.every(position => position >= 0)).toBe(true);
+            expect([...positions].sort((left, right) => left - right)).toEqual(positions);
+
+            const finalAssistant = getElementsByClass(containerEl, 'assistant').at(-1);
+            if (!finalAssistant) throw new Error('final restored assistant was not rendered');
+            getButtonByClass(finalAssistant, 'share-card-message-button').click();
+            await flushPromises();
+            expect(mockShareCardModalConstructor).toHaveBeenLastCalledWith(app, expect.objectContaining({
+                resourceContext: { basePath: restoredSourcePath },
+            }));
+        } finally {
+            performanceNow.mockRestore();
+        }
+    });
+
+    it('B-180 delays image cards until their restored message target is ready with one load', async () => {
+        const { manager, messages } = createRestoredConversationFixture(10, 'B-180 image');
+        messages[18] = {
+            ...messages[18],
+            hostProvenance: { version: 1, messageId: 'b180-image-message', kind: 'ordinary_user_statement' },
+        };
+        const task = {
+            schemaVersion: 1,
+            taskId: 'b180_image_task',
+            operationId: 'b180_image_operation',
+            conversationId: 'conv_B-180 image',
+            stableMessageId: 'b180-image-message',
+            createdAt: '2026-10-18T00:00:00.000Z',
+            updatedAt: '2026-10-18T00:00:00.000Z',
+            revision: 1,
+            request: {
+                userPrompt: 'draw',
+                submittedPrompt: 'draw',
+                operation: 'generate',
+                model: 'wan2.7-image',
+                count: 1,
+                inputRefs: [],
+            },
+            connection: {
+                mode: 'inherit-chat',
+                endpointIdentity: 'https://example.invalid',
+                credentialSlot: 'chat',
+                revision: 0,
+            },
+            state: 'running',
+            outputs: [],
+        } as ImageGenerationTask;
+        const list = jest.fn(async (_conversationId: string) => [task]);
+        let notifyImageTask: ((updated: ImageGenerationTask) => void) | undefined;
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, {
+            imageGenerationService: {
+                list,
+                subscribe: (listener: (updated: ImageGenerationTask) => void) => {
+                    notifyImageTask = listener;
+                    return () => { notifyImageTask = undefined; };
+                },
+            },
+        });
+        const nativeRender = MarkdownRenderer.render as unknown as jest.Mock<
+            (app: unknown, markdown: string, el: MockElement) => void | Promise<void>
+        >;
+        let logicalNow = 0;
+        let nativeCallCount = 0;
+        const performanceNow = jest.spyOn(performance, 'now').mockImplementation(() => logicalNow);
+        nativeRender.mockImplementation((_app, markdown, el) => {
+            nativeCallCount += 1;
+            logicalNow += 3;
+            el.setText(markdown);
+        });
+
+        try {
+            await view.onOpen();
+            await flushPromises();
+
+            await runOneRestoreBoundary();
+
+            expect(nativeCallCount).toBeGreaterThan(0);
+            expect(nativeCallCount).toBeLessThan(messages.length);
+            expect(list).not.toHaveBeenCalled();
+            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card')).toHaveLength(0);
+
+            if (!notifyImageTask) throw new Error('image task subscription was not registered');
+            notifyImageTask(task);
+            await flushPromises();
+            expect(list).not.toHaveBeenCalled();
+            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card')).toHaveLength(0);
+
+            for (let index = 0; index < 20 && nativeCallCount < messages.length; index++) {
+                await yieldToRestoreScheduler();
+            }
+            await flushPromises();
+            await flushPromises();
+            runAnimationFrames();
+            await flushPromises();
+
+            expect(nativeCallCount).toBe(messages.length);
+            expect(list).toHaveBeenCalledTimes(1);
+            expect(list).toHaveBeenCalledWith('conv_B-180 image');
+            const cards = getElementsByClass(containerEl, 'pa-chat-image-task-card');
+            expect(cards).toHaveLength(1);
+            expect(cards[0].parentElement?.classList.contains('assistant')).toBe(true);
+            expect(allText(cards[0].parentElement!)).toContain(messages[19].content);
+        } finally {
+            performanceNow.mockRestore();
+        }
+    });
+
+    it('B-180 restores remaining image cards after deleting the last pending target', async () => {
+        const { manager, messages, deleteTurn } = createRestoredConversationFixture(10, 'B-180 image delete');
+        for (const [index, messageId] of [[0, 'b180-image-early'], [18, 'b180-image-late']] as const) {
+            messages[index] = {
+                ...messages[index],
+                hostProvenance: { version: 1, messageId, kind: 'ordinary_user_statement' },
+            };
+        }
+        const makeTask = (taskId: string, stableMessageId: string, createdAt: string) => ({
+            schemaVersion: 1,
+            taskId,
+            operationId: `${taskId}_operation`,
+            conversationId: 'conv_B-180 image delete',
+            stableMessageId,
+            createdAt,
+            updatedAt: createdAt,
+            revision: 1,
+            request: {
+                userPrompt: 'draw',
+                submittedPrompt: 'draw',
+                operation: 'generate',
+                model: 'wan2.7-image',
+                count: 1,
+                inputRefs: [],
+            },
+            connection: {
+                mode: 'inherit-chat',
+                endpointIdentity: 'https://example.invalid',
+                credentialSlot: 'chat',
+                revision: 0,
+            },
+            state: 'running',
+            outputs: [],
+        } as ImageGenerationTask);
+        const lateTask = makeTask('b180_late_task', 'b180-image-late', '2026-10-18T00:00:01.000Z');
+        const earlyTask = makeTask('b180_early_task', 'b180-image-early', '2026-10-18T00:00:00.000Z');
+        const list = jest.fn(async (_conversationId: string) => [lateTask, earlyTask]);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, {
+            imageGenerationService: {
+                list,
+                subscribe: () => () => undefined,
+            },
+        });
+        const nativeRender = MarkdownRenderer.render as unknown as jest.Mock<
+            (app: unknown, markdown: string, el: MockElement) => void | Promise<void>
+        >;
+        let logicalNow = 0;
+        let nativeCallCount = 0;
+        const performanceNow = jest.spyOn(performance, 'now').mockImplementation(() => logicalNow);
+        nativeRender.mockImplementation((_app, markdown, el) => {
+            nativeCallCount += 1;
+            logicalNow += markdown === messages[18].content ? 9 : 3;
+            el.setText(markdown);
+        });
+
+        try {
+            await view.onOpen();
+            await flushPromises();
+            for (let index = 0; index < 10; index++) {
+                await runOneRestoreBoundary();
+                const lateUserVisible = getElementsByClass(containerEl, 'llm-message')
+                    .some(element => allText(element).includes(messages[18].content));
+                const lateAssistantVisible = getElementsByClass(containerEl, 'llm-message')
+                    .some(element => allText(element).includes(messages[19].content));
+                if (lateUserVisible && !lateAssistantVisible) break;
+            }
+
+            expect(nativeCallCount).toBeGreaterThan(0);
+            expect(nativeCallCount).toBeLessThan(messages.length);
+            expect(getElementsByClass(containerEl, 'llm-message')
+                .some(element => allText(element).includes(messages[18].content))).toBe(true);
+            expect(getElementsByClass(containerEl, 'llm-message')
+                .some(element => allText(element).includes(messages[19].content))).toBe(false);
+            expect(list).not.toHaveBeenCalled();
+            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card')).toHaveLength(0);
+
+            const lateUser = getElementsByClass(containerEl, 'llm-message')
+                .find(element => allText(element).includes(messages[18].content));
+            if (!lateUser) throw new Error('late image target user was not rendered');
+            getButtonByClass(lateUser, 'delete-message-button').click();
+            for (let index = 0; index < 4; index++) await flushPromises();
+
+            expect(deleteTurn).toHaveBeenCalledWith('conv_B-180 image delete', 9);
+            expect(list).toHaveBeenCalledTimes(1);
+            expect(list).toHaveBeenCalledWith('conv_B-180 image delete');
+            const cards = getElementsByClass(containerEl, 'pa-chat-image-task-card');
+            expect(cards).toHaveLength(1);
+            expect(cards[0].getAttribute('data-task-id')).toBe('b180_early_task');
+            expect(allText(cards[0].parentElement!)).toContain(messages[1].content);
+            expect(allText(containerEl)).not.toContain(messages[18].content);
+            expect(allText(containerEl)).not.toContain(messages[19].content);
+        } finally {
+            performanceNow.mockRestore();
+        }
+    });
+
     it('refreshes role identicon shapes when starting a new chat', async () => {
         const originalCrypto = globalThis.crypto;
         const randomUUID = jest.fn()
@@ -11669,6 +12606,77 @@ describe('LLMView turn lifecycle', () => {
             } as unknown as MutationRecord,
         ], {} as MutationObserver);
         expect(animationFrames).toHaveLength(0);
+
+        await view.onClose();
+        expect(mutationObservers[0].disconnect).toHaveBeenCalled();
+    });
+
+    it('B-180 skips known chat mutations without hiding a mixed real status bar mutation', async () => {
+        const { view, containerEl } = createView({ panelWidth: 900 });
+        const body = new MockElement('body');
+        type MockMutationObserverInstance = {
+            callback: MutationCallback;
+            observe: jest.Mock;
+            disconnect: jest.Mock;
+        };
+        const mutationObservers: MockMutationObserverInstance[] = [];
+        class MockMutationObserver {
+            readonly observe = jest.fn();
+            readonly disconnect = jest.fn();
+
+            constructor(readonly callback: MutationCallback) {
+                mutationObservers.push(this);
+            }
+        }
+        containerEl.boundingRect = { left: 0, top: 0, right: 900, bottom: 700, width: 900, height: 700 };
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: withMockDomHelpers({ body }),
+        });
+        Object.defineProperty(globalThis, 'MutationObserver', {
+            configurable: true,
+            value: MockMutationObserver,
+        });
+
+        await view.onOpen();
+        const responseDiv = getResponseDiv(view);
+        const knownChatChild = responseDiv.createDiv({ cls: 'pa-chat-known-content' });
+        const detachedRenderBuffer = new MockElement('div');
+        const findStatusBar = jest.fn((selector: string) => (
+            selector === '.status-bar' ? walk(detachedRenderBuffer, element => element.classList.contains('status-bar')) : null
+        ));
+        Object.assign(knownChatChild, { find: findStatusBar });
+        Object.assign(detachedRenderBuffer, { find: findStatusBar });
+        mutationObservers[0].callback([
+            {
+                type: 'childList',
+                target: responseDiv,
+                addedNodes: [knownChatChild],
+                removedNodes: [detachedRenderBuffer],
+            } as unknown as MutationRecord,
+        ], {} as MutationObserver);
+        expect(animationFrames).toHaveLength(0);
+        expect(findStatusBar).not.toHaveBeenCalled();
+
+        const statusBar = body.createDiv({ cls: 'status-bar' });
+        statusBar.boundingRect = { left: 600, top: 672, right: 900, bottom: 700, width: 300, height: 28 };
+        mutationObservers[0].callback([
+            {
+                type: 'childList',
+                target: responseDiv,
+                addedNodes: [knownChatChild],
+                removedNodes: [],
+            } as unknown as MutationRecord,
+            {
+                type: 'childList',
+                target: body,
+                addedNodes: [statusBar],
+                removedNodes: [],
+            } as unknown as MutationRecord,
+        ], {} as MutationObserver);
+        expect(animationFrames).toHaveLength(1);
+        runAnimationFrames();
+        expect(containerEl.style.getPropertyValue('--pa-chat-status-bar-clearance')).toBe('28px');
 
         await view.onClose();
         expect(mutationObservers[0].disconnect).toHaveBeenCalled();
