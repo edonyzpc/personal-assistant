@@ -44,6 +44,7 @@ import type { ChatHost } from './ChatHost';
 import type { ChatHistoryManager } from './chat-history-manager';
 import type { PersistedConversation, PersistedTurn } from './chat-history-store';
 import { ConversationPersistence } from './ConversationPersistence';
+import { prepareChatMarkdownForDisplay } from './markdown-table-compat';
 import { renderMarkdownWithOwner, containsMermaidFence, deferMermaidFences, getMermaidFenceSources, scheduleMermaidEnhancement, renderMermaidSourceWarning } from './mermaid';
 import { CHAT_MENU_IDLE_CLOSE_MS, createChatMenuItem, createChatChoiceMenuItem, createChatMenuDivider, createChatMenuLabel, updateChatMenuAvailableWidth } from './menu-helpers';
 import { registerMessageLongPress } from './message-long-press';
@@ -3240,9 +3241,10 @@ export class LLMView extends ItemView {
             const renderToken = rendered.renderToken;
             const buffer = createRenderBuffer();
             buffer.classList.add('message-render-buffer');
+            const displayMarkdown = prepareChatMarkdownForDisplay(content);
             const mermaidTransform = options.deferMermaid
-                ? deferMermaidFences(content)
-                : { markdown: content, deferred: false, sources: getMermaidFenceSources(content) };
+                ? deferMermaidFences(displayMarkdown)
+                : { markdown: displayMarkdown, deferred: false, sources: getMermaidFenceSources(displayMarkdown) };
             const renderOwner = this.createMarkdownRenderOwner();
             const sourcePath = rendered.sourcePath;
             const hasMermaidSources = mermaidTransform.sources.some((source) => source.trim().length > 0);
@@ -3317,13 +3319,13 @@ export class LLMView extends ItemView {
                 .catch(async (error) => {
                     this.unloadMarkdownRenderOwner(renderOwner);
                     if (rendered.renderToken !== renderToken || !isLive()) return false;
-                    if (!options.deferMermaid && containsMermaidFence(content)) {
+                    if (!options.deferMermaid && containsMermaidFence(displayMarkdown)) {
                         removeElement(buffer);
                         const fallbackBuffer = createRenderBuffer();
                         fallbackBuffer.classList.add('message-render-buffer');
                         const fallbackOwner = this.createMarkdownRenderOwner();
                         try {
-                            const fallbackTransform = deferMermaidFences(content);
+                            const fallbackTransform = deferMermaidFences(displayMarkdown);
                             await renderMarkdownWithOwner(
                                 this.host,
                                 fallbackTransform.markdown,

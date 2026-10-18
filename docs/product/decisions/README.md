@@ -8,6 +8,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-069 | Chat Markdown 表格显示兼容 | Accepted | 顶层段落与表格边界只调整显示输入，保留原文与原生渲染；性能候选不自动进入实现 | [Record](./dec-069-chat-markdown-table-display-compatibility.md) |
 | DEC-068 | Chat 本次修改单卡汇总与整次撤销 | Accepted | 当前请求跨批次结果、完整展开与整次「撤销 / Undo」；双语且保留来源/临时恢复边界 | [Record](./dec-068-chat-request-change-summary.md) |
 | DEC-067 | Pagelet 按笔记独立 Detail 与阅读布局 | Accepted | Pet 直达当前笔记 Detail、独立阅读与提示；保留全部 view/graph，只优化已批准 UI/UX | [Record](./dec-067-pagelet-note-detail-tabs.md) |
 | DEC-066 | Pagelet 入口与阅读闭环 | Accepted | 独立第二轮：短点内容、已看复访、稳定阅读及完整 Agent 交接；来源与权限保持，不扩大 B-175 | [Record](./dec-066-pagelet-reading-loop.md) |

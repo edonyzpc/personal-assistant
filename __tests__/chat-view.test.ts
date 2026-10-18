@@ -7458,6 +7458,77 @@ describe('LLMView turn lifecycle', () => {
         modalOpenSpy.mockRestore();
     });
 
+    it('keeps raw Chat content separate from the Markdown table display copy', async () => {
+        const { view, containerEl } = createView();
+        const renderedMarkdown: string[] = [];
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>)
+            .mockImplementation((_app, markdown, el) => {
+                renderedMarkdown.push(markdown);
+                el.setText(markdown);
+            });
+        await view.onOpen();
+
+        const content = 'Comparison:\n| Name | Value |\n| --- | --- |\n| Alpha | 1 |';
+        const displayMarkdown = 'Comparison:\n\n| Name | Value |\n| --- | --- |\n| Alpha | 1 |';
+        getTextArea(containerEl).value = 'show a table';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk(content);
+        await flushPromises();
+        await flushPromises();
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(view);
+
+        expect(renderedMarkdown.filter(markdown => markdown !== 'show a table')).toEqual([displayMarkdown]);
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, runSourceSelection: _selection, inputLineage: _lineage, ...message }) => message)).toEqual([
+            { role: 'user', content: 'show a table' },
+            { role: 'assistant', content },
+        ]);
+        getButtonByClass(getElementByClass(containerEl, 'assistant'), 'copy-message-button').click();
+        expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(content);
+    });
+
+    it('uses the same table display copy when deferred Mermaid rendering falls back', async () => {
+        const { view, containerEl } = createView();
+        const renderedMarkdown: string[] = [];
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>)
+            .mockImplementation((_app, markdown, el) => {
+                renderedMarkdown.push(markdown);
+                if (markdown.includes('```mermaid')) throw new Error('native Mermaid failed');
+                el.setText(markdown);
+            });
+        await view.onOpen();
+
+        const content = [
+            'Comparison:',
+            '| Name | Value |',
+            '| --- | --- |',
+            '| Alpha | 1 |',
+            '',
+            '```mermaid',
+            'graph TD',
+            'A --> B',
+            '```',
+        ].join('\n');
+        const displayMarkdown = content.replace('Comparison:\n', 'Comparison:\n\n');
+        const deferredDisplayMarkdown = displayMarkdown.replace('```mermaid', '```text');
+        getTextArea(containerEl).value = 'show a table and graph';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk(content);
+        await flushPromises();
+        await flushPromises();
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(view);
+
+        expect(renderedMarkdown.filter(markdown => markdown !== 'show a table and graph'))
+            .toEqual([deferredDisplayMarkdown, displayMarkdown, deferredDisplayMarkdown]);
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, runSourceSelection: _selection, inputLineage: _lineage, ...message }) => message)).toEqual([
+            { role: 'user', content: 'show a table and graph' },
+            { role: 'assistant', content },
+        ]);
+    });
+
     it('renders final Mermaid in the attached message DOM with the current note source path', async () => {
         const loadedOwners = new WeakSet<Component>();
         jest.spyOn(Component.prototype, 'load').mockImplementation(function (this: Component) {
