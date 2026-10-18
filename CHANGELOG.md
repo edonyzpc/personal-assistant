@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [3.0.0](https://github.com/edonyzpc/personal-assistant/compare/2.10.10...3.0.0) (2026-10-18)
+
+### Features
+- share-card: add signatures and preserve complete note exports
+- share-card: add paper folds and night pine palette
+- share-card: add appearance control and preserve code blocks
+- pagelet: enable autonomous discovery
+- pagelet: complete reading and agent handoff
+- pagelet: open per-note detail tabs and improve reading
+- chat: summarize request changes with whole-request undo
+
+### Fix
+- chat: default new conversations to combined mode
+- ui: prevent mobile button text overflow
+- chat: unify entry labels as PA Agent
+- share-card: preserve footnote code and block formatting
+- share-card: refine controls and image count labels
+- pagelet: preserve reading and chat material continuity
+- pagelet: keep pet hover background transparent
+- chat: render paragraph-adjacent markdown tables
+
+### Improvements
+- chat: reuse history DOM and bound rendering work
+
+### Docs
+- share-card: record signature and export repair contracts
+- share-card: record control design and validation
+- share-card: record approved paper folds design
+- pagelet: define autonomous discovery and reading loops
+
+### Tests
+- streamline suites and strengthen boundary coverage
+
 ## [2.10.10](https://github.com/edonyzpc/personal-assistant/compare/2.10.9...2.10.10) (2026-10-14)
 
 ### Features
