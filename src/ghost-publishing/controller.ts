@@ -55,7 +55,6 @@ export interface GhostControllerOptions {
     isPathAllowed(path: string): boolean;
     isContentAllowed(path: string, markdown: string): boolean;
     generateMetadata?: GhostActionContextOptions["generateMetadata"];
-    isPaGeneratedImage?: GhostActionContextOptions["isPaGeneratedImage"];
 }
 export interface GhostControllerRequest {
     path: string;
@@ -183,7 +182,7 @@ export class GhostPublishingController {
                 getProfile: () => connection.profile, getSourceRevision: path => this.options.getSourceRevision(path),
                 isResourcePathAllowed: (resourcePath, ownerPath) => this.options.isPathAllowed(ownerPath) && this.options.isPathAllowed(resourcePath),
                 defaultVisibility: connection.defaultVisibility, signal: abort.signal, generateMetadata: this.options.generateMetadata,
-                metadataDebug: authority.metadataDebug, isPaGeneratedImage: this.options.isPaGeneratedImage });
+                metadataDebug: authority.metadataDebug });
             return { ...created, release };
         } catch (error) { release(); throw error; }
     }

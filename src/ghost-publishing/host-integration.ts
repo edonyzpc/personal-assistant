@@ -39,7 +39,6 @@ export class GhostPublishingIntegration {
         isContentAllowed(this: void, path: string, markdown: string): boolean;
         isWebAllowed(this: void): boolean;
         generateMetadata?: GhostControllerOptions["generateMetadata"];
-        isPaGeneratedImage?: GhostControllerOptions["isPaGeneratedImage"];
     }) {
         const { app, vaultPath, pluginId } = dependencies;
         const isDesktop = () => Platform.isDesktop && !Platform.isMobile && !this.disposed && dependencies.isCurrent();
@@ -58,7 +57,6 @@ export class GhostPublishingIntegration {
             isContentAllowed: dependencies.isContentAllowed,
             isCurrent: () => !this.disposed && dependencies.isCurrent(),
             generateMetadata: dependencies.generateMetadata,
-            isPaGeneratedImage: dependencies.isPaGeneratedImage,
             isWebViewerEnabled: () => {
                 const internal = app as unknown as { internalPlugins?: {
                     getPluginById?(id: string): { enabled?: boolean } | undefined;

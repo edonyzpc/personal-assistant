@@ -926,7 +926,7 @@ describe("Ghost publishing deterministic export", () => {
         expect(note.content).toBe(main);
     });
 
-    it("credits a YAML-selected image only when it resolves to the main PA declaration", async () => {
+    it("adds the fixed caption to a YAML-selected image that also has a main PA declaration", async () => {
         const result = await prepareGhostExport({
             targetPath: "Main.md", host: createHost([
                 fakeFile("Main.md", "---\nfeature_image: cover.png\n---\n> [!personal-assistant]+ Featured Images\n> ![[images/cover.png]]\n\nBody."),
@@ -1057,7 +1057,7 @@ describe("Ghost publishing deterministic export", () => {
         });
         expect(explicit.fields.featureImage).toMatchObject({ mode: "manage", value: "pending-resource://resource-1" });
         expect(explicit.resources[0]).toMatchObject({ source: "explicit.png" });
-        expect(explicit.fields.featureImageCaption).toBeUndefined();
+        expect(explicit.fields.featureImageCaption).toEqual({ mode: "manage", value: PA_GENERATED_FEATURE_IMAGE_CAPTION });
 
         const cleared = await prepareGhostExport({
             targetPath: "Main.md",
@@ -1075,6 +1075,7 @@ describe("Ghost publishing deterministic export", () => {
         });
         expect(ordinary.fields.featureImage).toMatchObject({ mode: "manage", value: "pending-resource://resource-1" });
         expect(ordinary.resources[0]).toMatchObject({ source: "ordinary.png" });
+        expect(ordinary.fields.featureImageCaption).toEqual({ mode: "manage", value: PA_GENERATED_FEATURE_IMAGE_CAPTION });
 
         await expect(prepareGhostExport({
             targetPath: "Main.md",

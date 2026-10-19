@@ -106,23 +106,47 @@ function remotePost(id = POST): GhostPost {
         custom_excerpt: "Old summary", meta_description: "Old SEO", codeinjection_head: null, codeinjection_foot: null, published_at: NOW };
 }
 describe("Ghost current-source preparation and frozen candidate authority", () => {
-    it.each([true, false])("attributes a YAML cover using only its admitted path and actual byte hash (generated: %s)", async generated => {
+    it.each(["original", "edited"])("adds the fixed caption to a %s YAML cover without local generation records", async version => {
         const f = fixture();
         f.replace(f.files[0], body(f.files[0]), { feature_image: "cover.png" });
-        const lookup = jest.fn(async (_path: string, _hash: string) => generated);
-        f.options.isPaGeneratedImage = lookup;
+        if (version === "edited") f.files[2].bytes = new Uint8Array([...bytes, 2]);
         const action = await createGhostActionContext(f.options);
         const prepared = await action.context.prepare(null);
-        expect(lookup).toHaveBeenCalledWith("cover.png", prepared.images[0].metadata.byteHash);
-        expect(lookup).toHaveBeenCalledTimes(1);
-        expect(prepared.candidate.content.feature_image_caption).toBe(generated ? PA_GENERATED_FEATURE_IMAGE_CAPTION : null);
-        expect(prepared.candidate.managedFields.includes("feature_image_caption")).toBe(generated);
+        expect(prepared.candidate.content.feature_image_caption).toBe(PA_GENERATED_FEATURE_IMAGE_CAPTION);
+        expect(prepared.candidate.managedFields).toContain("feature_image_caption");
+        expect(ghostManagedWrite(prepared.candidate).feature_image_caption).toBe(PA_GENERATED_FEATURE_IMAGE_CAPTION);
+        expect(ghostPreviewWrite(prepared.candidate, "#preview").feature_image_caption).toBe(PA_GENERATED_FEATURE_IMAGE_CAPTION);
     });
 
-    it("rechecks source permission after cover provenance lookup", async () => {
+    it("adds the fixed caption to a downloaded remote cover", async () => {
+        const f = fixture();
+        f.replace(f.files[0], body(f.files[0]), { feature_image: "https://images.example/cover.png" });
+        const action = await createGhostActionContext(f.options);
+        const prepared = await action.context.prepare(null);
+        expect(f.downloadImage).toHaveBeenCalledTimes(1);
+        expect(prepared.candidate.content.feature_image_caption).toBe(PA_GENERATED_FEATURE_IMAGE_CAPTION);
+        expect(prepared.candidate.managedFields).toContain("feature_image_caption");
+    });
+
+    it.each(["missing", "unreadable"])("still rejects a %s selected cover", async availability => {
         const f = fixture();
         f.replace(f.files[0], body(f.files[0]), { feature_image: "cover.png" });
-        f.options.isPaGeneratedImage = async () => { f.state.receipt = false; return true; };
+        if (availability === "missing") f.files.splice(2, 1);
+        else f.readBinary.mockRejectedValue(new Error("File cannot be read"));
+        const action = await createGhostActionContext(f.options);
+        await expect(action.context.prepare(null)).rejects.toBeInstanceOf(Error);
+        expect(f.processFrontMatter).not.toHaveBeenCalled();
+    });
+
+    it("still rechecks source permission after reading a cover", async () => {
+        const f = fixture();
+        f.replace(f.files[0], body(f.files[0]), { feature_image: "cover.png" });
+        const readBinary = f.readBinary.getMockImplementation()!;
+        f.readBinary.mockImplementation(async source => {
+            const result = await readBinary(source);
+            f.state.receipt = false;
+            return result;
+        });
         const action = await createGhostActionContext(f.options);
         await expect(action.context.prepare(null)).rejects.toMatchObject({ code: "source-revoked" });
         expect(f.processFrontMatter).not.toHaveBeenCalled();

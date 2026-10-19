@@ -148,7 +148,7 @@ export function prepareGhostSnapshot(options: PrepareGhostSnapshotOptions): Ghos
         content.feature_image_caption = caption.mode === "manage" ? caption.value ?? null : null;
         managedFields.push("feature_image_caption");
     } else if (content.feature_image_caption === PA_GENERATED_FEATURE_IMAGE_CAPTION) {
-        // An old PA attribution must not follow a cover whose current source is unknown.
+        // Remove the old fixed caption when the current note has no cover.
         content.feature_image_caption = null;
         managedFields.push("feature_image_caption");
     }

@@ -3,7 +3,7 @@ import { ghostMetadataFailureReason } from "../ai-services/ghost-tool-receipt";
 import { GhostNoteBindingAdapter, type GhostBindingHost, type GhostNoteSelection } from "./binding";
 import type { GhostClient, GhostPost, GhostRequestGate, GhostVisibility } from "./client";
 import { prepareGhostExport } from "./exporter";
-import { GHOST_CUSTOM_EXCERPT_MAX, GHOST_META_DESCRIPTION_MAX, mergeGhostTagNames, PA_GENERATED_FEATURE_IMAGE_CAPTION } from "./fields";
+import { GHOST_CUSTOM_EXCERPT_MAX, GHOST_META_DESCRIPTION_MAX, mergeGhostTagNames } from "./fields";
 import { isValidGhostSlug } from "./slug";
 import { resolveGhostWikiLinks } from "./wiki-links";
 import { prepareGhostResource, type GhostResourceOptions } from "./resources";
@@ -44,8 +44,6 @@ export interface GhostActionContextOptions {
     wikiLinks?: Record<string, WikiLinkTarget>;
     generateMetadata?: GhostMetadataGenerator;
     metadataDebug?: import("../ai-services/ghost-metadata").GhostMetadataDebugScope;
-    /** Body-free provenance for the already admitted local cover bytes. */
-    isPaGeneratedImage?(path: string, byteHash: string): Promise<boolean>;
 }
 
 export class GhostActionContextError extends Error {
@@ -262,15 +260,6 @@ export async function createGhostActionContext(options: GhostActionContextOption
             await prepareMetadata(exported, remote);
             const images: GhostPreparedImage[] = [];
             for (const plan of exported.resources) images.push(await resource(plan));
-            if (exported.fields.featureImageCaption?.mode !== "manage" && options.isPaGeneratedImage) {
-                const cover = images.find(image => `pending-resource://${image.metadata.id}` === exported.fields.featureImage.value);
-                if (cover?.metadata.resolvedPath) {
-                    assertPreparing();
-                    const generated = await options.isPaGeneratedImage(cover.metadata.resolvedPath, cover.metadata.byteHash);
-                    assertPreparing();
-                    if (generated) exported.fields.featureImageCaption = { mode: "manage", value: PA_GENERATED_FEATURE_IMAGE_CAPTION };
-                }
-            }
             const candidate = prepareGhostSnapshot({ exported, profile, resources: images.map(image => image.metadata),
                 remote: remote ?? undefined, defaultVisibility: options.defaultVisibility, allowPendingResources: true });
             assertPreparing();

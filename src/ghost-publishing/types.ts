@@ -107,7 +107,7 @@ export interface GhostPublishingFields {
     /** Main-note Obsidian tags, merged only when ghost.tags does not override defaults. */
     noteTags?: string[];
     featureImage: ManagedFieldValue<string>;
-    /** Attribution derived from an explicit PA declaration or a saved generation output. */
+    /** Fixed caption for the selected cover, included after its resource is prepared. */
     featureImageCaption?: ManagedFieldValue<string>;
     customExcerpt: ManagedFieldValue<string>;
     metaDescription: ManagedFieldValue<string>;

@@ -33,8 +33,8 @@ function post(value: GhostSnapshot, changes: Partial<GhostPost> = {}): GhostPost
 }
 
 describe("Ghost current publication candidates", () => {
-    it("carries PA cover attribution through draft writes, published updates and readback", async () => {
-        const source = await exported("> [!personal-assistant]+ Featured Images\n> ![[cover.png]]\n\nCurrent body.");
+    it("carries the fixed caption for an ordinary cover through draft writes, published updates and readback", async () => {
+        const source = await exported("Current body.", { feature_image: "cover.png" });
         const resource: GhostStoredResource = { id: source.resources[0].id, source: "cover.png", resolvedPath: "cover.png",
             byteHash: "ab".repeat(32), byteLength: 10, mimeType: "image/png", url: "https://example.test/images/current.png" };
         const remote = post(await candidate(), { feature_image_caption: "Old caption" });

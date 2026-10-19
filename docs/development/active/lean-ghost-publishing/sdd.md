@@ -1,7 +1,7 @@
 # Lean Ghost Publishing Software Design
 
 Document status: Approved
-Updated: 2026-10-06
+Updated: 2026-10-19
 Work item: B-163
 Authority: 基于 Owner 已批准 DEC-053/Spec 与本轮开发授权的实现设计；不是运行验收证明。
 Product spec: [Ghost Publishing](../../../product/specs/pa-ghost-blog-publishing-product-spec.md)
@@ -34,6 +34,7 @@ Tracker: [Development Tracker](./tracker.md)
 | 意图和选源歧义 | 主 Agent | 当前显式请求；不允许模型指定远端 post ID 或正文 |
 | 当前范围/外发权限/取消/真实文件身份 | Host 与现有 SourceAccess | 当前 scope、selection、permission 与实际文件，不以全局元数据 epoch 替代 |
 | 按 ID 查询、转换、保存、版本冲突、回写及清理 | Ghost domain | GHOST_ID、API 响应、冻结候选、exact preview pointer |
+| 有可用封面即添加固定 caption | Ghost exporter 与 snapshot | Owner 2026-10-19 修订；实际选中封面资源，不再查询本机生成记录或匹配生成时哈希；资源准备失败仍停止保存 |
 | 已发布更新的人工确认 | 当前 session 的 UI 动作 | 对本次候选和原文章 ID 的真实点击，不可由 tool 参数或旧 Chat 伪造 |
 | 状态/效果入 Chat | 现有结果事实通道 | 已确认草稿、待确认候选、更新成功、明确失败或实际未知；不另建 journal |
 
@@ -53,6 +54,10 @@ Tracker: [Development Tracker](./tracker.md)
   confirm(noteKey, operationId, context) 构成主路径；重新同步再次 prepare。会话只读访问
   支持结果投影，删除 checkPreview/refresh/restore/changeDraftUrl 专门服务操作。
 - GhostSnapshot 继续承载本次可编辑内容、资源/来源清单和渲染 recipe；不作历史 baseline。
+  封面资源引用一经选定即附固定 PA caption，资源准备成功后进入同一个候选；不依赖
+  Chat 图片生成数据库。资源哈希继续用于当前资源身份、上传复用与固定候选一致性，
+  不作为固定 caption 的生成来源准入条件。无封面时沿用固定 PA caption 清除、人工
+  caption 保留行为。
   GhostLocalOperation 改为会话对象，保留 operationId/revision、冻结 candidate、target 和
   verified 结果，状态为 preparing、prepared、draft_saved、updated、failed、outcome_unknown。
   cleanup/binding 失败为已知成功的附加事实，不生成持久恢复阶段。

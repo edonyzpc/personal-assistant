@@ -2,7 +2,7 @@
 
 Document status: Current
 Delivery status: Validated
-Updated: 2026-10-07
+Updated: 2026-10-19
 Work item: B-163
 Authority: 本 track 唯一执行状态、分工和验证记录。
 Product spec: [Ghost Publishing](../../../product/specs/pa-ghost-blog-publishing-product-spec.md)
@@ -10,12 +10,23 @@ SDD: [Implementation design](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: 实现、独立风险审查、自动化检查、已部署运行路径与真实窗口按钮验收完成，Validated。
-- Next action: 本次开发测试无剩余必需任务；后续 Git 交付、closeout 或 release 按单独授权执行，不自动归档。
-- Blocker / decision needed: 无。先前窗口证据异常已解决：观察到页面 visibility=hidden；显式前置 test vault 窗口并执行原生 AX Raise 后取得当前画面，完成真实按钮操作。Owner 明确 GLM 周限额，本任务未启动或探测 GLM，全部由 GPT 实现验证。
-- Last verified behavior: production build/type-check、lint 通过；全量 376 suites/8915 tests PASS，唯一旧工具失败已定向修复为 1 suite/55 tests PASS。test vault 真实 Host/controller/client 完成新建、覆盖、隔离预览、固定候选确认与清理；实际点击 Ask、首次 Open preview、Edit in Ghost、published preview 和确认按钮通过。快速双击确认只产生一次原 ID PUT；本机合成响应，不声称真实 Ghost/AI 线上验收。
-- Authorization: Owner 2026-10-06 要求按 SDD 设计开发测试方案并由 GPT 完成开发验证；不含 commit/push、closeout 或 release。
-- Baseline: master 工作区已有本对话的 10 个方案文档改动，无运行代码改动；保留所有已有内容。
+- Current phase: 2026-10-19 固定封面 caption 规则修订已完成实现、独立审查、自动化和 test vault 已部署运行验证，Validated。
+- Next action: 本轮开发验证已完成，代码、测试及契约按 Owner 新授权纳入本地 master 提交；远端推送、closeout、release 或部署 anthelion 按单独授权执行。
+- Blocker / decision needed: 无。沿用本任务已记录的 GLM 周限额后 GPT 接管，由 GPT 继续实现验证；另一 GPT 只读独立审查。
+- Last verified behavior: 本轮 lint、production build/type-check、全量 398 suites/9746 tests PASS，make deploy 自然退出 0。Obsidian 1.14.4 / test PA 3.0.0 当前构建的真实 controller/client 对普通、字节已变化的两份封面完成草稿 POST 与 GET 读回，caption 均在 candidate、受管字段和 payload 中；无题图声明、无生成来源 hook，未调用真实 AI/Ghost。测试图片、笔记和本地服务已清理，debug/mobile 保持原状态。原 2026-10-07 UI/确认验收仍仅作为未改动交互的历史证据，不冒称本轮真实按钮验收。
+- Authorization: 原 2026-10-06 开发测试授权；2026-10-19 Owner 明确要求有可用封面即自动加固定 caption，不受本机生成记录或哈希匹配限制，随后要求“将代码修改提交到master”，授权本轮相关代码、测试和契约的本地 master 提交。远端 push、closeout、release、部署 anthelion 或线上 Ghost 内容变更仍未授权。
+- Baseline: 本轮开始为 master `e2a1a050`，工作区干净；本轮不修改 anthelion 笔记或安装插件。
+
+## 2026-10-19 Caption Rule Revision
+
+- Explicit requirement: 有可用封面就自动加固定 PA caption，进入草稿/预览供用户确认；取消生成来源限制。
+- Verified facts: 旧 exporter 要求主笔记题图声明，action-context 另查本机生成记录的路径/字节哈希；跨设备仅同步图片不能满足该本机查询。普通图片资源准备和固定候选本来已各有身份与权限检查。
+- Ownership: exporter 决定选中封面的固定字段；resource 准备拥有可读性与字节身份；snapshot 拥有受管 caption/payload；service 保持草稿、预览及已发布更新确认。Agent 不提供生成证明，不改变来源权限。
+- Implementation scope: 删除仅用于 Ghost caption 的生成来源查询接线，保留通用图片资产身份与资源哈希；不新增同步账本或来源属性。
+- Evidence mapping: B-163/REQ-04、B-163/AC-02、B-163/AC-08 → 普通本地图、编辑后图片、远程封面均生成固定 caption；无封面/明确清空不添加，缺失图片和权限撤销仍拒绝；snapshot/payload/读回保持。新行为在旧实现下 5/112 失败，修订后 3 suites/112 tests PASS；新增缺失/不可读边界后 action-context 46 tests PASS；最终全量包含全部当前输入并通过。
+- Risk / review: 修改外部草稿字段但不改变上线权限，按跨模块写入行为由另一 GPT 只读审查实际 diff 与原始证据。文档检查及 diff check 收口；输入冻结后仅因相关变更或具体失败补测。
+- Rollback: 恢复旧的 caption 来源识别规则及接线；不删除生成记录、图片或远端文章。本轮尚未部署 anthelion，不改既有线上内容。
+- Evidence: `/tmp/pa-ghost-caption-20261019-0jk1LH/{before,focused,boundaries,deploy}.log` 与 `smoke-result.json`。原始生产构建与安装 bundle SHA-256 为 `1b00a773c337a347b46a22a18a92257b20d7cd04b765ddd8f26b3f658d20f922`；独立 GPT `/root/observation_contract` 审查实际 15 文件 diff，无 P0/P1/P2 finding。应用证据限真实安装版与本机合成 Ghost，不作为线上或按钮验收。
 
 ## Ownership And Sequence
 
@@ -65,6 +76,10 @@ SDD: [Implementation design](./sdd.md)
 | 2026-10-06 | B-163/REQ-03、B-163/REQ-07、B-163/REQ-09；B-163/AC-03、B-163/AC-05 | 真实确认 / 快速重复点击 | PASS | 准备后编辑合成 note，再用 CUA 对确认按钮 clickCount=2；原 ID PUT 仅一次，保持 published，正文仍是本次固定候选，准确 preview 已 DELETE，新文仍 draft。第二击在完成后进入同位置后台入口，无重复提交；可见 Article updated 与正确原 ID 后台 URL。errors=[]；`/tmp/pa-b163-ui-updated.png`、`/tmp/pa-b163-ui-evidence.json` |
 | 2026-10-07 | 测试环境 | UI 补验恢复 | PASS | 真实 Chat/卡片/Host/client，Chat stream 与 metadata 使用本地确定性替身，Ghost 仅 loopback 合成服务；未调用真实 AI/Ghost。恢复原配置、stream、metadata；临时网页 tab 已关闭；最终 viewer=false、debug=false、mobile=false、smokeActive=false、ownedServers=[]，与基线一致。合成笔记/独立测试 Chat 保留；`/tmp/pa-b163-ui-cleanup.json` |
 | 2026-10-07 | B-163/REQ-01 至 B-163/REQ-12；B-163/AC-01 至 B-163/AC-09 | 完成性核对 | PASS | 独立 GPT 逐组核对当前 Spec/SDD、实际测试与原始日志；唯一剩余可见按钮项已由 root 补验。生产输入未变，复用既有构建和自动化；不增加已排除的跨设备、恢复或线上发布范围 |
+| 2026-10-19 | B-163/REQ-04；B-163/AC-02、B-163/AC-08 | 固定 caption 回归与独立审查 | PASS | 新预期旧实现 5/112 FAIL → 3 suites/112 PASS；加入缺失/不可读边界后 action-context 46 PASS。另一 GPT 独立审查 8源码/3测试/4契约文档，无 P0/P1/P2；不把旧来源条件作为新验收。原始记录见本轮 Evidence |
+| 2026-10-19 | 本轮生产输入 | lint / build / full Jest / test deploy | PASS | `make deploy` 自然 exit 0，398 suites/9746 tests PASS，包含 type-check、文档合同及相关 Ghost suites；当前构建已复制 test，未重复完整门禁。全 src 社区 DOM 注入扫描无匹配，exit 1；diff check PASS |
+| 2026-10-19 | B-163/AC-02、B-163/AC-08；测试环境 | 已部署 app-runtime 与清理 | PASS（受控接口） | test 实际路径核对、当前 bundle 与 dist 字节一致、重载 PA 3.0.0。两份封面实际字节哈希不同、无 PA 题图声明，均在真实 controller/client 的 candidate/POST draft/GET readback 携带 caption；仅 loopback，两次 POST draft、两次上传、两次 GET，无线上或 AI 请求。首轮探针未落结果不计 PASS；修正空目录删除参数及 finally 错误落盘后复跑验证。临时服务关闭、文件和目录清理为零；CLI debug 由原 off 临时 on 后恢复 off，mobile=false、settings.debug=false 均保持，原 controller/session/config 引用不变 |
+| 2026-10-19 | 文档与最终状态 | docs / whitespace | PASS | 首轮 docs:check 因本 Tracker Implementing 与既有 share-card-sharer 同为 Now 而失败；未改其他 Tracker 或 checker。本轮必需证据完成后如实标 Validated，最终 docs:check 330 Markdown/4243 local links PASS、git diff --check PASS，记录 `docs-final.log`；原始失败保留 `docs.log` |
 
 最终 broad gate 由 root 执行一次：lint、production build、test:all、diff/docs 检查和社区 DOM 源码扫描。
 已通过 lint/build/full gate 时以 deploy-current 部署，否则用 make deploy 包办，避免重复。

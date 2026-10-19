@@ -2026,8 +2026,6 @@ export class PluginManager extends Plugin {
                         getAPIToken: () => this.getAPIToken(),
                         log: (message, detail) => this.log(message, detail),
                     }, input),
-                    isPaGeneratedImage: async (path, byteHash) =>
-                        this.chatHistoryStore?.isGeneratedImageAtPath(path, byteHash) ?? false,
                 });
                 this.ghostPublishingConfiguration = this.ghostPublishingIntegration.configuration;
             }

@@ -60,11 +60,7 @@ export async function prepareGhostExport(options: PrepareGhostExportOptions): Pr
             mode: "manage",
             value: converted.fieldResourceReferences.featureImage,
         };
-        const cover = converted.resources.find(resource => `pending-resource://${resource.id}` === fields.featureImage.value);
-        const declaredByPa = cover && preparedBody.paFeatureImageSources.some(imageSource =>
-            imageSource.trim() === cover.source || cover.kind === "local" && cover.resolvedPath
-                && options.host.metadataCache?.getFirstLinkpathDest?.(imageSource, source.targetPath)?.path === cover.resolvedPath);
-        if (declaredByPa) fields.featureImageCaption = { mode: "manage", value: PA_GENERATED_FEATURE_IMAGE_CAPTION };
+        fields.featureImageCaption = { mode: "manage", value: PA_GENERATED_FEATURE_IMAGE_CAPTION };
     }
 
     const warnings = [...converted.warnings];
