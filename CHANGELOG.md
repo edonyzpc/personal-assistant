@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [3.0.1](https://github.com/edonyzpc/personal-assistant/compare/3.0.0...3.0.1) (2026-10-20)
+
+### Features
+- ui: preserve interaction state across refreshes
+
+### Fix
+- ghost: add fixed captions to all prepared covers
+- ci: update notices for UI runtime dependencies
+
 ## [3.0.0](https://github.com/edonyzpc/personal-assistant/compare/2.10.10...3.0.0) (2026-10-18)
 
 ### Features
