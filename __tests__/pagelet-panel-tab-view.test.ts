@@ -9,6 +9,18 @@
 
 import { afterAll, beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { installObsidianDocumentHelpers } from "./helpers/obsidian-dom";
+import type { SavedInsightListProps } from '../src/pagelet/ui/SavedInsightList';
+
+const mockSavedLists: Array<{ props: SavedInsightListProps; update: jest.Mock<(props: SavedInsightListProps) => void>; notifyLayout: jest.Mock;
+    rebindDocument: jest.Mock; unmount: jest.Mock }> = [];
+jest.mock('../src/pagelet/ui/SavedInsightList', () => ({
+    mountSavedInsightList: (_container: HTMLElement, props: SavedInsightListProps) => {
+        const handle = { props, update: jest.fn((next: SavedInsightListProps) => { handle.props = next; }),
+            notifyLayout: jest.fn(), rebindDocument: jest.fn(), unmount: jest.fn() };
+        mockSavedLists.push(handle);
+        return handle;
+    },
+}));
 
 const mockMarkdownRender = jest.fn((
     _app: unknown,
@@ -43,6 +55,7 @@ jest.mock("obsidian", () => ({
             this.app = {};
             this.leaf = leaf;
             this.contentEl = (globalThis as unknown as { document: Document }).document.createElement("div");
+            (this.contentEl as FakeElement).isConnected = true;
         }
     },
 }));
@@ -68,6 +81,20 @@ class FakeElement {
     scrollTop = 0;
     tabIndex = 0;
     value = "";
+    hidden = false;
+    clientHeight = 220;
+    scrollHeight = 2000;
+
+    readonly ownerDocument = globalThis.document;
+    contains(target: FakeElement | null): boolean {
+        for (let node = target; node; node = node.parent) if (node === this) return true;
+        return false;
+    }
+    replaceChildren(...children: FakeElement[]): void {
+        for (const child of [...this.children]) this.removeChild(child);
+        this.ownText = '';
+        for (const child of children) this.appendChild(child);
+    }
 
     constructor(tagName: string) {
         this.tagName = tagName.toUpperCase();
@@ -138,6 +165,14 @@ class FakeElement {
         child.parent = this;
         child.setConnected(this.isConnected);
         this.children.unshift(child);
+        return child;
+    }
+
+    insertBefore<T extends FakeElement>(child: T, reference: FakeElement): T {
+        if (child.parent) child.parent.children = child.parent.children.filter(node => node !== child);
+        child.parent = this;
+        child.setConnected(this.isConnected);
+        this.children.splice(this.children.indexOf(reference), 0, child);
         return child;
     }
 
@@ -222,11 +257,13 @@ class FakeElement {
     }
 
     getBoundingClientRect(): DOMRect {
+        let top = 0;
+        for (let ancestor = this.parent; ancestor; ancestor = ancestor.parent) top -= ancestor.scrollTop;
         return {
-            top: 0,
+            top,
             left: 0,
             right: 360,
-            bottom: 220,
+            bottom: top + 220,
             width: 360,
             height: 220,
             x: 0,
@@ -261,6 +298,7 @@ class FakeElement {
 
     private matchesSimpleSelector(node: FakeElement, selector: string): boolean {
         if (selector === "*") return true;
+        if (selector.startsWith('[data-') && selector.endsWith(']')) return node.getAttribute(selector.slice(1, -1)) !== null;
         if (selector === "[data-pa-memory-focus-key]") {
             return node.getAttribute("data-pa-memory-focus-key") !== null;
         }
@@ -283,6 +321,10 @@ class FakeDocument {
     readonly head = new FakeElement("head");
     readonly body = new FakeElement("body");
     activeElement: FakeElement | null = null;
+    private listeners = new Map<string, Set<(event: unknown) => void>>();
+    readonly defaultView = { setTimeout, clearTimeout, performance,
+        requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 0; },
+        cancelAnimationFrame: () => undefined };
 
     constructor() {
         this.head.isConnected = true;
@@ -291,11 +333,13 @@ class FakeDocument {
     }
 
     createElement(tagName: string): FakeElement {
-        return new FakeElement(tagName);
+        const element = new FakeElement(tagName);
+        Object.defineProperty(element, 'ownerDocument', { value: this });
+        return element;
     }
 
     createElementNS(_namespace: string, tagName: string): FakeElement {
-        return new FakeElement(tagName);
+        return this.createElement(tagName);
     }
 
     getElementById(id: string): FakeElement | null {
@@ -303,8 +347,17 @@ class FakeDocument {
         return all.find((node) => node.getAttribute("id") === id) ?? null;
     }
 
-    addEventListener(): void {}
-    removeEventListener(): void {}
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+        const listeners = this.listeners.get(type) ?? new Set();
+        listeners.add(listener);
+        this.listeners.set(type, listeners);
+    }
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+        this.listeners.get(type)?.delete(listener);
+    }
+    dispatch(type: string, event: unknown): void {
+        for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
 }
 
 const globalRecord = globalThis as unknown as Record<string, unknown>;
@@ -524,7 +577,7 @@ describe("Pagelet panel and tab view regressions", () => {
             await jest.advanceTimersByTimeAsync(50);
             expect(validate).toHaveBeenCalledTimes(2);
             expect(content.querySelector(".pa-pagelet-panel-timeline-insight")).toBe(markdown);
-            expect(content.querySelector(".pa-pagelet-tab-body")?.querySelector("button")?.disabled).toBe(true);
+            expect(content.querySelector(".pa-pagelet-panel-finding-actions")?.querySelector("button")?.disabled).toBe(true);
             await view.onClose();
             expect(jest.getTimerCount()).toBe(0);
         } finally {
@@ -551,6 +604,7 @@ describe("Pagelet panel and tab view regressions", () => {
             insightText: candidate.body, sourceFile: "notes/anchor.md" };
         panel.mount(container as unknown as HTMLElement);
         panel.open("discover", [finding], {
+            entityId: candidate.id,
             sourcePath: "notes/anchor.md",
             reading: { anchorPath: "notes/anchor.md", label: "Analyzing" },
         });
@@ -561,15 +615,59 @@ describe("Pagelet panel and tab view regressions", () => {
         await sourceToggle?.click();
         if (body) body.scrollTop = 487;
         panel.open("discover", [{ ...finding, actionStatus: { label: "Ready to discuss" } }], {
+            entityId: candidate.id,
             sourcePath: "notes/anchor.md",
             reading: { anchorPath: "notes/anchor.md", label: "New results are available" },
         });
         expect(container.querySelector(".pa-pagelet-panel-timeline-insight")).toBe(markdown);
         expect(container.querySelector(".pa-pagelet-panel-source-toggle")).toBe(sourceToggle);
-        expect(panel.getReadingPosition()).toEqual({ scrollTop: 487, sourcesExpanded: [true] });
+        expect(panel.getReadingPosition()).toMatchObject({ scrollTop: 487, sourcesExpanded: [true] });
         expect(container.textContent).toContain("New results are available");
         expect(container.textContent).toContain("Ready to discuss");
         expect(mockMarkdownRender).toHaveBeenCalledTimes(1);
+        (globalRecord.document as FakeDocument).dispatch('pointerdown', { target: markdown });
+        const updateBody = (text: string, entityId = candidate.id) => panel.open('discover', [{
+            ...finding, description: text, insightText: text,
+        }], { entityId, sourcePath: 'notes/anchor.md' });
+        updateBody('An intermediate update.');
+        updateBody('The latest complete update.');
+        expect(container.querySelector('.pa-pagelet-panel-timeline-insight')).toBe(markdown);
+        expect(markdown?.textContent).toBe(candidate.body);
+        expect(container.querySelector('.pa-pagelet-native-update')?.hidden).toBe(false);
+        await container.querySelector('.pa-pagelet-native-show-latest')?.click();
+        expect(markdown?.textContent).toBe('The latest complete update.');
+        expect(mockMarkdownRender).toHaveBeenCalledTimes(2);
+        updateBody('A different entity.', 'replacement');
+        await Promise.resolve();
+        expect(container.querySelector('.pa-pagelet-panel-timeline-insight')).not.toBe(markdown);
+        expect(container.querySelector('.pa-pagelet-panel-timeline-insight')?.textContent).toBe('A different entity.');
+        panel.destroy();
+    });
+
+    it('captures expanded Sources without a scroll event before the Panel close callback reads its position', async () => {
+        const container = new FakeElement('div');
+        container.isConnected = true;
+        let closedPosition: ReturnType<PanelView['getReadingPosition']> | undefined;
+        const panel: PanelView = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => { closedPosition = panel.getReadingPosition(); },
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => 'en',
+        });
+        const candidate = readingCandidate('close-disclosure');
+        panel.mount(container as unknown as HTMLElement);
+        panel.open('discover', [{ title: candidate.title, description: candidate.body,
+            insightText: candidate.body, sourceFile: 'notes/anchor.md' }], {
+            entityId: candidate.id, sourcePath: 'notes/anchor.md',
+        });
+        await Promise.resolve();
+        await container.querySelector('.pa-pagelet-panel-source-toggle')?.click();
+        panel.close();
+        expect(closedPosition).toMatchObject({ scrollTop: 0, sourcesExpanded: [true], disclosures: ['sources'] });
         panel.destroy();
     });
 
@@ -612,11 +710,11 @@ describe("Pagelet panel and tab view regressions", () => {
             return () => finish();
         };
         const finishFirst = openDeferred(371);
-        expect(panel.getReadingPosition().scrollTop).toBe(0);
+        expect(container.querySelector('.pa-pagelet-panel-body')?.scrollTop).toBe(0);
         finishFirst();
         await Promise.resolve();
         await Promise.resolve();
-        expect(panel.getReadingPosition()).toEqual({ scrollTop: 371, sourcesExpanded: [true] });
+        expect(panel.getReadingPosition()).toMatchObject({ scrollTop: 371, sourcesExpanded: [true] });
 
         panel.close();
         const finishOld = openDeferred(412);
@@ -625,11 +723,11 @@ describe("Pagelet panel and tab view regressions", () => {
         finishOld();
         await Promise.resolve();
         await Promise.resolve();
-        expect(panel.getReadingPosition().scrollTop).toBe(0);
+        expect(container.querySelector('.pa-pagelet-panel-body')?.scrollTop).toBe(0);
         finishCurrent();
         await Promise.resolve();
         await Promise.resolve();
-        expect(panel.getReadingPosition()).toEqual({ scrollTop: 219, sourcesExpanded: [true] });
+        expect(panel.getReadingPosition()).toMatchObject({ scrollTop: 219, sourcesExpanded: [true] });
         expect(container.querySelector(".pa-pagelet-panel-timeline-insight")?.textContent).toBe(candidate.body);
         panel.destroy();
     });
@@ -745,7 +843,7 @@ describe("Pagelet panel and tab view regressions", () => {
         reading.selectedId = candidate.id;
         update();
         await Promise.resolve();
-        expect(content.querySelector(".pa-pagelet-tab-body")?.textContent).toContain(candidate.body);
+        expect(content.querySelector(".pa-pagelet-tab-body")?.textContent).not.toContain(candidate.body);
         expect(reading.onSelect).not.toHaveBeenCalled();
         const hydrated = content.querySelector(".pa-pagelet-panel-timeline-insight");
         update();
@@ -753,6 +851,7 @@ describe("Pagelet panel and tab view regressions", () => {
         displayed = true;
         view.notifyDisplayed();
         await Promise.resolve();
+        expect(content.querySelector('.pa-pagelet-tab-body')?.textContent).toContain(candidate.body);
         expect(reading.onSelect).toHaveBeenCalledWith(candidate);
         await view.onClose();
     });
@@ -907,6 +1006,7 @@ describe("Pagelet panel and tab view regressions", () => {
         globalRecord.confirm = originalConfirm;
         clearPageletDetailSessionCache();
         mockMarkdownRender.mockClear();
+        mockSavedLists.length = 0;
     });
 
     afterAll(() => {
@@ -1257,6 +1357,7 @@ describe("Pagelet panel and tab view regressions", () => {
             extra: { markdown },
             sourcePath: ".pagelet/scope-recap.md",
         });
+        await Promise.resolve();
 
         const contentEl = view.contentEl as unknown as FakeElement;
         expect(mockMarkdownRender).toHaveBeenCalledTimes(1);
@@ -1334,8 +1435,7 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.querySelector(".pa-pagelet-tab-saved-insights")).not.toBeNull();
         expect(container.querySelector(".pa-pagelet-tab-memory-governance")).not.toBeNull();
         expect(container.textContent).toContain("Saved Insights");
-        expect(container.textContent).toContain("Pricing notes keep coming back.");
-        expect(container.textContent).toContain("recall only");
+        expect(mockSavedLists.at(-1)?.props.items).toEqual([makeSavedInsight()]);
         expect(container.textContent).toContain("Memory");
         expect(container.textContent).toContain("Prefers concise weekly planning.");
         expect(container.textContent).toContain("Forgotten. No original content or source is kept here.");
@@ -2801,7 +2901,7 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.querySelector(".pa-pagelet-tab-memory-confirm")?.textContent).toBe("Confirm");
     });
 
-    it("points Show more aria-controls at the hidden section ids", () => {
+    it("reveals Saved Insights in place and retains its connected root across same-surface updates", async () => {
         const container = new FakeElement("div");
         container.isConnected = true;
         const tab = new TabView("en");
@@ -2820,9 +2920,10 @@ describe("Pagelet panel and tab view regressions", () => {
         };
 
         tab.mount(container as unknown as HTMLElement);
-        tab.open("Pagelet — Detail View", [], {
+        const options: Parameters<TabView['open']>[2] = {
             layoutType: "review",
             extra: {
+                savedInsights: { items: [makeSavedInsight()], totalCount: 1 },
                 memoryGovernance: {
                     records: [makeMemoryRecord()],
                     totalCount: 1,
@@ -2860,7 +2961,8 @@ describe("Pagelet panel and tab view regressions", () => {
                     }],
                 },
             },
-        });
+        };
+        tab.open("Pagelet — Detail View", [], options);
 
         const showMoreButton = container.querySelector(".pa-pagelet-tab-show-more");
         const hiddenSections = container.querySelectorAll(".pa-pagelet-tab-section--hidden");
@@ -2872,6 +2974,77 @@ describe("Pagelet panel and tab view regressions", () => {
             (section as unknown as { id?: string }).id
         )));
         expect(controlledIds.every((id) => Boolean(id))).toBe(true);
+        const savedSection = container.querySelector('.pa-pagelet-tab-saved-insights')!;
+        expect(savedSection.classList.contains('pa-pagelet-tab-section--hidden')).toBe(true);
+        expect(mockSavedLists).toHaveLength(0);
+        await showMoreButton?.click();
+        expect(mockSavedLists).toHaveLength(1);
+        const list = mockSavedLists[0];
+        const disconnections: boolean[] = [];
+        let connected = savedSection.isConnected;
+        Object.defineProperty(savedSection, 'isConnected', {
+            get: () => connected,
+            set: (value: boolean) => { connected = value; if (!value) disconnections.push(value); },
+        });
+        const updated = makeSavedInsight({ id: 'updated', text: 'Latest complete saved text.' });
+        tab.open('Pagelet — Detail View', [], { ...options,
+            extra: { ...options.extra, savedInsights: { items: [updated], totalCount: 1 } } });
+        expect(container.querySelector('.pa-pagelet-tab-saved-insights')).toBe(savedSection);
+        expect(disconnections).toEqual([]);
+        expect(mockSavedLists).toHaveLength(1);
+        expect(list.props.items).toEqual([updated]);
+        expect(savedSection.classList.contains('pa-pagelet-tab-section--hidden')).toBe(false);
+        const sections = container.querySelectorAll('.pa-pagelet-tab-section');
+        expect(sections.at(-1)).toBe(savedSection);
+        tab.setDisplayed(false);
+        expect(list.props.store.getState().viewVisible).toBe(false);
+        tab.setDisplayed(true);
+        tab.rebindDocument();
+        expect(list.rebindDocument).toHaveBeenCalledTimes(1);
+        expect(list.unmount).not.toHaveBeenCalled();
+        tab.open('Pagelet — Detail View', [], { layoutType: 'review' });
+        expect(list.unmount).toHaveBeenCalledTimes(1);
+        tab.destroy();
+    });
+
+    it('captures the Saved row committed after scroll before restoring its relative position on reveal', async () => {
+        const container = new FakeElement('div');
+        container.isConnected = true;
+        const tab = new TabView('en');
+        const insight = makeSavedInsight({ id: 'after-scroll' });
+        tab.mount(container as unknown as HTMLElement);
+        tab.open('Saved Insights', [], { layoutType: 'review',
+            extra: { savedInsights: { items: [insight], totalCount: 1 } } });
+        const list = mockSavedLists[0];
+        const port = container.querySelector('.pa-pagelet-tab-body')!;
+        const portRect = port.getBoundingClientRect();
+        let hidden = false;
+        port.getBoundingClientRect = () => hidden
+            ? { ...portRect, width: 0, height: 0, bottom: 0 } as DOMRect : portRect;
+
+        // The real scroll handler runs before React commits its new virtual range.
+        port.scrollTop = 600;
+        await port.dispatch('scroll');
+        const row = (globalRecord.document as FakeDocument).createElement('div');
+        row.setAttribute('data-pa-reading-id', `saved-insight:${insight.id}`);
+        let rowLayoutTop = 580;
+        row.getBoundingClientRect = () => ({ ...portRect,
+            top: rowLayoutTop - port.scrollTop, bottom: rowLayoutTop - port.scrollTop + 120,
+            height: hidden ? 0 : 120, width: hidden ? 0 : 360,
+        } as DOMRect);
+        container.querySelector('.pa-pagelet-tab-saved-insights')!.children[2].appendChild(row);
+        list.props.onLayout();
+
+        // Obsidian reports visibility after layout is already zero, so hiding
+        // cannot repair a snapshot that was never sampled after the row commit.
+        hidden = true;
+        tab.setDisplayed(false);
+        rowLayoutTop += 300;
+        hidden = false;
+        tab.setDisplayed(true);
+        expect(port.scrollTop).toBe(900);
+        expect(row.getBoundingClientRect().top).toBe(-20);
+        tab.destroy();
     });
 
     it("renders preview-only Maintenance Review results in the native detail tab", () => {
@@ -3469,7 +3642,8 @@ describe("Pagelet panel and tab view regressions", () => {
             locale: "en",
             layoutType: "summary",
             content: [],
-            extra: { markdown },
+            extra: { markdown, savedInsights: { items: [makeSavedInsight()], totalCount: 1 },
+                memoryGovernance: { records: [makeMemoryRecord({ summary: 'Prior Memory fact.' })], totalCount: 1 } },
             sourcePath: summarySaveNote.targetPath,
             summarySaveNote,
         });
@@ -3478,6 +3652,23 @@ describe("Pagelet panel and tab view regressions", () => {
         const saveButton = contentEl.querySelector(".pa-pagelet-tab-summary-save");
         expect(saveButton).not.toBeNull();
         expect(saveButton?.textContent).toBe("Save as review note");
+        await Promise.resolve();
+        const nativeBody = contentEl.querySelector('.pa-pagelet-panel-summary-preview');
+        const savedSection = contentEl.querySelector('.pa-pagelet-tab-saved-insights');
+        (globalRecord.document as FakeDocument).dispatch('pointerdown', { target: nativeBody });
+        view.setPayload({ title: 'Pagelet — Detail View', locale: 'en', layoutType: 'summary', content: [],
+            summarySaveNote, sourcePath: summarySaveNote.targetPath,
+            extra: { markdown: markdown + '\nUpdated summary.',
+                savedInsights: { items: [makeSavedInsight()], totalCount: 1 },
+                memoryGovernance: { records: [makeMemoryRecord({ summary: 'Current Memory fact.' })], totalCount: 1 } },
+        });
+        expect(contentEl.querySelector('.pa-pagelet-panel-summary-preview')).toBe(nativeBody);
+        expect(nativeBody?.textContent).toBe(markdown);
+        expect(contentEl.querySelector('.pa-pagelet-tab-saved-insights')).toBe(savedSection);
+        expect(mockSavedLists).toHaveLength(1);
+        expect(contentEl.textContent).not.toContain('Prior Memory fact.');
+        expect(contentEl.textContent).toContain('Current Memory fact.');
+        expect(contentEl.querySelector('.pa-pagelet-tab-summary-save')).toBe(saveButton);
 
         await saveButton?.click();
 
@@ -3488,6 +3679,7 @@ describe("Pagelet panel and tab view regressions", () => {
         const stateText = JSON.stringify(view.getState());
         expect(stateText).not.toContain(markdown);
         expect((view.getState() as { payload?: { summarySaveNote?: unknown } }).payload?.summarySaveNote).toBeUndefined();
+        await view.onClose();
     });
 
     it("restores unsaved summary markdown from the in-memory native detail session", async () => {
@@ -3677,7 +3869,7 @@ describe("Pagelet panel and tab view regressions", () => {
 
         const contentEl = restored.contentEl as unknown as FakeElement;
         expect(contentEl.textContent).toContain("Saved Insights");
-        expect(contentEl.textContent).toContain("Pricing notes keep coming back.");
+        expect(mockSavedLists.at(-1)?.props.items[0]?.text).toBe('Pricing notes keep coming back.');
         expect(contentEl.textContent).toContain("Suggestions to remember");
         expect(contentEl.textContent).toContain("Suggested");
         expect(contentEl.textContent).not.toContain("Auto-accepted");
@@ -4965,6 +5157,7 @@ describe("Pagelet panel and tab view regressions", () => {
         panel.open("discover", [{
             title: "Wording issue", description: body, insightText: body, sourceFile: "notes/current.md",
         }], { sourcePath: "notes/current.md" });
+        await Promise.resolve();
 
         expect(container.querySelector(".pa-pagelet-panel-connection-graph")).toBeNull();
         expect(container.querySelector(".pa-pagelet-panel-timeline-insight")?.textContent).toBe(body);

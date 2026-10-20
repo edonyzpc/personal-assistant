@@ -66,6 +66,9 @@ export interface PanelAction {
 export interface PageletReadingPosition {
     scrollTop: number;
     sourcesExpanded: boolean[];
+    anchorId?: string;
+    offset?: number;
+    disclosures?: string[];
 }
 
 export interface PageletReadingControls {
@@ -182,6 +185,8 @@ export type PanelGraphDiscoveryState = GraphDiscoveryRunResult;
 export type PanelPatternDetectionState = PatternDetectionResult;
 
 export interface PanelOpenExtra {
+    /** Identity supplied by the result owner, never inferred from body text. */
+    readonly entityId?: string;
     reading?: PageletReadingControls;
     connections?: NoteConnection[];
     markdown?: string;

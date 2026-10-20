@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-10-18
+Updated: 2026-10-20
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-071 | PA UI 状态、局部刷新与宿主生命周期 | Accepted | 共享组件、交互优先及本地恢复；两项恢复策略和物理设备证据明确后置 | [Record](./dec-071-pa-ui-state-rendering.md) |
 | DEC-070 | Chat 渲染复用与生命周期性能优化 | Accepted | 未变历史整轮复用、分批显示、局部观察与稳定处理；保留原生能力及既有领域语义 | [Record](./dec-070-chat-rendering-lifecycle-performance.md) |
 | DEC-069 | Chat Markdown 表格显示兼容 | Accepted | 顶层段落与表格边界只调整显示输入，保留原文与原生渲染；性能候选不自动进入实现 | [Record](./dec-069-chat-markdown-table-display-compatibility.md) |
 | DEC-068 | Chat 本次修改单卡汇总与整次撤销 | Accepted | 当前请求跨批次结果、完整展开与整次「撤销 / Undo」；双语且保留来源/临时恢复边界 | [Record](./dec-068-chat-request-change-summary.md) |

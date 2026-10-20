@@ -56,6 +56,7 @@
     "eslint-plugin-obsidianmd": "0.4.2",
     "fontkit": "2.0.4",
     "jest": "30.1.3",
+    "jsdom": "26.1.0",
     "obsidian": "1.12.3",
     "subset-font": "2.5.0",
     "tailwindcss": "^3.4.19",
@@ -67,6 +68,7 @@
     "@langchain/core": "1.1.41",
     "@langchain/openai": "1.4.4",
     "@sqlite.org/sqlite-wasm": "3.53.0-build1",
+    "@tanstack/react-virtual": "3.14.21",
     "@zumer/snapdom": "2.23.2",
     "chart.js": "^4.4.4",
     "fflate": "^0.8.3",
@@ -79,7 +81,8 @@
     "react-chartjs-2": "^5.3.0",
     "react-dom": "18.3.1",
     "semver": "^7.5.2",
-    "zod": "3.25.76"
+    "zod": "3.25.76",
+    "zustand": "5.0.15"
   },
   "overrides": {
     "postcss": "^8.5.18",

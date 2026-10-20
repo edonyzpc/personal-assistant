@@ -1,4 +1,9 @@
 {
+    "plugin.chat.recovery.reselectPagelet": "请重新选择 Pagelet 上下文，或移除此附件后发送。",
+    "plugin.chat.recovery.saveFailed": "此设备暂时无法恢复草稿，当前输入仍可继续使用。",
+    "plugin.chat.recovery.reselectSource": "请重新选择来源：{source}",
+    "plugin.chat.recovery.reselectParent": "请重新选择写作版本，或移除写作动作。",
+    "plugin.chat.recovery.attachmentUnavailable": "请重新选择此附件。",
     "plugin.agentDebug.explorerTitle": "运行轨迹",
     "plugin.agentDebug.localHistory": "本机记录",
     "plugin.agentDebug.retryActivity": "存在重试或回退",
@@ -1680,5 +1685,9 @@
     "plugin.ghost.card.error.network": "无法连接 Ghost，请检查网络和站点地址。",
     "plugin.ghost.card.error.response": "Ghost 返回的信息无法使用，请检查站点配置和 Admin API 访问。",
     "plugin.ghost.card.error.request": "Ghost 拒绝了请求，请检查站点及 Ghost 中的文章。",
-    "plugin.ghost.card.error.binding": "GHOST_ID 无效或已变化，请检查笔记中的文章 ID 后再次同步。"
+    "plugin.ghost.card.error.binding": "GHOST_ID 无效或已变化，请检查笔记中的文章 ID 后再次同步。",
+    "plugin.chat.markdownUpdate.available": "正文有更新",
+    "plugin.chat.markdownUpdate.showLatest": "查看最新",
+    "plugin.chat.createImage.renderFailed": "任务卡片暂时无法显示。",
+    "plugin.chat.createImage.retryRender": "重试显示"
 }

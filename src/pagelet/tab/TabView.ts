@@ -46,12 +46,12 @@ import {
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import { clearChildren, el, renderEmptyCard } from "../dom-utils";
 import {
-    capturePageletReadingPosition,
     restorePageletReadingPosition,
     renderPageletReadingControls,
     renderPageletFindingActions,
     renderDiscoveryLayout,
     renderSummaryPreview,
+    updatePageletDiscovery,
 } from "../panel/PanelLayouts";
 import type {
     MaintenanceActionUiState,
@@ -67,6 +67,11 @@ import type {
 import { MemoryGovernanceSection } from "./sections/MemoryGovernanceSection";
 import { MaintenanceReviewSection } from "./sections/MaintenanceReviewSection";
 import { QuietRecallSection } from "./sections/QuietRecallSection";
+import { PageletNativeMarkdown } from "../native-markdown";
+import { ReadingPositionController, type ReadingSnapshot } from "../../ui/reading-position";
+import { pageletReadingAnchors, pageletReadingPosition, pageletReadingSnapshot, renderSimpleMarkdownPreview } from "../panel/PanelLayouts";
+import { createPageletUiStore } from "../ui/pagelet-ui-store";
+import { mountSavedInsightList, type SavedInsightListHandle } from "../ui/SavedInsightList";
 
 export interface TabViewOptions {
     app?: App;
@@ -136,7 +141,17 @@ export class TabView {
     private currentContent: PanelFinding[] | TabSection[] = [];
     private currentOptions: TabOpenOptions = {};
     private readonly sectionRenderers: TabSectionRenderer[] = [];
-    private sectionsExpanded = false;
+    private readonly ui = createPageletUiStore();
+    private savedSection: HTMLElement | null = null;
+    private savedListHost: HTMLElement | null = null;
+    private savedList: SavedInsightListHandle | null = null;
+    private savedInsights: DetailExtra["savedInsights"];
+    private readingPosition: ReadingPositionController | null = null;
+    private lastPosition: PageletReadingPosition = { scrollTop: 0, sourcesExpanded: [] };
+    private listPosition: ReadingSnapshot | null = null;
+    private nativeBodies: PageletNativeMarkdown[] = [];
+    private nativeEntity: string | null = null;
+    private summaryEntity: GeneratedReviewNote | undefined;
     private readonly dismissedPatternIds = new Set<string>();
     private readonly memoryCandidateActionState = new Map<string, MemoryCandidateActionState>();
     private readonly maintenanceActionState = new Map<string, MaintenanceActionUiState>();
@@ -213,7 +228,8 @@ export class TabView {
 
         this.disposed = false;
         if (this.currentContent !== content || this.currentOptions !== options) {
-            this.clearSectionActionState();
+            this.clearSectionActionState(this.currentOptions.layoutType !== options.layoutType
+                || this.currentOptions.sourcePath !== options.sourcePath);
         }
         this.currentContent = content;
         this.currentOptions = options;
@@ -236,13 +252,39 @@ export class TabView {
 
     /** Recheck a displayed reading after its native leaf becomes visible. */
     notifyDisplayed(): void {
+        this.savedList?.notifyLayout();
+        this.readingPosition?.notifyLayout();
         if (this.readingInitialSelectionPending) void this.validateDisplayedReading();
+    }
+
+    setDisplayed(visible: boolean): void {
+        const wasVisible = this.ui.getState().viewVisible;
+        if (!visible) this.readingPosition?.capture();
+        this.ui.getState().setViewVisible(visible);
+        for (const body of this.nativeBodies) body.setVisible(visible);
+        if (visible) {
+            if (!wasVisible) {
+                const snapshot = this.reading ? pageletReadingSnapshot(this.lastPosition) : this.listPosition;
+                if (snapshot) this.restorePosition(snapshot);
+            }
+            this.notifyDisplayed();
+        }
+    }
+
+    rebindDocument(): void {
+        for (const body of this.nativeBodies) body.rebindDocument();
+        this.savedList?.rebindDocument();
+        this.readingPosition?.rebindDocument();
     }
 
     /** Clean up -- remove DOM, detach listeners. */
     destroy(): void {
         this.disposed = true;
         this.releaseReading();
+        this.readingPosition?.dispose();
+        this.readingPosition = null;
+        this.disposeSavedList();
+        this.disposeNativeBodies();
         if (this.bodyEl && this.sectionScrollHandler) {
             this.bodyEl.removeEventListener("scroll", this.sectionScrollHandler);
         }
@@ -268,9 +310,9 @@ export class TabView {
         this.sectionRenderers.length = 0;
     }
 
-    private clearSectionActionState(): void {
+    private clearSectionActionState(resetExpansion = true): void {
         this.actionStateGeneration += 1;
-        this.sectionsExpanded = false;
+        if (resetExpansion) this.ui.getState().setSectionsExpanded(false);
         this.memoryCandidateActionState.clear();
         this.maintenanceActionState.clear();
         this.quietRecallSaveState.clear();
@@ -315,17 +357,18 @@ export class TabView {
     }
 
     private handleSectionRerender(): void {
-        const scrollTop = this.bodyEl?.scrollTop ?? 0;
+        const position = this.readingPosition?.capture();
         for (const renderer of this.sectionRenderers) {
             renderer.rerender();
         }
-        if (this.bodyEl) this.bodyEl.scrollTop = scrollTop;
+        this.savedList?.notifyLayout();
+        if (position) this.restorePosition(position);
     }
 
     private rerenderCurrentContentPreservingScroll(): void {
-        const scrollTop = this.bodyEl?.scrollTop ?? 0;
+        const position = this.readingPosition?.capture();
         this.renderContent(this.currentContent, this.currentOptions);
-        if (this.bodyEl) this.bodyEl.scrollTop = scrollTop;
+        if (position) this.restorePosition(position);
     }
 
     // -----------------------------------------------------------------------
@@ -351,6 +394,8 @@ export class TabView {
     }
 
     private scrollTabNavTarget(target: Element): void {
+        this.readingPosition?.cancelRestore();
+        this.ui.getState().setSavedInsightRestoreTargetId(null);
         const details = target.closest(".pa-pagelet-tab-context-pager-details") as HTMLDetailsElement | null;
         if (details) {
             details.open = true;
@@ -422,6 +467,34 @@ export class TabView {
         this.sectionScrollHandler = () => this.updateSectionNavigationCurrent();
         body.addEventListener("scroll", this.sectionScrollHandler);
         root.appendChild(body);
+        this.readingPosition = new ReadingPositionController({
+            scrollport: body,
+            getAnchors: () => pageletReadingAnchors(body),
+            isVisible: () => this.ui.getState().viewVisible,
+            isReady: () => {
+                if (!this.nativeBodies.every(native => native.isReady())) return false;
+                const target = this.ui.getState().savedInsightRestoreTargetId;
+                if (!target || !this.savedInsights?.items.some(item => item.id === target)) return true;
+                const anchor = pageletReadingAnchors(body).find(item => item.id === `saved-insight:${target}`);
+                const rect = anchor?.element.getBoundingClientRect();
+                return !!rect && rect.width > 0 && rect.height > 0;
+            },
+            onSnapshot: snapshot => {
+                this.lastPosition = pageletReadingPosition(body, snapshot);
+                if (this.reading && this.selectedReading) {
+                    this.reading.onPositionChange(this.selectedReading.id, this.lastPosition);
+                } else this.listPosition = snapshot;
+            },
+            onUserIntent: () => this.ui.getState().setSavedInsightRestoreTargetId(null),
+            restoreDisclosures: ids => {
+                for (const toggle of Array.from(body.querySelectorAll<HTMLElement>('.pa-pagelet-panel-source-toggle'))) {
+                    const expanded = ids.includes(toggle.getAttribute('data-pa-source-disclosure') ?? 'sources');
+                    toggle.setAttribute('aria-expanded', String(expanded));
+                    const chips = toggle.parentElement?.querySelector('.pa-pagelet-panel-source-chips');
+                    if (expanded) chips?.removeAttribute('hidden'); else chips?.setAttribute('hidden', '');
+                }
+            },
+        });
 
         return root;
     }
@@ -435,9 +508,34 @@ export class TabView {
         options: TabOpenOptions = {},
     ): void {
         if (!this.bodyEl) return;
+        if (options.reading && this.reading === options.reading && !options.restoredFromState) {
+            this.renderSelectedReading();
+            this.refreshReadingControls();
+            return;
+        }
+        const keepSummary = options.layoutType === 'summary' && options.summarySaveNote
+            && this.summaryEntity === options.summarySaveNote
+            && this.nativeEntity === `summary:${options.summarySaveNote.targetPath}`;
+        if (keepSummary && this.nativeBodies.length && typeof options.extra?.markdown === 'string') {
+            this.nativeBodies[0].update(options.extra.markdown, options.sourcePath ?? '');
+            this.renderSavedInsightContent(options.extra?.savedInsights);
+            this.destroySectionRenderers();
+            this.bodyEl.querySelector('.pa-pagelet-tab-memory-governance')?.parentElement?.remove();
+            this.renderMemoryGovernance(options.extra?.memoryGovernance);
+            this.activateSavedList();
+            return;
+        }
+        const position = this.readingPosition?.capture();
+        this.readingPosition?.cancelRestore();
+        this.ui.getState().setSavedInsightRestoreTargetId(null);
         this.releaseReading();
+        this.disposeNativeBodies();
+        if (options.reading || options.restoredFromState || !options.extra?.savedInsights?.items.length
+            || options.layoutType === 'discover' || options.layoutType === 'summary') this.disposeSavedList();
         this.destroySectionRenderers();
-        clearChildren(this.bodyEl);
+        for (const child of Array.from(this.bodyEl.children)) {
+            if (child !== this.savedSection) child.remove();
+        }
 
         if (options.reading && !options.restoredFromState) {
             this.renderReading(options.reading);
@@ -492,6 +590,8 @@ export class TabView {
                 );
                 if (!renderedSavedInsights && !renderedMemoryGovernance) this.renderEmptyState();
             }
+            this.activateSavedList();
+            if (position) this.restorePosition(position);
             return;
         }
 
@@ -555,7 +655,7 @@ export class TabView {
             ) },
             { id: "graph-discovery", labelKey: "pagelet.tab.graphDiscovery.title", render: () => this.renderGraphDiscoveryContent(options.extra?.graphDiscovery) },
             { id: "pattern-detection", labelKey: "pagelet.tab.patterns.title", render: () => this.renderPatternDetectionContent(options.extra?.patternDetection) },
-            { id: "saved-insights", labelKey: "pagelet.tab.savedInsights.title", render: () => this.renderSavedInsightContent(options.extra?.savedInsights) },
+            { id: "saved-insights", labelKey: "pagelet.tab.savedInsights.title", render: () => this.renderSavedInsightContent(options.extra?.savedInsights, true) },
         ];
 
         const entryReason = options.entryReason ?? "default";
@@ -585,14 +685,14 @@ export class TabView {
             renderedSlots.push({ id: "context-pager", labelKey: "pagelet.panel.contextPager.usedSources", render: () => true });
         }
 
-        const visibleSlots = (renderedSlots.length > 3 && !this.sectionsExpanded)
+        const visibleSlots = (renderedSlots.length > 3 && !this.ui.getState().sectionsExpanded)
             ? renderedSlots.slice(0, 3)
             : renderedSlots;
         if (visibleSlots.length >= 3) {
             this.renderSectionNav(visibleSlots);
         }
 
-        if (renderedSlots.length > 3 && !this.sectionsExpanded && this.bodyEl) {
+        if (renderedSlots.length > 3 && !this.ui.getState().sectionsExpanded && this.bodyEl) {
             const allSections = Array.from(this.bodyEl.querySelectorAll(".pa-pagelet-tab-section"));
             let visibleCount = 0;
             for (const sectionEl of allSections) {
@@ -615,9 +715,15 @@ export class TabView {
             showMoreBtn.setAttribute("aria-expanded", "false");
             showMoreBtn.setAttribute("aria-controls", controlledIds.join(" "));
             showMoreBtn.addEventListener("click", () => {
-                this.sectionsExpanded = true;
+                this.readingPosition?.cancelRestore();
+                this.ui.getState().setSavedInsightRestoreTargetId(null);
+                this.ui.getState().setSectionsExpanded(true);
                 showMoreBtn.setAttribute("aria-expanded", "true");
-                this.rerenderCurrentContentPreservingScroll();
+                for (const section of allSections) section.classList.remove('pa-pagelet-tab-section--hidden');
+                showMoreBtn.remove();
+                this.bodyEl?.querySelector('.pa-pagelet-tab-nav')?.remove();
+                this.renderSectionNav(renderedSlots);
+                this.activateSavedList();
             });
             this.bodyEl.appendChild(showMoreBtn);
         }
@@ -625,6 +731,8 @@ export class TabView {
         if (renderedSlots.length === 0) {
             this.renderEmptyState();
         }
+        this.activateSavedList();
+        if (position) this.restorePosition(position);
     }
 
     private renderReading(reading: PageletDetailReadingPayload): void {
@@ -720,7 +828,8 @@ export class TabView {
     private rememberReadingPosition(): void {
         if (!this.reading || !this.selectedReading || !this.bodyEl
             || this.selectedReading.staleStatus === "boundary-changed") return;
-        const position = capturePageletReadingPosition(this.bodyEl);
+        this.readingPosition?.capture();
+        const position = this.lastPosition;
         this.reading.positions = { ...this.reading.positions, [this.selectedReading.id]: position };
         this.reading.onPositionChange(this.selectedReading.id, position);
     }
@@ -761,18 +870,17 @@ export class TabView {
 
     private renderSelectedReading(): void {
         if (!this.bodyEl || !this.reading) return;
-        this.unloadRenderComponent();
-        clearChildren(this.bodyEl);
-        this.renderReadingSectionNavigation();
         const candidate = this.selectedReading;
-        if (!candidate || candidate.staleStatus === "boundary-changed") return;
-        const component = new Component();
-        component.load();
-        this.renderComponent = component;
         const body = this.bodyEl;
+        if (!candidate || candidate.staleStatus === 'boundary-changed') {
+            this.readingPosition?.cancelRestore();
+            this.disposeNativeBodies();
+            clearChildren(body);
+            this.renderReadingSectionNavigation();
+            return;
+        }
         const position: PageletReadingPosition = this.reading.positions[candidate.id]
             ?? { scrollTop: 0, sourcesExpanded: [] };
-        let appliedScrollTop = body.scrollTop;
         const findings: PanelFinding[] = candidate.sourceRefs.map((source, index) => ({
             title: index === 0 ? candidate.title : source.title ?? source.path,
             description: index === 0 ? candidate.body : source.path,
@@ -790,22 +898,28 @@ export class TabView {
                 actions: this.readingActions(candidate),
             });
         }
+        if (this.nativeEntity === `candidate:${candidate.id}` && this.nativeBodies.length) {
+            this.nativeBodies[0].update(candidate.body, this.reading.anchorPath);
+            updatePageletDiscovery(body, findings, this.locale, { sourcePath: this.reading.anchorPath,
+                onConnectionNodeClick: this.options.onConnectionNodeClick });
+            this.readingPosition?.notifyLayout();
+            return;
+        }
+        this.readingPosition?.cancelRestore();
+        this.unloadRenderComponent();
+        this.disposeNativeBodies();
+        clearChildren(body);
+        this.nativeEntity = `candidate:${candidate.id}`;
         renderDiscoveryLayout(body, findings, undefined, this.locale, {
-            app: this.options.app,
-            renderComponent: component,
             sourcePath: this.reading.anchorPath,
             onConnectionNodeClick: this.options.onConnectionNodeClick,
             reading: true,
-            onMarkdownRendered: () => {
-                if (this.renderComponent !== component || this.selectedReading !== candidate) return;
-                // Native Markdown rendering may grow the document after the first scroll restoration.
-                if (body.scrollTop === appliedScrollTop) body.scrollTop = position.scrollTop;
-                this.renderReadingSectionNavigation();
-                this.updateReadingCurrentSection();
-            },
+            renderNativeMarkdown: (host, markdown) => this.mountNativeBody(host, markdown, this.reading?.anchorPath ?? ''),
         });
         restorePageletReadingPosition(body, position);
-        appliedScrollTop = body.scrollTop;
+        this.lastPosition = position;
+        this.restorePosition(pageletReadingSnapshot(position));
+        this.renderReadingSectionNavigation();
     }
 
     private refreshReadingControls(): void {
@@ -1175,36 +1289,102 @@ export class TabView {
         return true;
     }
 
-    private renderSavedInsightContent(savedInsights: DetailExtra["savedInsights"]): boolean {
-        if (!this.bodyEl || !savedInsights || savedInsights.items.length === 0) return false;
-
-        const section = el("div", "pa-pagelet-tab-section pa-pagelet-tab-saved-insights");
-        section.appendChild(el("h2", undefined, pageletT("pagelet.tab.savedInsights.title", this.locale)));
-        section.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
-            pageletT("pagelet.tab.savedInsights.summary", this.locale, { count: savedInsights.totalCount })));
-
-        for (const insight of savedInsights.items) {
-            const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-saved-insight-card");
-            cardEl.appendChild(el("h4", undefined,
-                pageletT(`pagelet.tab.savedInsights.type.${insight.type}`, this.locale)));
-            cardEl.appendChild(el("p", undefined, insight.text));
-
-            const tagRow = el("div", "pa-pagelet-tab-tag-row");
-            tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
-                pageletT(`pagelet.tab.savedInsights.status.${insight.status}`, this.locale)));
-            tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
-                pageletT(`pagelet.tab.savedInsights.origin.${insight.origin}`, this.locale)));
-            tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
-                pageletT("pagelet.tab.savedInsights.influence.weakOnly", this.locale)));
-            const source = insight.sourceRefs[0]?.path;
-            if (source) tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", source));
-            cardEl.appendChild(tagRow);
-
-            section.appendChild(cardEl);
+    private renderSavedInsightContent(savedInsights: DetailExtra["savedInsights"], placeAfterRenderedSections = false): boolean {
+        if (!this.bodyEl || !savedInsights?.items.length) { this.disposeSavedList(); return false; }
+        this.savedInsights = savedInsights;
+        if (!this.savedSection) {
+            this.savedSection = el('div', 'pa-pagelet-tab-section pa-pagelet-tab-saved-insights');
+            this.savedSection.appendChild(el('h2'));
+            this.savedSection.appendChild(el('p', 'pa-pagelet-tab-review-queue-summary'));
+            this.savedListHost = el('div');
+            this.savedSection.appendChild(this.savedListHost);
         }
-
-        this.bodyEl.appendChild(section);
+        this.savedSection.classList.remove('pa-pagelet-tab-section--hidden');
+        this.savedSection.querySelector('h2')!.textContent = pageletT('pagelet.tab.savedInsights.title', this.locale);
+        this.savedSection.querySelector('p')!.textContent = pageletT('pagelet.tab.savedInsights.summary', this.locale, { count: savedInsights.totalCount });
+        if (this.savedSection.parentElement !== this.bodyEl) this.bodyEl.appendChild(this.savedSection);
+        else if (placeAfterRenderedSections) {
+            // Keep the live React host connected; only move newly built preceding sections.
+            for (const child of Array.from(this.bodyEl.children)) {
+                if (child !== this.savedSection) this.bodyEl.insertBefore(child, this.savedSection);
+            }
+        }
         return true;
+    }
+
+    private renderMemoryGovernance(data: DetailExtra['memoryGovernance']): boolean {
+        return this.renderExtractedSection(data, value => new MemoryGovernanceSection(this.locale, value, {
+            onConfirm: this.options.onConfirmMemoryCandidate,
+            onDismiss: this.options.onDismissMemoryCandidate,
+            onCorrect: this.options.onCorrect,
+            onPauseUse: this.options.onPauseUse,
+            onResumeUse: this.options.onResumeUse,
+            onForget: this.options.onForget ?? this.options.onForgetConfirmedMemory,
+            onUndoRecentChange: this.options.onUndoRecentChange,
+            onOpenSource: this.options.onOpenSource,
+            onOpenMemorySettings: this.options.onOpenMemorySettings,
+            isDigestDeferred: () => this.memoryDigestDeferred,
+            onDeferDigest: () => { this.memoryDigestDeferred = true; },
+        }, this.createSectionCallbacks(), this.memoryCandidateActionState));
+    }
+
+    private activateSavedList(): void {
+        if (!this.savedListHost || !this.savedInsights || !this.bodyEl
+            || this.savedSection?.classList.contains('pa-pagelet-tab-section--hidden')) {
+            this.savedList?.notifyLayout();
+            return;
+        }
+        const props = { items: this.savedInsights.items, locale: this.locale, scrollport: this.bodyEl,
+            store: this.ui, isRestoring: () => this.readingPosition?.isRestoring() ?? false,
+            onLayout: () => {
+                this.readingPosition?.notifyLayout();
+                if (this.ui.getState().savedInsightRestoreTargetId === null) {
+                    this.readingPosition?.capture();
+                }
+            } };
+        if (this.savedList) this.savedList.update(props);
+        else this.savedList = mountSavedInsightList(this.savedListHost, props);
+        this.savedList.notifyLayout();
+    }
+
+    private disposeSavedList(): void {
+        this.savedList?.unmount();
+        this.savedList = null;
+        this.savedSection?.remove();
+        this.savedSection = null;
+        this.savedListHost = null;
+        this.savedInsights = undefined;
+        this.listPosition = null;
+        this.ui.getState().setSavedInsightRestoreTargetId(null);
+    }
+
+    private restorePosition(snapshot: ReadingSnapshot): void {
+        this.ui.getState().setSavedInsightRestoreTargetId(snapshot.anchorId?.startsWith('saved-insight:')
+            ? snapshot.anchorId.slice('saved-insight:'.length) : null);
+        this.readingPosition?.restore(snapshot);
+        this.savedList?.notifyLayout();
+    }
+
+    private mountNativeBody(host: HTMLElement, markdown: string, sourcePath: string): HTMLElement {
+        if (this.nativeEntity) host.setAttribute('data-pa-reading-id', this.nativeEntity);
+        const native = new PageletNativeMarkdown(host, { app: this.options.app, locale: this.locale,
+            visible: this.ui.getState().viewVisible, fallback: renderSimpleMarkdownPreview,
+            onLayout: () => {
+                this.renderReadingSectionNavigation();
+                this.updateReadingCurrentSection();
+                this.readingPosition?.notifyLayout();
+                this.savedList?.notifyLayout();
+            } });
+        this.nativeBodies.push(native);
+        native.update(markdown, sourcePath);
+        return native.controls;
+    }
+
+    private disposeNativeBodies(): void {
+        for (const native of this.nativeBodies) native.dispose();
+        this.nativeBodies = [];
+        this.nativeEntity = null;
+        this.summaryEntity = undefined;
     }
 
     private renderGraphDiscoveryContent(graphDiscovery: DetailExtra["graphDiscovery"]): boolean {
@@ -1599,16 +1779,17 @@ export class TabView {
     private renderSummaryContent(markdown: string, options: TabOpenOptions): void {
         if (!this.bodyEl) return;
         this.unloadRenderComponent();
-        this.renderComponent = new Component();
-        this.renderComponent.load();
+        this.summaryEntity = options.summarySaveNote;
+        this.nativeEntity = options.summarySaveNote ? `summary:${options.summarySaveNote.targetPath}` : null;
 
         renderSummaryPreview(
             this.bodyEl,
             markdown,
             this.options.app,
-            this.renderComponent,
+            undefined,
             options.sourcePath ?? "",
             this.locale,
+            (host, text) => this.mountNativeBody(host, text, options.sourcePath ?? ''),
         );
         this.renderSummaryActions(options.summarySaveNote);
     }

@@ -62,6 +62,19 @@ export interface ChatHistoryManagerOptions {
 }
 
 export class ChatHistoryManager {
+    private readonly deletionListeners = new Set<(ids: readonly string[]) => void>();
+
+    subscribeDeletedConversations(listener: (ids: readonly string[]) => void): () => void {
+        this.deletionListeners.add(listener);
+        return () => this.deletionListeners.delete(listener);
+    }
+
+    private notifyDeleted(ids: readonly string[]): void {
+        for (const listener of this.deletionListeners) {
+            try { listener(ids); }
+            catch (error) { this.log('Chat recovery deletion listener failed.', error); }
+        }
+    }
     private readonly store: ChatHistoryStore;
     private readonly maxConversations: number;
     private readonly pruneInterval: number;
@@ -267,6 +280,7 @@ export class ChatHistoryManager {
             await this.store.deleteConversation(id);
         });
         this.latestSourceSelections.delete(id);
+        this.notifyDeleted([id]);
     }
 
     /** Selection metadata never enters the source mutation/revocation lane. */
@@ -436,7 +450,9 @@ export class ChatHistoryManager {
             for (const observer of observers) observer.abort();
         }
         try {
-            return await this.store.pruneOldConversations(this.maxConversations);
+            const deleted = await this.store.pruneOldConversations(this.maxConversations);
+            if (deleted.length) this.notifyDeleted(deleted);
+            return deleted;
         } catch (error) {
             this.log("Failed to prune chat conversations", error);
             return [];

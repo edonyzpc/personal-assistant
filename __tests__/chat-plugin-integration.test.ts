@@ -15,6 +15,7 @@ jest.mock("../src/chat/chat-history-manager", () => ({
     ChatHistoryManager: class MockChatHistoryManager {
         initialize = jest.fn(async () => undefined);
         isAvailable = jest.fn(() => true);
+        subscribeDeletedConversations = jest.fn(() => () => undefined);
         constructor(options: unknown) {
             mockHistoryManagerConstructor(options, this);
         }

@@ -31,6 +31,7 @@ import {
     type PlatformTimeoutHandle,
 } from "../../platform-dom";
 import { clamp } from "../../utils";
+import type { ReadingAnchor, ReadingSnapshot } from "../../ui/reading-position";
 
 export interface PanelLayoutRenderOptions {
     onSuggestionRenderer?: (renderer: SuggestionCardRenderer) => void;
@@ -46,6 +47,7 @@ export interface PanelLayoutRenderOptions {
     reading?: boolean;
     collapsibleConnectionGraph?: boolean;
     onMarkdownRendered?: () => void;
+    renderNativeMarkdown?: (host: HTMLElement, markdown: string) => HTMLElement;
 }
 
 export function capturePageletReadingPosition(body: HTMLElement): PageletReadingPosition {
@@ -64,7 +66,41 @@ export function restorePageletReadingPosition(body: HTMLElement, position: Pagel
         if (expanded) chips?.removeAttribute("hidden");
         else chips?.setAttribute("hidden", "");
     });
-    body.scrollTop = position.scrollTop;
+}
+
+export function pageletReadingAnchors(body: HTMLElement): ReadingAnchor[] {
+    const anchors: ReadingAnchor[] = [];
+    for (const host of Array.from(body.querySelectorAll<HTMLElement>('[data-pa-reading-id]'))) {
+        const id = host.getAttribute('data-pa-reading-id')!;
+        const headings = id.startsWith('saved-insight:') ? []
+            : Array.from(host.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'));
+        if (!headings.length) { anchors.push({ id, element: host }); continue; }
+        const occurrences = new Map<string, number>();
+        for (const heading of headings) {
+            const name = (heading.id && !heading.id.startsWith('pa-pagelet-reading-section-') ? heading.id : '')
+                || heading.textContent?.trim() || 'heading';
+            const count = occurrences.get(name) ?? 0;
+            occurrences.set(name, count + 1);
+            anchors.push({ id: `${id}:heading:${name}:${count}`, element: heading });
+        }
+        // Long paragraphs can fill the viewport without a heading in sight.
+        anchors.push({ id, element: host });
+    }
+    return anchors;
+}
+
+export function pageletReadingSnapshot(position: PageletReadingPosition): ReadingSnapshot {
+    return { fallbackTop: position.scrollTop, offset: position.offset ?? 0,
+        ...(position.anchorId ? { anchorId: position.anchorId } : {}),
+        disclosures: position.disclosures ?? (position.sourcesExpanded.some(Boolean) ? ['sources'] : []) };
+}
+
+export function pageletReadingPosition(body: HTMLElement, snapshot: ReadingSnapshot): PageletReadingPosition {
+    return { ...capturePageletReadingPosition(body), scrollTop: snapshot.fallbackTop,
+        offset: snapshot.offset, ...(snapshot.anchorId ? { anchorId: snapshot.anchorId } : {}),
+        disclosures: Array.from(body.querySelectorAll<HTMLElement>('.pa-pagelet-panel-source-toggle'))
+            .filter(toggle => toggle.getAttribute('aria-expanded') === 'true')
+            .map(toggle => toggle.getAttribute('data-pa-source-disclosure') ?? 'sources') };
 }
 
 export function renderPageletReadingControls(container: HTMLElement, controls: PageletReadingControls): void {
@@ -204,7 +240,10 @@ function renderTimelineItem(
     }
     if (finding.insightText) {
         const insight = el("div", "pa-pagelet-panel-timeline-insight");
-        if (renderInsightAsMarkdown && options.app && options.renderComponent) {
+        if (renderInsightAsMarkdown && options.renderNativeMarkdown) {
+            content.appendChild(insight);
+            content.appendChild(options.renderNativeMarkdown(insight, finding.insightText));
+        } else if (renderInsightAsMarkdown && options.app && options.renderComponent) {
             void Promise.resolve(MarkdownRenderer.render(
                 options.app,
                 finding.insightText,
@@ -221,7 +260,7 @@ function renderTimelineItem(
         } else {
             insight.textContent = finding.insightText;
         }
-        content.appendChild(insight);
+        if (!insight.parentElement) content.appendChild(insight);
     }
 
     const actionRegion = el("div", "pa-pagelet-panel-finding-actions");
@@ -273,6 +312,37 @@ export function renderPageletFindingActions(content: HTMLElement, finding: Panel
             actionsRow.appendChild(btn);
         }
         content.appendChild(actionsRow);
+    }
+}
+
+/** Refresh surrounding facts/actions without replacing a live native body. */
+export function updatePageletDiscovery(
+    container: HTMLElement, findings: PanelFinding[], locale: PageletLocale,
+    options: PanelLayoutRenderOptions,
+): void {
+    const items = Array.from(container.querySelectorAll<HTMLElement>('.pa-pagelet-panel-timeline-item'));
+    findings.filter(finding => finding.insightText).forEach((finding, index) => {
+        const item = items[index];
+        const title = item?.querySelector('.pa-pagelet-panel-timeline-title');
+        if (title) title.textContent = finding.title;
+        const actions = item?.querySelector<HTMLElement>('.pa-pagelet-panel-finding-actions');
+        if (actions) renderPageletFindingActions(actions, finding);
+    });
+    const sources = container.querySelector<HTMLElement>('.pa-pagelet-panel-source-section');
+    const paths = collectDiscoverySourcePaths(findings);
+    const currentPaths = Array.from(sources?.querySelectorAll('.pa-pagelet-panel-source-chip') ?? [])
+        .map(chip => chip.getAttribute('title'));
+    if (paths.length === currentPaths.length && paths.every((path, index) => path === currentPaths[index])) return;
+    const expanded = sources?.querySelector('.pa-pagelet-panel-source-toggle')?.getAttribute('aria-expanded') === 'true';
+    const wrapper = sources?.parentElement ?? container.querySelector('.pa-pagelet-panel-timeline');
+    sources?.remove();
+    if (paths.length && wrapper) {
+        const next = renderCollapsibleSourceSection(paths, locale, options.sourcePath, options.onConnectionNodeClick);
+        if (expanded) {
+            next.querySelector('.pa-pagelet-panel-source-toggle')?.setAttribute('aria-expanded', 'true');
+            next.querySelector('.pa-pagelet-panel-source-chips')?.removeAttribute('hidden');
+        }
+        wrapper.appendChild(next);
     }
 }
 
@@ -485,6 +555,7 @@ function renderCollapsibleSourceSection(
     const toggle = el("button", "pa-pagelet-panel-source-toggle");
     toggle.setAttribute("type", "button");
     toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("data-pa-source-disclosure", "sources");
     const chevron = el("span", "pa-pagelet-panel-source-toggle-chevron", "›");
     const label = el("span", "pa-pagelet-panel-source-toggle-label",
         pageletT("pagelet.recap.detail.sources", locale));
@@ -1013,6 +1084,7 @@ export function renderSummaryPreview(
     component?: Component,
     sourcePath?: string,
     locale: PageletLocale = "en",
+    renderNativeMarkdown?: (host: HTMLElement, markdown: string) => HTMLElement,
 ): void {
     clearChildren(container);
 
@@ -1025,7 +1097,8 @@ export function renderSummaryPreview(
 
     const preview = el("div", "pa-pagelet-panel-summary-preview");
 
-    if (app && component) {
+    const controls = renderNativeMarkdown?.(preview, markdown);
+    if (!renderNativeMarkdown && app && component) {
         // Use Obsidian's native markdown renderer
         void Promise.resolve(MarkdownRenderer.render(
             app,
@@ -1037,20 +1110,21 @@ export function renderSummaryPreview(
             clearChildren(preview);
             renderSimpleMarkdownPreview(preview, markdown);
         });
-    } else {
+    } else if (!renderNativeMarkdown) {
         // Fallback for environments without App/Component (tests)
         renderSimpleMarkdownPreview(preview, markdown);
     }
 
     const cardWrap = el("div", "pa-pagelet-panel-card-wrap");
     cardWrap.appendChild(preview);
+    if (controls) cardWrap.appendChild(controls);
     wrapper.appendChild(cardWrap);
 
     container.appendChild(wrapper);
 }
 
 /** Minimal markdown renderer for preview purposes. */
-function renderSimpleMarkdownPreview(container: HTMLElement, md: string): void {
+export function renderSimpleMarkdownPreview(container: HTMLElement, md: string): void {
     const lines = md.split("\n");
 
     for (const raw of lines) {

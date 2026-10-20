@@ -7,6 +7,8 @@ import type { AgentEvent, LegacyAgentEvent, PaAgentMessage } from '../src/ai-ser
 import { CHAT_MENU_IDLE_CLOSE_MS, formatOperationsPreview, LLMView, PA_CHAT_SUBAGENT_ICON } from '../src/chat/chat-view';
 import { mergeContextUsedItems, normalizeContextUsedItems } from '../src/chat/formatters';
 import { renderMarkdownWithOwner } from '../src/chat/mermaid';
+import type { NativeMarkdownBridge } from '../src/ui/native-markdown-bridge';
+import { UI_RECOVERY_KEY } from '../src/ui/local-recovery';
 import { ChatConfirmationModal, ChatHistoryPickerModal, getDistinctChatHistoryPreview } from '../src/chat/modals';
 import { getChatRoleIdenticonModel } from '../src/chat/role-identicons';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
@@ -136,16 +138,64 @@ jest.mock('../src/ai-services/chat-service', () => ({
 
 jest.mock('../src/chat/operations-review/mount', () => {
     const actual = jest.requireActual('../src/chat/operations-review/mount') as {
-        mountOperationsDiff: (container: never, options: never) => () => void;
+        mountOperationsDiff: (container: never, options: never) => {
+            update(options: never): void;
+            unmount(): void;
+        };
     };
     return {
-        mountOperationsDiff: jest.fn((container: never, options: never) =>
-            actual.mountOperationsDiff(container, options)),
+        mountOperationsDiff: jest.fn((container: never, options: never) => {
+            const handle = actual.mountOperationsDiff(container, options);
+            return {
+                update: jest.fn((nextOptions: never) => handle.update(nextOptions)),
+                unmount: () => handle.unmount(),
+            };
+        }),
     };
 });
 const mountOperationsDiffMock = jest.requireMock('../src/chat/operations-review/mount') as {
     mountOperationsDiff: jest.Mock;
 };
+
+// The legacy Chat suite uses a lightweight DOM mock rather than jsdom. Keep its
+// business-action coverage at the new mount boundary; real React node identity
+// and lease continuity are covered by the focused image-task suite.
+jest.mock('../src/chat/ui/image-task-mount', () => {
+    type Props = import('../src/chat/ui/ImageTaskCard').ImageTaskCardProps;
+    const mounts: Array<{
+        container: HTMLElement;
+        props: Props;
+        update: jest.Mock<(next: Props) => void>;
+        unmount: jest.Mock;
+    }> = [];
+    return {
+        mounts,
+        mountImageTaskCard: jest.fn((container: HTMLElement, props: Props) => {
+            const record = {
+                container, props,
+                update: jest.fn((next: Props) => { record.props = next; }),
+                unmount: jest.fn(),
+            };
+            mounts.push(record);
+            return record;
+        }),
+    };
+});
+
+const imageTaskMountMock = jest.requireMock('../src/chat/ui/image-task-mount') as {
+    mounts: Array<{
+        container: HTMLElement;
+        props: import('../src/chat/ui/ImageTaskCard').ImageTaskCardProps;
+        update: jest.Mock;
+        unmount: jest.Mock;
+    }>;
+};
+
+function imageTaskMount(taskId: string) {
+    const mount = [...imageTaskMountMock.mounts].reverse().find(record => record.props.task.taskId === taskId);
+    if (!mount) throw new Error(`Missing image task mount: ${taskId}`);
+    return mount;
+}
 
 jest.mock('../src/share-card/share-card-modal', () => {
     const mockOpen = jest.fn();
@@ -231,6 +281,7 @@ class MockElement {
         getPropertyValue: (name: string) => this.style.values.get(name) ?? '',
     };
     parentElement: MockElement | null = null;
+    ownerDocument = globalThis.document;
     isConnected = true;
     textContent = '';
     private _value = '';
@@ -293,6 +344,15 @@ class MockElement {
 
     get value() {
         return this._value;
+    }
+
+    get open(): boolean | undefined {
+        return this.tagName === 'details' ? this.attributes.has('open') : undefined;
+    }
+
+    set open(value: boolean) {
+        if (value) this.setAttribute('open', '');
+        else this.removeAttribute('open');
     }
 
     set value(value: string) {
@@ -381,6 +441,13 @@ class MockElement {
         this.textContent = '';
     }
 
+    replaceChildren(...children: MockElement[]) {
+        for (const child of this.children) child.parentElement = null;
+        this.children.length = 0;
+        this.textContent = '';
+        for (const child of children) this.appendChild(child);
+    }
+
     setText(text: string) {
         this.textContent = text;
     }
@@ -420,6 +487,9 @@ class MockElement {
     }
 
     querySelectorAll(selector: string) {
+        if (selector === '[data-pa-reading-id]' || selector === '[data-pa-reading-disclosure]') {
+            return walkAll(this, el => el.getAttribute(selector.slice(1, -1)) !== null);
+        }
         if (selector === '.mermaid, .block-language-mermaid') {
             return walkAll(this, (el) =>
                 el.classList.contains('mermaid') || el.classList.contains('block-language-mermaid')
@@ -724,7 +794,7 @@ function createWritableChatHistoryManager(options: {
             activeConversationId = createdConversation.id;
             return createdConversation;
         }),
-        recordTurn: jest.fn(async () => {
+        recordTurn: jest.fn(async (_input: unknown) => {
             if (options.recordTurnError) throw options.recordTurnError;
             return { ...createdConversation, turnCount: 1 };
         }),
@@ -877,7 +947,13 @@ function createView(options: {
         view: new MarkdownView(editor as unknown as ConstructorParameters<typeof MarkdownView>[0]),
     };
     const markdownFile = { path: '0.unsorted/Dog.md', basename: 'Dog', extension: 'md' };
+    const localValues = new Map<string, string>();
     const app = {
+        loadLocalStorage: jest.fn((key: string) => localValues.has(key) ? JSON.parse(localValues.get(key)!) : null),
+        saveLocalStorage: jest.fn((key: string, data: unknown | null) => {
+            if (data === null) localValues.delete(key);
+            else localValues.set(key, JSON.stringify(data));
+        }),
         workspace: {
             getActiveFile: jest.fn(() => options.withMarkdownLeaf ? markdownFile : null),
             getActiveViewOfType: jest.fn(() => options.withMarkdownLeaf ? markdownLeaf.view : null),
@@ -1132,7 +1208,16 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
     }
 
+    function siblingView(first: ReturnType<typeof createView>) {
+        const containerEl = new MockElement('div');
+        const view = new LLMView({ app: first.app, containerEl } as unknown as ConstructorParameters<typeof LLMView>[0],
+            first.plugin as unknown as ConstructorParameters<typeof LLMView>[1]);
+        createdViews.add(view);
+        return { view, containerEl };
+    }
+
     beforeEach(() => {
+        imageTaskMountMock.mounts.length = 0;
         streamCalls = [];
         animationFrames = [];
         nextAnimationFrameId = 1;
@@ -1457,6 +1542,387 @@ describe('LLMView turn lifecycle', () => {
         expect(getButtonByClass(containerEl, 'pa-chat-source-scope-button').getAttribute('data-source-scope'))
             .toBe('notes');
         expect(allText(getElementByClass(containerEl, 'pa-chat-composer-hint'))).toContain('older conversation');
+        expect(mockStreamLLM).not.toHaveBeenCalled();
+    });
+
+    it('restores an unsent draft in a new view after normal close without sending or taking focus', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'draft-reopen-conversation' });
+        await manager.initialize();
+        await manager.startConversation('Earlier conversation');
+        const first = createView({ chatHistoryManager: manager });
+        // App's public local API is vault-scoped and stores serializable values.
+        // Reopening shares this backend, never the previous view's draft/store.
+        const localValues = new Map<string, string>();
+        Object.assign(first.app, {
+            loadLocalStorage: jest.fn((key: string): unknown | null => {
+                const value = localValues.get(key);
+                return value === undefined ? null : JSON.parse(value);
+            }),
+            saveLocalStorage: jest.fn((key: string, data: unknown | null): void => {
+                if (data === null) localValues.delete(key);
+                else localValues.set(key, JSON.stringify(data));
+            }),
+        });
+        await first.view.onOpen();
+        for (let index = 0; index < 5; index++) await flushPromises();
+        const draftText = 'Keep this unsent thought after closing Chat.';
+        getTextArea(first.containerEl).value = draftText;
+        expect(getTextArea(first.containerEl).value).toBe(draftText);
+        await first.view.onClose();
+        createdViews.delete(first.view);
+
+        const noteEditor = new MockElement('textarea');
+        noteEditor.focus();
+        const reopenedContainer = new MockElement('div');
+        const reopenedView = new LLMView(
+            { app: first.app, containerEl: reopenedContainer } as unknown as ConstructorParameters<typeof LLMView>[0],
+            first.plugin as unknown as ConstructorParameters<typeof LLMView>[1],
+        );
+        createdViews.add(reopenedView);
+        await reopenedView.onOpen();
+        for (let index = 0; index < 5; index++) await flushPromises();
+
+        expect(mockStreamLLM).not.toHaveBeenCalled();
+        expect(document.activeElement).toBe(noteEditor);
+        expect(getTextArea(reopenedContainer).value).toBe(draftText);
+    });
+
+    it('B-181 gives duplicated workspace routes independent unbound draft slots', async () => {
+        const first = createView();
+        await first.view.onOpen();
+        for (let i = 0; i < 3; i++) await flushPromises();
+        getTextArea(first.containerEl).value = 'First draft';
+        await flushPromises();
+        const route = first.view.getState();
+        expect(route).toEqual({ slotId: expect.any(String), conversationId: null });
+        const sibling = siblingView(first);
+        await sibling.view.setState(route);
+        await sibling.view.onOpen();
+        for (let i = 0; i < 3; i++) await flushPromises();
+        expect(getTextArea(sibling.containerEl).value).toBe('');
+        expect(sibling.view.getState().slotId).not.toBe(route.slotId);
+        getTextArea(sibling.containerEl).value = 'Second draft';
+        await first.view.onClose();
+        await sibling.view.onClose();
+        const reopened = siblingView(first);
+        await reopened.view.setState(route);
+        await reopened.view.onOpen();
+        for (let i = 0; i < 3; i++) await flushPromises();
+        expect(getTextArea(reopened.containerEl).value).toBe('First draft');
+        const other = siblingView(first);
+        await other.view.onOpen();
+        for (let i = 0; i < 3; i++) await flushPromises();
+        expect(getTextArea(other.containerEl).value).toBe('Second draft');
+        expect(mockStreamLLM).not.toHaveBeenCalled();
+    });
+
+    it.each(['identity', 'history'] as const)('B-181 reopens input edited during pending %s through the ordinary route-free entry', async phase => {
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'pending-conversation' });
+        await manager.initialize();
+        await manager.startConversation('Earlier conversation');
+        let started!: () => void;
+        const entered = new Promise<void>(resolve => { started = resolve; });
+        let finish!: () => void;
+        const gate = new Promise<void>(resolve => { finish = resolve; });
+        if (phase === 'identity') {
+            const original = manager.getActiveConversationId.bind(manager);
+            jest.spyOn(manager, 'getActiveConversationId').mockImplementationOnce(async () => {
+                started(); await gate; return original();
+            });
+        } else {
+            const original = manager.getTurns.bind(manager);
+            jest.spyOn(manager, 'getTurns').mockImplementationOnce(async id => {
+                started(); await gate; return original(id);
+            });
+        }
+        const first = createView({ chatHistoryManager: manager });
+        const publishedRoutes: Record<string, unknown>[] = [];
+        Object.assign(first.app.workspace, {
+            requestSaveLayout: () => { publishedRoutes.push(first.view.getState()); },
+        });
+        await first.view.onOpen();
+        await entered;
+        if (phase === 'identity') expect(first.view.getState()).toEqual({});
+        expect(first.app.loadLocalStorage(UI_RECOVERY_KEY)).toBeNull();
+        getTextArea(first.containerEl).value = 'Input while history is loading';
+        await first.view.onClose();
+        const saved = first.app.loadLocalStorage(UI_RECOVERY_KEY) as { slots: Array<{
+            slotId: string; conversationId: string | null; startupRoutePending?: true;
+        }> };
+        expect(saved.slots).toHaveLength(1);
+        expect(saved.slots[0].conversationId).toBe(phase === 'identity' ? null : 'pending-conversation');
+        expect(saved.slots[0].startupRoutePending).toBe(phase === 'identity' ? true : undefined);
+        expect(publishedRoutes.at(-1)).toEqual({ slotId: saved.slots[0].slotId,
+            conversationId: saved.slots[0].conversationId });
+        finish();
+        await flushPromises();
+        expect(first.app.loadLocalStorage(UI_RECOVERY_KEY)).toEqual(saved);
+        const reopened = siblingView(first);
+        await reopened.view.onOpen();
+        for (let i = 0; i < 5; i++) await flushPromises();
+        expect(getTextArea(reopened.containerEl).value).toBe('Input while history is loading');
+        expect(reopened.view.getState()).toEqual({ slotId: saved.slots[0].slotId, conversationId: 'pending-conversation' });
+        expect((first.app.loadLocalStorage(UI_RECOVERY_KEY) as typeof saved).slots[0].startupRoutePending).toBeUndefined();
+        expect(mockStreamLLM).not.toHaveBeenCalled();
+        expect(await manager.getActiveConversationId()).toBe('pending-conversation');
+    });
+
+    it('B-181 keeps the persisted workspace route when pending identity migration cannot be saved', async () => {
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'migration-conversation' });
+        await manager.initialize();
+        await manager.startConversation('Earlier conversation');
+        const first = createView({ chatHistoryManager: manager });
+        const oldRoute = { slotId: 'pending-migration', conversationId: null };
+        first.app.saveLocalStorage(UI_RECOVERY_KEY, { schemaVersion: 1, slots: [{
+            ...oldRoute, startupRoutePending: true, savedAt: 1, reading: null,
+            draft: { text: 'Do not lose this draft', images: [] },
+        }] });
+        const originalSave = first.app.saveLocalStorage.getMockImplementation()!;
+        first.app.saveLocalStorage.mockImplementation(() => { throw new Error('disk unavailable'); });
+        await first.view.onOpen();
+        for (let i = 0; i < 4; i++) await flushPromises();
+        expect(getTextArea(first.containerEl).value).toBe('Do not lose this draft');
+        expect((first.view as unknown as { conversationPersistence: ConversationPersistence })
+            .conversationPersistence.activeConversationId).toBe('migration-conversation');
+        const publishedRoute = first.view.getState();
+        expect(publishedRoute).toEqual(oldRoute);
+        await first.view.onClose();
+
+        const reopened = siblingView(first);
+        const publishedRoutes: Record<string, unknown>[] = [];
+        Object.assign(first.app.workspace, {
+            requestSaveLayout: () => { publishedRoutes.push(reopened.view.getState()); },
+        });
+        await reopened.view.setState(publishedRoute);
+        await reopened.view.onOpen();
+        for (let i = 0; i < 4; i++) await flushPromises();
+        expect(getTextArea(reopened.containerEl).value).toBe('Do not lose this draft');
+        expect(reopened.view.getState()).toEqual(oldRoute);
+        first.app.saveLocalStorage.mockImplementation(originalSave);
+        await reopened.view.onClose();
+        expect(publishedRoutes.at(-1)).toEqual({ ...oldRoute, conversationId: 'migration-conversation' });
+        const saved = first.app.loadLocalStorage(UI_RECOVERY_KEY) as { slots: Array<Record<string, unknown>> };
+        expect(saved.slots).toHaveLength(1);
+        expect(saved.slots[0]).toMatchObject({ slotId: oldRoute.slotId, conversationId: 'migration-conversation' });
+        expect(saved.slots[0].startupRoutePending).toBeUndefined();
+        expect(mockStreamLLM).not.toHaveBeenCalled();
+    });
+
+    it('B-181 ignores missing-active cleanup after a send adopts another conversation', async () => {
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'new-conversation' });
+        await manager.initialize();
+        await manager.setActiveConversationId('missing-conversation');
+        let started!: () => void;
+        const entered = new Promise<void>(resolve => { started = resolve; });
+        let finish!: () => void;
+        const gate = new Promise<void>(resolve => { finish = resolve; });
+        const getActiveId = manager.getActiveConversationId.bind(manager);
+        jest.spyOn(manager, 'getActiveConversationId')
+            .mockImplementationOnce(getActiveId)
+            .mockImplementationOnce(async () => {
+                const missingId = await getActiveId();
+                started(); await gate; return missingId;
+            });
+        const first = createView({ chatHistoryManager: manager });
+        await first.view.onOpen();
+        await entered;
+        getTextArea(first.containerEl).value = 'Start a new conversation';
+        getElementByClass(first.containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(first.view);
+        expect(await manager.getActiveConversationId()).toBe('new-conversation');
+        getTextArea(first.containerEl).value = 'Keep the next draft with the new conversation';
+        await flushPromises();
+        finish();
+        await flushPromises();
+        expect(await manager.getActiveConversationId()).toBe('new-conversation');
+        await first.view.onClose();
+        const saved = first.app.loadLocalStorage(UI_RECOVERY_KEY) as { slots: Array<{
+            conversationId: string | null; draft: { text: string };
+        }> };
+        expect(saved.slots).toHaveLength(1);
+        expect(saved.slots[0].conversationId).toBe('new-conversation');
+        expect(saved.slots[0].draft.text).toBe('Keep the next draft with the new conversation');
+        const reopened = siblingView(first);
+        await reopened.view.onOpen();
+        for (let i = 0; i < 4; i++) await flushPromises();
+        expect(getTextArea(reopened.containerEl).value).toBe('Keep the next draft with the new conversation');
+        expect(mockStreamLLM).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['type-clear', 'route', 'delete', 'close'] as const)(
+        'B-181 discards late attachment recovery after %s', async action => {
+            const store = new MemoryChatHistoryStore();
+            const manager = new ChatHistoryManager({ store, generateId: () => 'late-recovery' });
+            await manager.initialize();
+            await manager.startConversation('saved');
+            const first = createView({ chatHistoryManager: manager });
+            first.app.saveLocalStorage(UI_RECOVERY_KEY, { schemaVersion: 1, slots: [{
+                slotId: 'pending-ref', conversationId: 'late-recovery', savedAt: 1, reading: null,
+                draft: { text: 'Old text', images: [{ label: 'Old image', image: {
+                    ref: { assetId: 'image_old', contentHash: 'a'.repeat(64) }, ordinal: 1, label: 'Old image',
+                } }] },
+            }] });
+            let complete!: (value: { isCurrent: () => boolean }) => void;
+            const verify = jest.fn(() => new Promise<{ isCurrent: () => boolean }>(resolve => { complete = resolve; }));
+            Object.assign(first.plugin, { imageAssetService: { verify } });
+            await first.view.onOpen();
+            for (let i = 0; i < 5 && !complete; i++) await flushPromises();
+            expect(verify).toHaveBeenCalledTimes(1);
+            if (action === 'type-clear') {
+                getTextArea(first.containerEl).value = 'new intent';
+                getTextArea(first.containerEl).value = '';
+            } else if (action === 'route') {
+                await first.view.setState({ slotId: 'another-route', conversationId: null });
+            } else if (action === 'delete') {
+                await manager.deleteConversation('late-recovery');
+            } else await first.view.onClose();
+            complete({ isCurrent: () => true });
+            for (let i = 0; i < 3; i++) await flushPromises();
+            expect(getTextArea(first.containerEl).value).toBe('');
+            expect(allText(first.containerEl)).not.toContain('Old image');
+            expect(mockStreamLLM).not.toHaveBeenCalled();
+            if (action === 'delete') expect(first.app.loadLocalStorage(UI_RECOVERY_KEY)).toBeNull();
+        },
+    );
+
+    it.each(['source', 'writing-parent'] as const)('B-181 keeps an unavailable %s visible and unsendable until explicitly removed', async kind => {
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'intent-recovery' });
+        await manager.initialize();
+        await manager.startConversation('saved');
+        const first = createView({ chatHistoryManager: manager });
+        first.app.saveLocalStorage(UI_RECOVERY_KEY, { schemaVersion: 1, slots: [{
+            slotId: 'intent-slot', conversationId: 'intent-recovery', savedAt: 1, reading: null,
+            draft: { text: 'Keep my request', images: [], ...(kind === 'source' ? { imageIntent: {
+                referenceImageRefs: [], preparedPrompt: 'previously prepared', reusePreparedPrompt: true,
+                recoverySourceLabel: 'Private note',
+            } } : { writingIntent: true, writingParentId: 'missing-parent' }) },
+        }] });
+        const get = jest.fn(async (_id: string) => undefined);
+        Object.assign(first.plugin, { writingVersions: { get } });
+        await first.view.onOpen();
+        for (let i = 0; i < 4; i++) await flushPromises();
+        expect(getTextArea(first.containerEl).value).toBe('Keep my request');
+        expect(getButtonByText(first.containerEl, 'Ask').disabled).toBe(true);
+        expect(allText(first.containerEl)).toContain('again');
+        if (kind === 'source') getButtonByClass(first.containerEl, 'pa-chat-create-image-remove-source').click();
+        else {
+            expect(get).toHaveBeenCalledWith('missing-parent');
+            const intent = getElementByClass(first.containerEl, 'pa-chat-writing-intent');
+            intent.querySelector('button')!.click();
+        }
+        expect(getButtonByText(first.containerEl, 'Ask').disabled).toBe(false);
+        expect(mockStreamLLM).not.toHaveBeenCalled();
+        expect(first.plugin.prepareFeaturedImagePrompt).not.toHaveBeenCalled();
+    });
+
+    it('B-181 keeps the last committed input when closed during IME composition', async () => {
+        const first = createView();
+        await first.view.onOpen();
+        const area = getTextArea(first.containerEl);
+        area.value = 'Committed';
+        await flushPromises();
+        area.dispatchEvent('compositionstart');
+        area.value = 'Committed + 未完成';
+        await flushPromises();
+        expect(area.value).toBe('Committed + 未完成');
+        await first.view.onClose();
+        const reopened = siblingView(first);
+        await reopened.view.onOpen();
+        for (let i = 0; i < 3; i++) await flushPromises();
+        expect(getTextArea(reopened.containerEl).value).toBe('Committed');
+        expect(mockStreamLLM).not.toHaveBeenCalled();
+    });
+
+    it('B-181 restores Pagelet context as removable reselection state without replaying its body', async () => {
+        // Two slots can be saved in one millisecond during a handoff/close.
+        const clock = jest.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+        try {
+            const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'pagelet-recovery' });
+            const first = createView({ chatHistoryManager: manager });
+            await first.view.onOpen();
+            const context = createPageletHandoffContext();
+            expect(await first.view.preparePageletHandoff(context)).toEqual({ status: 'prepared' });
+            await first.view.onClose();
+            const serialized = JSON.stringify(first.app.loadLocalStorage(UI_RECOVERY_KEY));
+            expect(serialized).toContain('pageletReselectionRequired');
+            expect(serialized).not.toContain(context.body);
+            expect(serialized).not.toContain(context.anchor.path);
+            const reopened = siblingView(first);
+            await reopened.view.onOpen();
+            for (let i = 0; i < 4; i++) await flushPromises();
+            const attachment = getElementByClass(reopened.containerEl, 'pa-chat-pagelet-attachment');
+            expect(attachment.hidden).toBe(false);
+            expect(allText(attachment)).toContain('again');
+            expect(getButtonByText(reopened.containerEl, 'Ask').disabled).toBe(true);
+            expect(mockStreamLLM).not.toHaveBeenCalled();
+            getButtonByClass(attachment, 'pa-chat-pagelet-attachment__remove').click();
+            expect(getButtonByText(reopened.containerEl, 'Ask').disabled).toBe(false);
+            await reopened.view.onClose();
+            const twice = siblingView(first);
+            await twice.view.onOpen();
+            for (let i = 0; i < 4; i++) await flushPromises();
+            expect(getElementByClass(twice.containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(true);
+            expect(getButtonByText(twice.containerEl, 'Ask').disabled).toBe(false);
+            expect(mockStreamLLM).not.toHaveBeenCalled();
+        } finally { clock.mockRestore(); }
+    });
+
+    it('B-181 restores the task Details reading anchor after delayed history and ignores background ticks', async () => {
+        Object.assign(window, { setTimeout, clearTimeout, performance });
+        Object.assign(document, { defaultView: window });
+        const { manager, messages } = createRestoredConversationFixture(1, 'reading');
+        messages[0].hostProvenance = { version: 1, messageId: 'reading-user', kind: 'ordinary_user_statement' };
+        messages[1].hostProvenance = { version: 1, messageId: 'reading-assistant', kind: 'ai_draft' };
+        const task = { schemaVersion: 1, taskId: 'reading_task', operationId: 'reading_operation',
+            conversationId: 'conv_reading', stableMessageId: 'reading-user', revision: 1,
+            createdAt: '2026-10-20T00:00:00.000Z', updatedAt: '2026-10-20T00:00:00.000Z',
+            request: { userPrompt: 'draw', submittedPrompt: 'draw', operation: 'generate', model: 'wan2.7-image', count: 1, inputRefs: [] },
+            connection: { mode: 'inherit-chat', endpointIdentity: 'https://example.invalid', credentialSlot: 'chat', revision: 0 },
+            state: 'running', outputs: [] } as ImageGenerationTask;
+        const first = createView({ chatHistoryManager: manager });
+        let notify!: (updated: ImageGenerationTask) => void;
+        Object.assign(first.plugin, { imageGenerationService: { list: async () => [task],
+            subscribe: (callback: typeof notify) => { notify = callback; return () => undefined; } } });
+        await first.view.onOpen();
+        for (let i = 0; i < 6; i++) await yieldToRestoreScheduler();
+        const rect = (top: number, height: number): MockRect => ({ top, bottom: top + height, left: 0, right: 600, width: 600, height });
+        const layout = (view: LLMView, container: MockElement) => {
+            const port = getResponseDiv(view);
+            port.clientHeight = 200; port.scrollHeight = 2000;
+            port.getBoundingClientRect = () => rect(0, 200);
+            for (const content of getElementsByClass(container, 'message-content')) {
+                content.getBoundingClientRect = () => rect(-500, 50);
+                expect(content.parentElement?.getAttribute('data-pa-reading-id')).toBeNull();
+            }
+            const mount = imageTaskMount(task.taskId);
+            (mount.container as unknown as MockElement).getBoundingClientRect = () => rect(500 - port.scrollTop, 400);
+            return { port, mount };
+        };
+        const original = layout(first.view, first.containerEl);
+        original.mount.props.store.getState().setTaskDetailsOpen(task.taskId, true);
+        original.port.scrollTop = 520;
+        original.port.dispatchEvent('wheel');
+        original.port.dispatchEvent('scroll');
+        await first.view.onClose();
+        const saved = first.app.loadLocalStorage(UI_RECOVERY_KEY) as { slots: Array<{ reading: unknown }> };
+        expect(saved.slots[0].reading).toEqual({ anchorId: 'task:reading_task', offset: -20, fallbackTop: 520,
+            disclosures: ['task:reading_task'] });
+
+        const reopened = siblingView(first);
+        await reopened.view.onOpen();
+        for (let i = 0; i < 6; i++) await flushPromises();
+        const restored = layout(reopened.view, reopened.containerEl);
+        expect(restored.mount.props.store.getState().taskDetailsOpen[task.taskId]).toBe(true);
+        // The old auto-follow frame must not win over semantic reading restoration.
+        for (let i = 0; i < 4; i++) { runAnimationFrames(); await flushPromises(); }
+        expect(restored.port.scrollTop).toBe(520);
+        const writes = first.app.saveLocalStorage.mock.calls.length;
+        notify({ ...task, revision: 2 });
+        await new Promise(resolve => setTimeout(resolve, 270));
+        expect(first.app.saveLocalStorage).toHaveBeenCalledTimes(writes);
         expect(mockStreamLLM).not.toHaveBeenCalled();
     });
 
@@ -2926,7 +3392,7 @@ describe('LLMView turn lifecycle', () => {
         const context = createView();
         const { service, ref } = attachDisclosureService(context, new MemoryChatHistoryStore());
         const importFile = jest.spyOn(service, 'importFile').mockImplementation(async (file) => ({
-            ref: { ...ref, assetId: file.name }, asset: { acquisition: 'unverified_import' },
+            ref: { ...ref, assetId: file.name.replace('.', '_') }, asset: { acquisition: 'unverified_import' },
         }) as Awaited<ReturnType<ImageAssetService['importFile']>>);
         const readOriginal = jest.spyOn(service, 'readOriginal');
         const detailRoot = new MockElement('div');
@@ -4712,84 +5178,47 @@ describe('LLMView turn lifecycle', () => {
         task = { ...task!, state: 'completed', revision: 2, outputs: [{ outputId: 'output_1', providerOrdinal: 0,
             saveState: 'saved', assetRef: { assetId: 'image_1', contentHash: 'a'.repeat(64) } }] };
         notifyTask?.(task);
-        const card = getElementByClass(containerEl, 'pa-chat-image-task-card');
-        expect(card.getAttribute('data-state')).toBe('completed');
-        expect(card.parentElement!.classList.contains('llm-message')).toBe(true);
-        const cardSiblings = card.parentElement!.children;
+        const mount = imageTaskMount('background_task');
+        const card = mount.container as unknown as MockElement;
+        const messageParent = card.parentElement!;
+        expect(mount.props.task.state).toBe('completed');
+        expect(mount.props.getMessageActions().map(action => action.label))
+            .toEqual(expect.arrayContaining(['Copy message', 'Add to editor', 'Delete']));
+        expect(mount.props.getMessageActions().find(action => action.id === 'message-action:trash-2')?.disabled).toBe(true);
+        expect(messageParent.classList.contains('llm-message')).toBe(true);
+        const cardSiblings = messageParent.children;
         const responseDetails = cardSiblings[cardSiblings.indexOf(card) + 1];
         expect(responseDetails.classList.contains('pa-chat-image-response-details')).toBe(true);
         expect(responseDetails.getAttribute('open')).toBe(null);
         expect(getElementByClass(responseDetails, 'message-content')).toBeTruthy();
         expect(cardSiblings[cardSiblings.indexOf(card) + 2].classList.contains('message-action-toolbar')).toBe(true);
-        expect(getElementByClass(card.parentElement!, 'message-action-toolbar').hidden).toBe(true);
-        const output = getElementByClass(card, 'pa-chat-image-task-card__output');
-        const imageFrame = getElementByClass(output, 'pa-chat-image-task-card__image-frame');
-        const preview = getButtonByClass(imageFrame, 'pa-chat-image-task-card__preview');
-        const editButton = getButtonByClass(output, 'pa-chat-image-task-card__output-action--edit');
-        const downloadButton = getButtonByClass(output, 'pa-chat-image-task-card__output-action--download');
-        const outputActions = getElementByClass(output, 'pa-chat-image-task-card__output-actions');
-        const moreButton = getButtonByClass(outputActions, 'pa-chat-image-task-card__more');
-        expect(output.children.indexOf(imageFrame)).toBeLessThan(output.children.indexOf(outputActions));
-        expect(getElementsByClass(outputActions, 'message-action-button')).toHaveLength(4);
-        expect([preview, editButton, downloadButton, moreButton].every(button => button.textContent === '')).toBe(true);
-        moreButton.click();
-        const taskMenu = getElementByClass(card, 'pa-chat-image-task-card__menu');
-        expect(taskMenu.hidden).toBe(false);
-        const menuText = getElementsByClass(taskMenu, 'pa-chat-menu-item').map(allText);
-        expect(menuText).toContain('Regenerate');
-        expect(menuText).toContain('Copy message');
-        expect(menuText).toContain('Add to editor');
-        expect(menuText).toContain('Delete');
-        expect(getButtonsByText(taskMenu, 'Delete').every(item => item.disabled)).toBe(true);
-        expect(allText(output)).not.toContain('View image');
-        expect(allText(output)).not.toContain('Saved');
-        const details = getElementByClass(card, 'pa-chat-image-task-card__details');
-        expect(walk(card, element => element.classList.contains('pa-chat-image-task-card__actions'))).toBe(null);
-        expect(card.children.indexOf(details)).toBeGreaterThan(card.children.indexOf(getElementByClass(card, 'pa-chat-image-task-card__outputs')));
-        expect(details.getAttribute('open')).toBe(null);
-        expect(allText(details)).toContain('Original request');
-        expect(allText(details)).toContain('Submitted description');
-        expect(allText(details)).toContain('Model');
-        expect(allText(details)).toContain('Count');
-        expect(allText(details)).toContain('Created');
-
-        task = { ...task!, state: 'submission_unknown', revision: 3, outputs: [],
-            recoveryReason: 'provider_acceptance_unknown' };
+        expect(getElementByClass(messageParent, 'message-action-toolbar').hidden).toBe(true);
+        const responseContent = getElementByClass(responseDetails, 'message-content');
+        task = { ...task!, revision: 3 };
         notifyTask?.(task);
-        expect(allText(card)).toContain('Could not confirm whether the image service accepted this request.');
-        expect(allText(card)).not.toContain('%');
-        expect(getElementByClass(card.parentElement!, 'pa-chat-image-response-details').getAttribute('open'))
-            .toBe(null);
-
-        task = { ...task!, state: 'partial', revision: 4, recoveryReason: 'provider_failed',
-            outputs: [
-                { outputId: 'output_1', providerOrdinal: 0,
-                    saveState: 'saved', assetRef: { assetId: 'image_1', contentHash: 'a'.repeat(64) } },
-                { outputId: 'output_2', providerOrdinal: 1, saveState: 'failed',
-                    recoveryReason: 'provider_failed' },
-            ] };
-        notifyTask?.(task);
-        expect(allText(card)).toContain('The image service could not complete this request.');
-        expect(allText(card)).toContain('Image 2: Save failed');
-        expect(getButtonByText(card, 'Stop')).toBeTruthy();
-        expect(getButtonByText(card, 'Recover result')).toBeTruthy();
-
-        task = { ...task!, state: 'not_submitted', revision: 5, outputs: [],
-            recoveryReason: 'transparent_input_needs_confirmation' };
-        notifyTask?.(task);
-        expect(getButtonByText(card, 'Confirm white-backed copy and continue')).toBeTruthy();
-        expect(getButtonByClass(getElementByClass(card, 'pa-chat-image-task-card__header-controls'),
-            'pa-chat-image-task-card__more')).toBeTruthy();
+        expect(imageTaskMount('background_task')).toBe(mount);
+        expect(mount.update).toHaveBeenCalled();
+        expect(mount.props.task.revision).toBe(3);
+        expect(getElementByClass(messageParent, 'pa-chat-image-response-details')).toBe(responseDetails);
+        expect(getElementByClass(responseDetails, 'message-content')).toBe(responseContent);
+        expect(responseDetails.getAttribute('open')).toBe(null);
 
         const secondTask = { ...task, taskId: 'background_task_2', revision: 3 };
         notifyTask?.(secondTask);
         notifyTask?.({ ...task, revision: 6 });
         notifyTask?.({ ...secondTask, revision: 4 });
-        expect(getElementsByClass(containerEl, 'pa-chat-image-task-card')
+        expect(imageTaskMount('background_task')).toBe(mount);
+        expect(mount.unmount).not.toHaveBeenCalled();
+        expect(imageTaskMountMock.mounts.filter(record => record.props.task.taskId === 'background_task'))
+            .toHaveLength(1);
+        expect(getElementsByClass(containerEl, 'pa-chat-image-task-card-root')
             .map(item => item.getAttribute('data-task-id'))).toEqual(['background_task', 'background_task_2']);
         expect(getElementsByClass(containerEl, 'pa-chat-image-response-details')).toHaveLength(1);
-        expect(allText(card.parentElement!)).toContain('Image request is running.');
-        expect(allText(card.parentElement!)).not.toContain('Watercolor paper is textured.');
+        responseDetails.open = true;
+        responseDetails.dispatchEvent('toggle');
+        await flushPromises();
+        expect(allText(messageParent)).toContain('Image request is running.');
+        expect(allText(messageParent)).not.toContain('Watercolor paper is textured.');
         expect(editor.value).toBe(draftBeforeCompletion);
         expect(streamCalls[1].prompt).toContain('Tell me about watercolor paper');
         streamCalls[1].resolve();
@@ -4800,7 +5229,61 @@ describe('LLMView turn lifecycle', () => {
         await view.onClose();
     });
 
-    it('keeps interrupted-message retry in image-task More with keyboard and outside dismissal', async () => {
+    it('reads completed message actions after an image card mounts without another task event', async () => {
+        const manager = new ChatHistoryManager({
+            store: new MemoryChatHistoryStore(), generateId: () => 'image-before-message-completion',
+        });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        let notifyTask: ((task: ImageGenerationTask) => void) | undefined;
+        Object.assign(plugin, {
+            confirmImageGenerationFirstUse: async () => true,
+            imageGenerationService: {
+                list: async () => [],
+                subscribe: (listener: (task: ImageGenerationTask) => void) => {
+                    notifyTask = listener;
+                    return () => { notifyTask = undefined; };
+                },
+                submit: async (request: ImageGenerationSubmitInput) => {
+                    notifyTask?.({
+                        schemaVersion: 1, taskId: 'image_finishes_first', operationId: request.operationId,
+                        conversationId: request.conversationId, stableMessageId: request.stableMessageId,
+                        createdAt: '2026-10-20T00:00:00.000Z', updatedAt: '2026-10-20T00:00:00.000Z', revision: 1,
+                        request: { userPrompt: request.userPrompt, submittedPrompt: request.submittedPrompt,
+                            operation: request.operation, model: 'wan2.7-image', count: 1, inputRefs: [] },
+                        connection: { mode: 'inherit-chat', endpointIdentity: 'https://example.invalid',
+                            credentialSlot: 'chat', revision: 0 },
+                        state: 'completed', outputs: [],
+                    });
+                    return { taskId: 'image_finishes_first' };
+                },
+            },
+        });
+        await view.onOpen();
+        view.prefillComposer('@CreateImage 蓝色纸鹤');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        await streamCalls[0].options.createImage!.submit({ prompt: '蓝色纸鹤',
+            operation: 'generate', count: 1, referenceImageRefs: [] });
+        const mount = imageTaskMount('image_finishes_first');
+        expect(mount.props.task.state).toBe('completed');
+        const getMessageActions = mount.props.getMessageActions;
+        expect(getMessageActions().map(action => action.id)).toEqual(['message-action:copy']);
+        const updatesBeforeMessageCompletion = mount.update.mock.calls.length;
+        streamCalls[0].onChunk('The requested image is ready.');
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(view);
+        expect(mount.update).toHaveBeenCalledTimes(updatesBeforeMessageCompletion);
+        expect(getMessageActions().map(action => action.id)).toEqual(expect.arrayContaining([
+            'message-action:copy', 'message-action:file-plus', 'message-action:share-2', 'message-action:trash-2',
+        ]));
+        const card = mount.container as unknown as MockElement;
+        expect(getElementByClass(card.parentElement!, 'message-action-toolbar').hidden).toBe(true);
+        getMessageActions().find(action => action.id === 'message-action:share-2')!.run();
+        expect(mockShareCardModalOpen).toHaveBeenCalledTimes(1);
+        await view.onClose();
+    });
+
+    it('forwards current image-task message capabilities and interrupted-message retry', async () => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'interrupted-image-response' });
         await manager.initialize();
@@ -4840,76 +5323,30 @@ describe('LLMView turn lifecycle', () => {
             },
             resume: resumeImageTask,
         } });
-        const taskMenuListeners = new Map<string, Array<(event: { target: unknown }) => void>>();
-        const taskMenuDocument = {
-            addEventListener: (type: string, listener: (event: { target: unknown }) => void) => {
-                const listeners = taskMenuListeners.get(type) ?? [];
-                listeners.push(listener);
-                taskMenuListeners.set(type, listeners);
-            },
-            removeEventListener: (type: string, listener: (event: { target: unknown }) => void) => {
-                const listeners = (taskMenuListeners.get(type) ?? [])
-                    .filter(current => current !== listener);
-                taskMenuListeners.set(type, listeners);
-            },
-        };
-        (containerEl as MockElement & { ownerDocument?: unknown }).ownerDocument = taskMenuDocument;
         await view.onOpen();
         for (let index = 0; index < 5
-            && !getElementsByClass(containerEl, 'pa-chat-image-task-card__more').length; index++) {
+            && !imageTaskMountMock.mounts.length; index++) {
             await flushPromises();
         }
-        const activeDocument = {
-            activeElement: undefined as MockElement | undefined,
-            createElement: (tagName: string) => new MockElement(tagName),
-        };
-        Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers(activeDocument) });
-
-        const card = getElementByClass(containerEl, 'pa-chat-image-task-card');
+        const mount = imageTaskMount('interrupted_image_task');
+        const card = mount.container as unknown as MockElement;
         const footer = getElementByClass(card.parentElement!, 'message-action-toolbar');
         expect(footer.hidden).toBe(true);
         expect(footer.classList.contains('pa-chat-image-response-actions')).toBe(true);
-        getButtonByClass(footer, 'copy-message-button').disabled = true;
-        const moreButton = getButtonByClass(containerEl, 'pa-chat-image-task-card__more');
-        moreButton.click();
-        const menu = getElementByClass(containerEl, 'pa-chat-image-task-card__menu');
-        expect(menu.hidden).toBe(false);
-        const menuItems = getElementsByClass(menu, 'pa-chat-menu-item');
-        expect(activeDocument.activeElement).toBe(menuItems[0]);
-        expect(menuItems[1].disabled).toBe(true);
-        menuItems[0].dispatchEvent('keydown', { key: 'ArrowDown', preventDefault: jest.fn() });
-        const nextAvailableItem = menuItems.find((item, index) => index > 0 && !item.disabled)!;
-        expect(activeDocument.activeElement).toBe(nextAvailableItem);
-        nextAvailableItem.dispatchEvent('keydown', { key: 'Escape', preventDefault: jest.fn() });
-        expect(menu.hidden).toBe(true);
-        expect(activeDocument.activeElement).toBe(moreButton);
-        expect(moreButton.getAttribute('aria-expanded')).toBe('false');
+        const sourceCopy = getButtonByClass(footer, 'copy-message-button');
+        const copyAction = mount.props.getMessageActions().find(action => action.id === 'message-action:copy')!;
+        expect(copyAction.disabled).toBe(false);
+        sourceCopy.disabled = true;
+        // This read occurs when More opens, after the task was rendered.
+        expect(copyAction.disabled).toBe(true);
         expect(mockStreamLLM).not.toHaveBeenCalled();
-
-        moreButton.click();
-        expect(menu.hidden).toBe(false);
-        for (const listener of taskMenuListeners.get('pointerdown') ?? []) {
-            listener({ target: getTextArea(containerEl) });
-        }
-        expect(menu.hidden).toBe(true);
-        expect(mockStreamLLM).not.toHaveBeenCalled();
-
-        const listenerCountBeforeRedraw = taskMenuListeners.get('pointerdown')?.length ?? 0;
-        const teardown = (view as unknown as { viewTeardownCallbacks: Set<() => void> }).viewTeardownCallbacks;
-        const teardownCountWithMenu = teardown.size;
         task = { ...task, revision: 2 };
         notifyTask?.(task);
-        expect(taskMenuListeners.get('pointerdown')).toHaveLength(listenerCountBeforeRedraw);
-        expect(teardown.size).toBe(teardownCountWithMenu);
-
-        const redrawnMore = getButtonByClass(containerEl, 'pa-chat-image-task-card__more');
-        redrawnMore.click();
-        const redrawnMenu = getElementByClass(containerEl, 'pa-chat-image-task-card__menu');
-        expect(allText(redrawnMenu)).toContain('Retry message');
-        expect(mockStreamLLM).not.toHaveBeenCalled();
-        const retryMenuItem = getButtonByText(redrawnMenu, 'Retry message');
-        expect(retryMenuItem.disabled).toBe(false);
-        retryMenuItem.click();
+        expect(imageTaskMount('interrupted_image_task')).toBe(mount);
+        const retryAction = mount.props.getMessageActions().find(action => action.id === 'message-action:rotate-cw')!;
+        expect(retryAction.label).toBe('Retry message');
+        expect(retryAction.disabled).toBe(false);
+        retryAction.run();
         await waitForStreamCallCount(streamCalls, 1);
         expect(streamCalls[0].prompt).toContain('Continue the interrupted task from the safe conversation history.');
         expect(streamCalls[0].prompt).toContain('Original goal: Interrupted image request');
@@ -4960,28 +5397,26 @@ describe('LLMView turn lifecycle', () => {
         }, prepareFeaturedImagePrompt: prepare, confirmImageGenerationFirstUse: async () => true });
         await view.onOpen();
         for (let index = 0; index < 5
-            && !getElementsByClass(containerEl, 'pa-chat-image-task-card__more').length; index++) {
+            && !imageTaskMountMock.mounts.length; index++) {
             await flushPromises();
         }
         const secondTask = { ...task, taskId: 'regenerate_source_task_2' };
         notifyTask?.(secondTask);
         notifyTask?.({ ...task, revision: 2 });
         notifyTask?.({ ...secondTask, revision: 2 });
-        expect(getElementsByClass(containerEl, 'pa-chat-image-task-card')
+        expect(getElementsByClass(containerEl, 'pa-chat-image-task-card-root')
             .map(card => card.getAttribute('data-task-id')))
             .toEqual(['regenerate_source_task', 'regenerate_source_task_2']);
         const textArea = getTextArea(containerEl);
         const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
-        const moreButton = getButtonByClass(containerEl, 'pa-chat-image-task-card__more');
+        const regenerate = imageTaskMount('regenerate_source_task').props.actions.regenerate;
         textArea.value = 'Unsent follow-up';
-        moreButton.click();
-        getButtonByText(getElementByClass(containerEl, 'pa-chat-image-task-card__menu'), 'Regenerate').click();
+        regenerate();
         expect(textArea.value).toBe('Unsent follow-up');
         expect(allText(getElementByClass(containerEl, 'pa-chat-composer-hint')))
             .toContain('Finish or clear the current draft before regenerating.');
         textArea.value = '';
-        moreButton.click();
-        getButtonByText(getElementByClass(containerEl, 'pa-chat-image-task-card__menu'), 'Regenerate').click();
+        regenerate();
         const intent = draft.snapshot(textArea.value).imageIntent;
         expect(textArea.value).toBe('PRIOR-SUBMITTED-SENTINEL');
         expect(intent).toMatchObject({
@@ -5081,18 +5516,18 @@ describe('LLMView turn lifecycle', () => {
             task = { ...task!, state: 'completed', revision: 2, outputs: [{ outputId: 'output_0', providerOrdinal: 0,
                 saveState: 'saved', assetRef: { assetId: 'scoped_image', contentHash: 'a'.repeat(64) } }] };
             notifyTask?.(task);
-            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card__preview')).toHaveLength(1);
-            const outputRow = getElementByClass(containerEl, 'pa-chat-image-task-card__output');
-            Object.assign(outputRow, { ownerDocument: copyDocument });
-            const copyButton = getButtonsByClass(outputRow, 'pa-chat-image-task-card__output-action')
-                .find(button => button.getAttribute('aria-label') === 'Copy image')!;
-            copyButton.click();
+            const mount = imageTaskMount('scoped_image_task');
+            const output = task.outputs[0];
+            expect(mount.props.canDeliverOutputs).toBe(true);
+            const previewPromise = mount.props.actions.resolvePreview(output);
+            const copy = () => mount.props.actions.copy(output, copyDocument as unknown as Document);
+            copy();
             await flushPromises();
             expect(pendingConversions).toHaveLength(1);
             pendingConversions.shift()?.();
             await flushPromises();
             expect(clipboardWrite).toHaveBeenCalledTimes(1);
-            copyButton.click();
+            copy();
             await flushPromises();
             expect(pendingConversions).toHaveLength(1);
             sourceCurrent = false;
@@ -5103,13 +5538,11 @@ describe('LLMView turn lifecycle', () => {
             finishPreview({ blob: new Blob(['preview']), mime: 'image/png', width: 1, height: 1,
                 persistent: false, release: releasePreview });
             await flushPromises();
+            expect(await previewPromise).toBe(null);
             expect(createUrl).not.toHaveBeenCalled();
             expect(releasePreview).toHaveBeenCalledTimes(1);
             notifyTask?.(task);
-            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card__preview')).toHaveLength(0);
-            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card__output-action--download')).toHaveLength(0);
-            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card__output-action')).toHaveLength(0);
-            expect(allText(containerEl)).not.toContain('DERIVED_NOTE_SENTINEL');
+            expect(mount.props.canDeliverOutputs).toBe(false);
             streamCalls[0].resolve();
             await flushPromises();
         } finally {
@@ -5162,8 +5595,9 @@ describe('LLMView turn lifecycle', () => {
         expect(task).toBeDefined();
         streamCalls[0].reject(new Error('Chat transport failed'));
         for (let i = 0; i < 5; i++) await flushPromises();
-        expect(getElementByClass(first.containerEl, 'pa-chat-image-task-card').getAttribute('data-task-id'))
+        expect(getElementByClass(first.containerEl, 'pa-chat-image-task-card-root').getAttribute('data-task-id'))
             .toBe('accepted_task');
+        expect(imageTaskMount('accepted_task').props.task.providerTaskId).toBe('wan_synthetic');
         expect(await store.getConversation('accepted-before-reply')).not.toBeNull();
         expect(await store.getTurns('accepted-before-reply')).toEqual([
             expect.objectContaining({ assistant: expect.objectContaining({
@@ -5176,8 +5610,9 @@ describe('LLMView turn lifecycle', () => {
         Object.assign(restored.plugin, { imageGenerationService, confirmImageGenerationFirstUse: async () => true });
         await restored.view.onOpen();
         for (let i = 0; i < 5; i++) await flushPromises();
-        expect(getElementByClass(restored.containerEl, 'pa-chat-image-task-card').getAttribute('data-task-id'))
+        expect(getElementByClass(restored.containerEl, 'pa-chat-image-task-card-root').getAttribute('data-task-id'))
             .toBe('accepted_task');
+        expect(imageTaskMount('accepted_task').props.task.request.userPrompt).toBe('蓝色纸鹤');
         expect(allText(restored.containerEl)).toContain('蓝色纸鹤');
         await restored.view.onClose();
     });
@@ -8025,6 +8460,9 @@ describe('LLMView turn lifecycle', () => {
         const enhancementCallbacks = mutationCallbacks.filter(callback =>
             (mutationObserverTargets.get(callback) ?? []).includes(tailBuffer));
         expect(enhancementCallbacks).toHaveLength(1);
+        const tailBridge = [...(view as unknown as { markdownBridges: Set<NativeMarkdownBridge> }).markdownBridges].at(-1)!;
+        const rendersBeforePause = nativeRender.mock.calls.length;
+        tailBridge.setDisplayPaused('view', true);
         const diagram = tailBuffer.createDiv({ cls: 'block-language-mermaid' });
         enhancementCallbacks.forEach(callback => callback([{
             type: 'childList',
@@ -8032,6 +8470,11 @@ describe('LLMView turn lifecycle', () => {
             addedNodes: [diagram],
             removedNodes: [],
         } as unknown as MutationRecord], {} as MutationObserver));
+        runAnimationFrames();
+        expect(getElementsByClass(containerEl, 'pa-chat-mermaid-shell')).toHaveLength(0);
+        tailBridge.setDisplayPaused('view', false);
+        expect(nativeRender.mock.calls).toHaveLength(rendersBeforePause);
+        expect(tailBuffer.parentElement).toBe(tailContent);
         runAnimationFrames();
         expect(getElementsByClass(containerEl, 'pa-chat-mermaid-shell')).toHaveLength(1);
 
@@ -8042,7 +8485,7 @@ describe('LLMView turn lifecycle', () => {
         responseDiv.dispatchEvent('touchstart');
         responseDiv.dispatchEvent('scroll');
         const scrollCallCount = responseDiv.scrollToCalls.length;
-        const tailObserver = observerFor(assistants[1])[0];
+        const tailObserver = observerFor(assistants[1]).at(-1)!;
         tailObserver([assistants[1], tailContent].map(target => ({
             target,
             contentRect: { x: 0, y: 0, top: 0, left: 0, right: 140, bottom: 60, width: 140, height: 60, toJSON: () => ({}) },
@@ -11006,13 +11449,13 @@ describe('LLMView turn lifecycle', () => {
             expect(nativeCallCount).toBeGreaterThan(0);
             expect(nativeCallCount).toBeLessThan(messages.length);
             expect(list).not.toHaveBeenCalled();
-            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card')).toHaveLength(0);
+            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card-root')).toHaveLength(0);
 
             if (!notifyImageTask) throw new Error('image task subscription was not registered');
             notifyImageTask(task);
             await flushPromises();
             expect(list).not.toHaveBeenCalled();
-            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card')).toHaveLength(0);
+            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card-root')).toHaveLength(0);
 
             for (let index = 0; index < 20 && nativeCallCount < messages.length; index++) {
                 await yieldToRestoreScheduler();
@@ -11025,9 +11468,13 @@ describe('LLMView turn lifecycle', () => {
             expect(nativeCallCount).toBe(messages.length);
             expect(list).toHaveBeenCalledTimes(1);
             expect(list).toHaveBeenCalledWith('conv_B-180 image');
-            const cards = getElementsByClass(containerEl, 'pa-chat-image-task-card');
+            const cards = getElementsByClass(containerEl, 'pa-chat-image-task-card-root');
             expect(cards).toHaveLength(1);
             expect(cards[0].parentElement?.classList.contains('assistant')).toBe(true);
+            const details = getElementByClass(cards[0].parentElement!, 'pa-chat-image-response-details');
+            details.open = true;
+            details.dispatchEvent('toggle');
+            await flushPromises();
             expect(allText(cards[0].parentElement!)).toContain(messages[19].content);
         } finally {
             performanceNow.mockRestore();
@@ -11109,7 +11556,7 @@ describe('LLMView turn lifecycle', () => {
             expect(getElementsByClass(containerEl, 'llm-message')
                 .some(element => allText(element).includes(messages[19].content))).toBe(false);
             expect(list).not.toHaveBeenCalled();
-            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card')).toHaveLength(0);
+            expect(getElementsByClass(containerEl, 'pa-chat-image-task-card-root')).toHaveLength(0);
 
             const lateUser = getElementsByClass(containerEl, 'llm-message')
                 .find(element => allText(element).includes(messages[18].content));
@@ -11120,7 +11567,7 @@ describe('LLMView turn lifecycle', () => {
             expect(deleteTurn).toHaveBeenCalledWith('conv_B-180 image delete', 9);
             expect(list).toHaveBeenCalledTimes(1);
             expect(list).toHaveBeenCalledWith('conv_B-180 image delete');
-            const cards = getElementsByClass(containerEl, 'pa-chat-image-task-card');
+            const cards = getElementsByClass(containerEl, 'pa-chat-image-task-card-root');
             expect(cards).toHaveLength(1);
             expect(cards[0].getAttribute('data-task-id')).toBe('b180_early_task');
             expect(allText(cards[0].parentElement!)).toContain(messages[1].content);
@@ -11133,10 +11580,8 @@ describe('LLMView turn lifecycle', () => {
 
     it('refreshes role identicon shapes when starting a new chat', async () => {
         const originalCrypto = globalThis.crypto;
-        const randomUUID = jest.fn()
-            .mockReturnValueOnce('constructor-seed')
-            .mockReturnValueOnce('session-alpha')
-            .mockReturnValueOnce('session-bravo');
+        let generatedIdentity = 0;
+        const randomUUID = jest.fn(() => `identity-${++generatedIdentity}`);
         Object.defineProperty(globalThis, 'crypto', {
             configurable: true,
             value: { randomUUID },
@@ -11166,7 +11611,6 @@ describe('LLMView turn lifecycle', () => {
             await flushPromises();
             const secondAssistantShape = getRoleIdenticonShapeSignature(containerEl, 'pa-chat-role-identicon-assistant');
 
-            expect(randomUUID).toHaveBeenCalledTimes(3);
             expect(firstAssistantShape).not.toBe(secondAssistantShape);
             expect(view.chatHistory.map(({ hostProvenance: _provenance, runSourceSelection: _selection, inputLineage: _lineage, ...message }) => message)).toEqual([
                 { role: 'user', content: 'second prompt' },
@@ -11248,7 +11692,6 @@ describe('LLMView turn lifecycle', () => {
         expect(beginConversationDeletionBoundary).toHaveBeenCalledWith(conversationId);
         expect(boundary.confirmConversationDeleted).toHaveBeenCalledTimes(1);
         expect(boundary.abandonConversationDeletion).not.toHaveBeenCalled();
-
         view.prefillComposer('second clear image');
         getButtonByText(containerEl, 'Ask').click();
         await waitForStreamCallCount(streamCalls, 3);
@@ -11268,7 +11711,8 @@ describe('LLMView turn lifecycle', () => {
         let nextConversationId = 0;
         const manager = new ChatHistoryManager({ store,
             generateId: () => `history-image-${++nextConversationId}` });
-        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const first = createView({ chatHistoryManager: manager });
+        const { view, plugin, containerEl } = first;
         const boundary = { confirmConversationDeleted: jest.fn(), abandonConversationDeletion: jest.fn() };
         const beginConversationDeletionBoundary = jest.fn((_conversationId: string) => boundary);
         Object.assign(plugin, { imageGenerationService: {
@@ -11286,6 +11730,10 @@ describe('LLMView turn lifecycle', () => {
         const conversationId = (view as unknown as { conversationPersistence: ConversationPersistence })
             .conversationPersistence.activeConversationId;
         if (!conversationId) throw new Error('History boundary test conversation was not persisted');
+        const sibling = siblingView(first);
+        await sibling.view.onOpen();
+        for (let i = 0; i < 4; i++) await flushPromises();
+        expect(sibling.view.chatHistory).toHaveLength(2);
 
         const documentLike = { activeElement: null as MockElement | null,
             addEventListener: jest.fn(), removeEventListener: jest.fn() };
@@ -11314,9 +11762,19 @@ describe('LLMView turn lifecycle', () => {
         expect(boundary.confirmConversationDeleted).toHaveBeenCalledTimes(1);
         expect(boundary.abandonConversationDeletion).not.toHaveBeenCalled();
 
+        expect(view.chatHistory).toEqual([]);
+        expect(allText(getResponseDiv(view))).not.toContain('history image');
+        expect(sibling.view.chatHistory).toEqual([]);
+        expect(sibling.view.getState().conversationId).toBeNull();
+        getTextArea(sibling.containerEl).value = 'New independent draft';
+        await sibling.view.onClose();
+        expect(first.app.loadLocalStorage(UI_RECOVERY_KEY)).toEqual(expect.objectContaining({ slots:
+            expect.arrayContaining([expect.objectContaining({ conversationId: null,
+                draft: expect.objectContaining({ text: 'New independent draft' }) })]) }));
         view.prefillComposer('second history image');
         getButtonByText(containerEl, 'Ask').click();
         await waitForStreamCallCount(streamCalls, 2);
+        expect(streamCalls[1].chatHistory).toEqual([]);
         streamCalls[1].resolve();
         await waitForTurnCompletion(view);
         Object.defineProperty(globalThis, 'document', { configurable: true, value: withMockDomHelpers(documentLike) });
@@ -11752,6 +12210,43 @@ describe('LLMView turn lifecycle', () => {
             expect(allText(containerEl)).toContain('latest text');
         } finally {
             performanceNowSpy.mockRestore();
+        }
+    });
+
+    it.each([false, true])('persists a held terminal body before display and respects deletion %s', async deleted => {
+        const manager = createWritableChatHistoryManager();
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+        getTextArea(containerEl).value = 'held prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        streamCalls[0].onChunk('old body');
+        await flushPromises();
+        const body = getElementsByClass(containerEl, 'message-content').at(-1)!;
+        const bridges = (view as unknown as { markdownBridges: Set<NativeMarkdownBridge> }).markdownBridges;
+        const bridge = [...bridges].at(-1)!;
+        bridge.setHeld(true);
+        streamCalls[0].onChunk('old body plus final body');
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(view);
+        expect(manager.recordTurn).toHaveBeenCalledWith(expect.objectContaining({
+            entry: expect.objectContaining({ assistant: expect.objectContaining({ content: 'old body plus final body' }) }),
+        }));
+        expect(allText(body)).toBe('old body');
+        expect(view.chatHistory.at(-1)?.content).toBe('old body plus final body');
+        if (deleted) {
+            await getButtonByClass(containerEl, 'delete-message-button').click();
+            await flushPromises();
+            bridge.showLatest();
+            await flushPromises();
+            expect(body.parentElement?.parentElement).toBeNull();
+            expect(view.chatHistory).toEqual([]);
+            expect(bridge.getState().disposed).toBe(true);
+        } else {
+            getButtonByClass(containerEl, 'pa-chat-markdown-update__show').click();
+            await flushPromises();
+            expect(allText(body)).toBe('old body plus final body');
+            expect(bridge.getState().held).toBe(false);
         }
     });
 
@@ -13651,6 +14146,83 @@ describe('LLMView turn lifecycle', () => {
         expect(getButtonByText(containerEl, 'New Chat').disabled).toBe(false);
     });
 
+    it('B-181 closes current Chat menus on keyboard hide without restoring focus or changing the draft', async () => {
+        const { view, plugin, containerEl, emitWorkspaceEvent } = createView();
+        Object.assign(plugin, { imageGenerationService: { list: async () => [], subscribe: () => () => undefined } });
+        await view.onOpen();
+        getTextArea(containerEl).value = 'hello';
+        getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].resolve();
+        await waitForTurnCompletion(view);
+        expect(view.prefillImageDraft('Keep this draft', createImageTextSource())).toBe(true);
+        const noteEditor = new MockElement('textarea');
+        const hideAndReturn = () => {
+            noteEditor.focus();
+            containerEl.clientHeight = 0;
+            emitWorkspaceEvent('active-leaf-change');
+            containerEl.clientHeight = 80;
+            emitWorkspaceEvent('active-leaf-change');
+            expect(document.activeElement).toBe(noteEditor);
+        };
+        const menus = [
+            ['pa-chat-more-button', 'pa-chat-composer-menu'],
+            ['pa-chat-source-scope-button', 'pa-chat-source-scope-menu'],
+            ['pa-chat-create-image-source-button', 'pa-chat-create-image-source-menu'],
+            ['pa-chat-image-options-button', 'pa-chat-create-image-options-menu'],
+            ['pa-chat-memory-chip', 'pa-chat-memory-menu'],
+            ['message-more-button', 'pa-chat-message-menu'],
+        ];
+        for (const [triggerClass, menuClass] of menus) {
+            const trigger = getButtonByClass(containerEl, triggerClass);
+            const menu = getElementByClass(containerEl, menuClass);
+            trigger.click();
+            await flushPromises();
+            expect(menu.hidden).toBe(false);
+            hideAndReturn();
+            expect(menu.hidden).toBe(true);
+            expect(trigger.getAttribute('aria-expanded')).toBe('false');
+            expect(getTextArea(containerEl).value).toBe('Keep this draft');
+        }
+        const area = getTextArea(containerEl);
+        for (const [text, menuClass] of [['@Cre', 'pa-chat-action-typeahead'], ['#', 'pa-chat-skill-typeahead']]) {
+            Object.assign(area, { selectionStart: text.length, selectionEnd: text.length });
+            area.value = text;
+            const menu = getElementByClass(containerEl, menuClass);
+            expect(menu.hidden).toBe(false);
+            hideAndReturn();
+            expect(menu.hidden).toBe(true);
+            expect(area.value).toBe(text);
+        }
+    });
+
+    it.each(['hide', 'document'] as const)('B-181 invalidates a pending Memory menu opening on %s', async transition => {
+        const { view, plugin, containerEl, emitWorkspaceEvent } = createView();
+        await view.onOpen();
+        await flushPromises();
+        let finish!: (plan: MemoryMaintenancePlan) => void;
+        plugin.memoryStatus.getMaintenancePlan.mockImplementationOnce(() =>
+            new Promise<MemoryMaintenancePlan>(resolve => { finish = resolve; }));
+        const trigger = getButtonByClass(containerEl, 'pa-chat-memory-chip');
+        const menu = getElementByClass(containerEl, 'pa-chat-memory-menu');
+        trigger.click();
+        const noteEditor = new MockElement('textarea');
+        noteEditor.focus();
+        if (transition === 'hide') containerEl.clientHeight = 0;
+        else containerEl.ownerDocument = withMockDomHelpers({}) as unknown as Document;
+        emitWorkspaceEvent('active-leaf-change');
+        containerEl.clientHeight = 80;
+        emitWorkspaceEvent('active-leaf-change');
+        finish({ reason: 'ready', action: 'none', notesToCheck: 0, requiresApproval: false, canAnswerNow: true });
+        await flushPromises();
+        expect(menu.hidden).toBe(true);
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+        expect(document.activeElement).toBe(noteEditor);
+        trigger.click();
+        await flushPromises();
+        expect(menu.hidden).toBe(false);
+    });
+
     it('auto-closes the composer More menu after idle time and resets on activity', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
@@ -14585,10 +15157,39 @@ describe('LLMView turn lifecycle', () => {
             expect(allText(requestCard)).toContain('This request');
             expect(allText(requestCard)).toContain('Updated 1 notes');
             expect(allText(requestCard)).toContain('change.md');
+            mountOperationsDiffMock.mountOperationsDiff.mockClear();
             getButtonByText(requestCard, 'View all changes').click();
             await flushPromises();
             expect(allText(requestCard)).toContain('Preview only. Nothing has been changed yet.');
             expect(allText(requestCard)).toContain('Preview');
+            expect(mountOperationsDiffMock.mountOperationsDiff).toHaveBeenCalledTimes(2);
+
+            const updatedActual = await session.stage({ runId: 'run_ui_1', turnId: 'turn_4', taskSourceReadGuard: guard,
+                operations: [{ toolCallId: 'fourth-call', name: 'vault_process', input: {
+                    path: file.path, operation: 'replace', params: { search: 'Green', replace: 'Emerald', occurrence: 'first' } } }] });
+            await admit(updatedActual);
+            const updatedActualResult = await service.executeOperationsIntentFromAgent({ intentId: updatedActual.id,
+                runId: updatedActual.runId, taskSourceReadGuard: guard, signal: call.signal });
+            expect(updatedActualResult.state).toBe('completed');
+            expect(body).toBe('Emerald kite');
+            const updatedPreview = await session.stage({ runId: 'run_ui_1', turnId: 'turn_5', mode: 'preview',
+                taskSourceReadGuard: guard, operations: [{ toolCallId: 'second-preview-call', name: 'vault_process', input: {
+                    path: file.path, operation: 'replace', params: { search: 'Emerald', replace: 'Second preview', occurrence: 'first' } } }] });
+            await admit(updatedPreview);
+            await flushPromises();
+            expect(mountOperationsDiffMock.mountOperationsDiff).toHaveBeenCalledTimes(2);
+            const diffHandles = mountOperationsDiffMock.mountOperationsDiff.mock.results
+                .map(result => result.value as { update: jest.Mock });
+            expect(diffHandles).toHaveLength(2);
+            expect(diffHandles[0]!.update.mock.calls.length).toBeGreaterThan(0);
+            expect(diffHandles[1]!.update.mock.calls.length).toBeGreaterThan(0);
+            const actualModels = diffHandles[0]!.update.mock.calls
+                .map(([options]) => (options as { model: { groups: Array<{ after: string }> } }).model);
+            const previewModels = diffHandles[1]!.update.mock.calls
+                .map(([options]) => (options as { model: { groups: Array<{ after: string }> } }).model);
+            expect(actualModels.some(model => model.groups.some(group => group.after === 'Emerald kite'))).toBe(true);
+            expect(previewModels.some(model => model.groups.some(group => group.after === 'Second preview kite'))).toBe(true);
+
             getButtonByText(requestCard, 'Hide changes').click();
             await flushPromises();
             const undoButton = getElementsByClass(requestCard, 'pa-operations-request-card__undo')[0];
@@ -15052,7 +15653,7 @@ describe('mobile tab bar auto-hide', () => {
             value: withMockDomHelpers(documentWithFocus),
         });
         const { view, containerEl } = createView();
-        (containerEl as MockElement & { ownerDocument?: unknown }).ownerDocument = documentWithFocus;
+        containerEl.ownerDocument = documentWithFocus as unknown as Document;
         await view.onOpen();
 
         const moreButton = getButtonByClass(containerEl, 'pa-chat-more-button');

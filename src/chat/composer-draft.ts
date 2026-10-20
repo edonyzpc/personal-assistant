@@ -1,4 +1,4 @@
-/** View-local ownership for text, images and asynchronous imports. No draft bytes are persisted. */
+/** View-local ownership for text, images and asynchronous imports. Persistence subscribes to projections. */
 import { getFrontMatterInfo, type Editor, type MarkdownView } from 'obsidian';
 
 import { cloneRecordedInputLineage, completeInputLineage, type InputLineage } from '../ai-services/input-lineage';
@@ -35,6 +35,10 @@ export interface ComposerImageIntent {
     reusePreparedPrompt?: boolean;
     sourceReceipt?: () => boolean;
     generationOptions?: ComposerImageGenerationOptions;
+    /** A persisted source label is not a live source receipt. The user must reselect or remove it. */
+    recoverySourceLabel?: string;
+    /** Recomputed by local reference verification, never a durable authority. */
+    recoveryReferencesMissing?: true;
 }
 
 function cloneTextSource(source: ComposerImageTextSource): ComposerImageTextSource {
@@ -76,6 +80,8 @@ function cloneImageIntent(intent: ComposerImageIntent): ComposerImageIntent {
         ...(intent.reusePreparedPrompt ? { reusePreparedPrompt: true } : {}),
         ...(intent.sourceReceipt ? { sourceReceipt: intent.sourceReceipt } : {}),
         ...(intent.generationOptions ? { generationOptions: cloneGenerationOptions(intent.generationOptions) } : {}),
+        ...(intent.recoverySourceLabel ? { recoverySourceLabel: intent.recoverySourceLabel } : {}),
+        ...(intent.recoveryReferencesMissing ? { recoveryReferencesMissing: true } : {}),
     };
 }
 
@@ -98,6 +104,7 @@ export interface ComposerSnapshot<T> {
     imageIntent?: ComposerImageIntent;
     writingIntent?: true;
     ghostIntent?: true;
+    pageletReselectionRequired?: true;
     images: ComposerImageEntry<T>[];
     draftId: number;
     revision: number;
@@ -109,6 +116,7 @@ export interface SentComposerDraft<T> {
 }
 
 export class ComposerDraft<T> {
+    private readonly listeners = new Set<(change: 'edit' | 'clear' | 'consume') => void>();
     private draftId = 0;
     private revision = 0;
     private nextEntryId = 0;
@@ -117,12 +125,38 @@ export class ComposerDraft<T> {
     private imageIntent: ComposerImageIntent | undefined;
     private writingIntent = false;
     private ghostIntent = false;
+    private pageletReselectionRequired = false;
     private disposed = false;
 
     constructor(private readonly maxImages = 8) {}
 
     /** Call on every text edit, even an edit that eventually leaves the text empty. */
-    touchText(): void { this.revision += 1; }
+    touchText(): void { this.changed(); }
+
+    subscribe(listener: (change: 'edit' | 'clear' | 'consume') => void): () => void {
+        this.listeners.add(listener);
+        return () => this.listeners.delete(listener);
+    }
+
+    private changed(change: 'edit' | 'clear' | 'consume' = 'edit'): void {
+        this.revision += 1;
+        for (const listener of this.listeners) listener(change);
+    }
+
+    /** Called only after the view checks route and original revision following reference verification. */
+    loadRecovered(snapshot: Omit<ComposerSnapshot<T>, 'draftId' | 'revision'>): void {
+        if (this.disposed) return;
+        this.clear();
+        for (const entry of snapshot.images) {
+            const id = ++this.nextEntryId;
+            this.entries.set(id, { ...entry, id });
+        }
+        this.imageIntent = snapshot.imageIntent ? cloneImageIntent(snapshot.imageIntent) : undefined;
+        this.writingIntent = snapshot.writingIntent === true;
+        this.ghostIntent = snapshot.ghostIntent === true;
+        this.pageletReselectionRequired = snapshot.pageletReselectionRequired === true;
+        this.changed();
+    }
 
     snapshot(text: string): ComposerSnapshot<T> {
         return {
@@ -130,6 +164,7 @@ export class ComposerDraft<T> {
             ...(this.imageIntent ? { imageIntent: cloneImageIntent(this.imageIntent) } : {}),
             ...(this.writingIntent ? { writingIntent: true as const } : {}),
             ...(this.ghostIntent ? { ghostIntent: true as const } : {}),
+            ...(this.pageletReselectionRequired ? { pageletReselectionRequired: true as const } : {}),
             images: [...this.entries.values()].map((entry) => ({ ...entry })),
         };
     }
@@ -139,7 +174,13 @@ export class ComposerDraft<T> {
         this.imageIntent = cloneImageIntent(intent);
         this.writingIntent = false;
         this.ghostIntent = false;
-        this.revision += 1;
+        this.changed();
+    }
+
+    setPageletReselectionRequired(required: boolean): void {
+        if (this.pageletReselectionRequired === required) return;
+        this.pageletReselectionRequired = required;
+        this.changed();
     }
 
     setWritingIntent(): void {
@@ -147,32 +188,32 @@ export class ComposerDraft<T> {
         this.writingIntent = true;
         this.imageIntent = undefined;
         this.ghostIntent = false;
-        this.revision += 1;
+        this.changed();
     }
 
     setGhostIntent(): void {
         if (this.disposed) throw new Error('Composer is closed');
         if (this.ghostIntent) return;
         this.ghostIntent = true;
-        this.revision += 1;
+        this.changed();
     }
 
     clearGhostIntent(): void {
         if (!this.ghostIntent) return;
         this.ghostIntent = false;
-        this.revision += 1;
+        this.changed();
     }
 
     clearWritingIntent(): void {
         if (!this.writingIntent) return;
         this.writingIntent = false;
-        this.revision += 1;
+        this.changed();
     }
 
     clearImageIntent(): void {
         if (this.imageIntent) {
             this.imageIntent = undefined;
-            this.revision += 1;
+            this.changed();
         }
     }
 
@@ -188,24 +229,28 @@ export class ComposerDraft<T> {
         delete next.preparedPrompt;
         delete next.reusePreparedPrompt;
         delete next.sourceReceipt;
+        delete next.recoverySourceLabel;
         this.imageIntent = next;
-        this.revision += 1;
+        this.changed();
     }
 
     setImageGenerationOptions(options: ComposerImageGenerationOptions): void {
         if (this.disposed) throw new Error('Composer is closed');
         if (!this.imageIntent) throw new Error('No image action is selected');
         this.imageIntent = { ...cloneImageIntent(this.imageIntent), generationOptions: cloneGenerationOptions(options) };
-        this.revision += 1;
+        this.changed();
     }
 
     hasDraft(text: string): boolean {
         return text.trim().length > 0 || this.entries.size > 0
-            || this.imageIntent !== undefined || this.writingIntent || this.ghostIntent;
+            || this.imageIntent !== undefined || this.writingIntent || this.ghostIntent || this.pageletReselectionRequired;
     }
 
     canSend(text: string): boolean {
         return !this.disposed && this.hasDraft(text)
+            && !this.pageletReselectionRequired
+            && !this.imageIntent?.recoverySourceLabel
+            && !this.imageIntent?.recoveryReferencesMissing
             && (!(this.imageIntent || this.writingIntent)
                 || text.trim().length > 0 || Boolean(this.imageIntent?.textSource))
             && [...this.entries.values()].every((entry) => entry.status === "ready");
@@ -218,7 +263,7 @@ export class ComposerDraft<T> {
         const controller = new AbortController();
         this.imports.set(entryId, controller);
         this.entries.set(entryId, { id: entryId, label, status: "processing" });
-        this.revision += 1;
+        this.changed();
         return { draftId: this.draftId, entryId, signal: controller.signal };
     }
 
@@ -227,7 +272,7 @@ export class ComposerDraft<T> {
         const entry = this.entries.get(handle.entryId)!;
         this.entries.set(handle.entryId, { id: entry.id, label: entry.label, status: "ready", value });
         this.imports.delete(handle.entryId);
-        this.revision += 1;
+        this.changed();
         return true;
     }
 
@@ -236,21 +281,21 @@ export class ComposerDraft<T> {
         const entry = this.entries.get(handle.entryId)!;
         this.entries.set(handle.entryId, { ...entry, status: "error", error, value });
         this.imports.delete(handle.entryId);
-        this.revision += 1;
+        this.changed();
         return true;
     }
 
     removeImage(id: number): void {
         this.imports.get(id)?.abort();
         this.imports.delete(id);
-        if (this.entries.delete(id)) this.revision += 1;
+        if (this.entries.delete(id)) this.changed();
     }
 
     /** The returned snapshot is the only image/text selection belonging to this send. */
     take(text: string): SentComposerDraft<T> | null {
         if (!this.canSend(text)) return null;
         const snapshot = this.snapshot(text);
-        this.clear();
+        this.clear('consume');
         return { snapshot, restoreInto: { draftId: this.draftId, revision: this.revision } };
     }
 
@@ -263,7 +308,8 @@ export class ComposerDraft<T> {
         this.imageIntent = sent.snapshot.imageIntent ? cloneImageIntent(sent.snapshot.imageIntent) : undefined;
         this.writingIntent = sent.snapshot.writingIntent === true;
         this.ghostIntent = sent.snapshot.ghostIntent === true;
-        this.revision += 1;
+        this.pageletReselectionRequired = sent.snapshot.pageletReselectionRequired === true;
+        this.changed();
         return sent.snapshot.text;
     }
 
@@ -271,18 +317,19 @@ export class ComposerDraft<T> {
         return !this.disposed && this.draftId === snapshot.draftId && this.revision === snapshot.revision;
     }
 
-    clear(): void {
+    clear(change: 'clear' | 'consume' = 'clear'): void {
         for (const controller of this.imports.values()) controller.abort();
         this.imports.clear();
         this.entries.clear();
         this.imageIntent = undefined;
         this.writingIntent = false;
         this.ghostIntent = false;
+        this.pageletReselectionRequired = false;
         this.draftId += 1;
-        this.revision += 1;
+        this.changed(change);
     }
 
-    dispose(): void { this.clear(); this.disposed = true; }
+    dispose(): void { this.listeners.clear(); this.clear(); this.disposed = true; }
 
     private owns(handle: ComposerImportHandle): boolean {
         return !this.disposed && !handle.signal.aborted && handle.draftId === this.draftId

@@ -48,6 +48,7 @@ export interface ConversationPersistenceOptions {
     getManager: () => ChatHistoryManager | undefined;
     log: (message: string, error?: unknown) => void;
     scheduleMemoryExtractionAfterChatTurn?: (conversationId: string, turnCount: number) => void;
+    onConversationBound?: (conversationId: string) => void;
 }
 
 export class ConversationPersistence {
@@ -434,6 +435,7 @@ export class ConversationPersistence {
     private adoptCreatedConversation(created: PersistedConversation, startedSelectionId: string): void {
         this.activeConversation = created;
         this.activeId = created.id;
+        this.options.onConversationBound?.(created.id);
         this.nextTurnIndex = 0;
         this.reservedConversationId = null;
         const committed = parseConversationSourceSelection(created.sourceSelection);
@@ -645,6 +647,7 @@ export class ConversationPersistence {
             ...(restoredSelection ? { sourceSelection: { ...restoredSelection } } : {}),
         };
         this.activeId = conversation.id;
+        this.options.onConversationBound?.(conversation.id);
         if (pending) {
             this.sourceSelection = { ...pending.selection };
             this.sourceSelectionId = pending.selectionId;

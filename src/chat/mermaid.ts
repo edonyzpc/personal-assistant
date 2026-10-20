@@ -343,8 +343,8 @@ export function scheduleMermaidEnhancement(
     isCurrent: () => boolean,
     owner?: Component,
     onEnhanced?: () => void,
-) {
-    if (mermaidSources.length === 0) return;
+): () => void {
+    if (mermaidSources.length === 0) return () => {};
 
     let stopped = false;
     let notified = false;
@@ -399,7 +399,7 @@ export function scheduleMermaidEnhancement(
         });
     };
 
-    if (enhanceIfCurrent()) return;
+    if (enhanceIfCurrent()) return stop;
 
     if (typeof MutationObserver === 'function') {
         observer = new MutationObserver((records) => {
@@ -426,4 +426,5 @@ export function scheduleMermaidEnhancement(
 
     timeoutId = setPlatformTimeout(stop, 15000);
     (timeoutId as unknown as { unref?: () => void }).unref?.();
+    return stop;
 }

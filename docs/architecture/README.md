@@ -11,6 +11,7 @@
 - [PA Agent Debug View 与本机历史](./pa-agent-debug-view.md)
 - [Multimodal Chat、文案版本与图文保存](./multimodal-chat-architecture.md)
 - [Chat 图片生成、版本与任务恢复](./chat-image-generation-architecture.md)
+- [UI 状态、原生正文与设备本地恢复](./pa-ui-state-rendering.md) — B-181：局部刷新、交互暂停、阅读/测量和宿主生命周期。
 - [Obsidian read tools / Operations boundary](./obsidian-operations-agent-plan.md)
 - [Obsidian Resource SDK](./obsidian-resource-sdk.md) — B-174：Worker组合执行、资源接口、来源与效果恢复。
 

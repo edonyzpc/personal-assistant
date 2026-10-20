@@ -37,10 +37,13 @@ import {
     renderDiscoveryLayout,
     renderReviewTimeline,
     renderSummaryPreview,
-    capturePageletReadingPosition,
     restorePageletReadingPosition,
     renderPageletReadingControls,
-    renderPageletFindingActions,
+    pageletReadingAnchors,
+    pageletReadingPosition,
+    pageletReadingSnapshot,
+    renderSimpleMarkdownPreview,
+    updatePageletDiscovery,
 } from "./PanelLayouts";
 
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
@@ -54,6 +57,10 @@ import {
 import { appendIconButtonLabel, clearChildren, createHtmlElement, isObsidianModalOpen } from "../dom-utils";
 import type { SuggestionCardRenderer } from "../ui";
 import type { PageletSuggestion } from "../pa-review-schemas";
+import { PageletNativeMarkdown } from "../native-markdown";
+import { ReadingPositionController } from "../../ui/reading-position";
+import { ViewDisplayLifecycle } from "../../ui/view-display-lifecycle";
+import { createPageletUiStore } from "../ui/pagelet-ui-store";
 
 interface PanelDraftItem {
     id: string;
@@ -163,7 +170,11 @@ export class PanelView {
     private _isOpen = false;
     private currentLayout: PanelLayoutType | null = null;
     private primaryButtonMode: "save" | "run" = "save";
-    private pendingReadingPosition: { key: string; position: PageletReadingPosition; appliedScrollTop: number } | null = null;
+    private readonly ui = createPageletUiStore();
+    private readingPosition: ReadingPositionController | null = null;
+    private lastPosition: PageletReadingPosition = { scrollTop: 0, sourcesExpanded: [] };
+    private displayLifecycle: ViewDisplayLifecycle | null = null;
+    private nativeBodies: PageletNativeMarkdown[] = [];
 
     get currentLayoutType(): PanelLayoutType | null {
         return this.currentLayout;
@@ -272,6 +283,42 @@ export class PanelView {
         } else if (!this.rootEl.isConnected) {
             this.containerEl.appendChild(this.rootEl);
         }
+        if (!this.readingPosition && this.bodyEl) {
+            const body = this.bodyEl;
+            this.readingPosition = new ReadingPositionController({
+                scrollport: body, getAnchors: () => pageletReadingAnchors(body),
+                isVisible: () => this._isOpen && this.ui.getState().viewVisible,
+                isReady: () => this.nativeBodies.every(native => native.isReady()),
+                onSnapshot: snapshot => { this.lastPosition = pageletReadingPosition(body, snapshot); },
+                onUserIntent: () => undefined,
+                restoreDisclosures: ids => {
+                    for (const toggle of Array.from(body.querySelectorAll<HTMLElement>('.pa-pagelet-panel-source-toggle'))) {
+                        const expanded = ids.includes(toggle.getAttribute('data-pa-source-disclosure') ?? 'sources');
+                        toggle.setAttribute('aria-expanded', String(expanded));
+                        const chips = toggle.parentElement?.querySelector('.pa-pagelet-panel-source-chips');
+                        if (expanded) chips?.removeAttribute('hidden'); else chips?.setAttribute('hidden', '');
+                    }
+                },
+            });
+        }
+        if (!this.displayLifecycle) {
+            this.displayLifecycle = new ViewDisplayLifecycle(this.rootEl,
+                this.options.app?.workspace as unknown as ConstructorParameters<typeof ViewDisplayLifecycle>[1], {
+                onVisibilityChange: visible => {
+                    if (!visible) this.readingPosition?.capture();
+                    this.ui.getState().setViewVisible(visible);
+                    for (const native of this.nativeBodies) native.setVisible(visible);
+                    if (visible) this.readingPosition?.notifyLayout();
+                },
+                onDocumentChange: () => {
+                    for (const native of this.nativeBodies) native.rebindDocument();
+                    this.readingPosition?.rebindDocument();
+                    this.detachGlobalListeners();
+                    if (this._isOpen) this.attachGlobalListeners();
+                },
+            });
+            this.displayLifecycle.start();
+        }
     }
 
     /**
@@ -291,10 +338,9 @@ export class PanelView {
 
         const contentKey = makeContentKey(content);
         const preserveReading = this._isOpen
-            && extra?.reading !== undefined
-            && this.currentExtra?.reading !== undefined
+            && extra?.entityId !== undefined
+            && this.currentExtra?.entityId === extra.entityId
             && this.currentLayout === layoutType
-            && this.currentContentKey === contentKey
             && this.currentExtra.sourcePath === extra.sourcePath;
         this.currentLayout = layoutType;
         this.currentFindings = content;
@@ -320,16 +366,16 @@ export class PanelView {
             this.renderComponent = null;
         }
 
-        if (preserveReading && extra?.reading) {
+        if (preserveReading && this.nativeBodies.length) {
             const actionFocus = this.captureActionFocus();
-            this.updateReadingControls(extra.reading);
-            const regions = Array.from(this.bodyEl.querySelectorAll<HTMLElement>(".pa-pagelet-panel-finding-actions"));
+            if (extra?.reading) this.updateReadingControls(extra.reading);
             content.filter(finding => finding.insightText).forEach((finding, index) => {
-                if (regions[index]) renderPageletFindingActions(regions[index], finding);
+                this.nativeBodies[index]?.update(finding.insightText!, extra?.sourcePath ?? '');
             });
+            updatePageletDiscovery(this.bodyEl, content, this.getLocale(), this.buildRenderOptions());
             this.restoreActionFocus(actionFocus);
         } else {
-            this.pendingReadingPosition = null;
+            this.readingPosition?.cancelRestore();
             this.renderCurrentLayout();
         }
 
@@ -343,6 +389,8 @@ export class PanelView {
         const show = () => {
             if (this._isOpen && this.rootEl === root && root.isConnected) {
                 root.setAttribute("data-state", "visible");
+                this.displayLifecycle?.refresh();
+                this.readingPosition?.notifyLayout();
             }
         };
         requestPlatformAnimationFrame(show);
@@ -352,6 +400,7 @@ export class PanelView {
     private renderCurrentLayout(): void {
         if (!this.bodyEl || !this.currentLayout) return;
         const actionFocus = this.captureActionFocus();
+        this.disposeNativeBodies();
         this.destroySuggestionRenderers();
         clearChildren(this.bodyEl);
         const body = this.bodyEl;
@@ -360,15 +409,6 @@ export class PanelView {
         this.updateShareCardControl();
         const renderOptions = this.buildRenderOptions();
         if (this.currentExtra?.reading) {
-            const readingKey = this.currentContentKey;
-            renderOptions.onMarkdownRendered = () => {
-                if (this.bodyEl !== body || !this._isOpen || this.currentContentKey !== readingKey
-                    || this.renderComponent !== renderOptions.renderComponent) return;
-                const pending = this.pendingReadingPosition;
-                if (pending?.key !== readingKey) return;
-                this.pendingReadingPosition = null;
-                if (body.scrollTop === pending.appliedScrollTop) body.scrollTop = pending.position.scrollTop;
-            };
             const controls = createHtmlElement("div");
             controls.className = "pa-pagelet-reading-controls";
             renderPageletReadingControls(controls, this.currentExtra.reading);
@@ -408,10 +448,8 @@ export class PanelView {
                 break;
             case "discover": {
                 this.renderComponent?.unload();
-                this.renderComponent = new Component();
-                this.renderComponent.load();
-                renderOptions.app = this.options.app;
-                renderOptions.renderComponent = this.renderComponent;
+                this.renderComponent = null;
+                renderOptions.renderNativeMarkdown = (host, markdown) => this.mountNativeBody(host, markdown);
 
                 renderDiscoveryLayout(
                     contentEl,
@@ -425,16 +463,16 @@ export class PanelView {
             case "summary": {
                 // Clean up previous render component
                 this.renderComponent?.unload();
-                this.renderComponent = new Component();
-                this.renderComponent.load();
+                this.renderComponent = null;
 
                 renderSummaryPreview(
                     contentEl,
                     this.currentExtra?.markdown ?? "",
                     this.options.app,
-                    this.renderComponent,
+                    undefined,
                     "",
                     this.getLocale(),
+                    (host, markdown) => this.mountNativeBody(host, markdown),
                 );
                 break;
             }
@@ -488,11 +526,17 @@ export class PanelView {
     /** Close the panel. */
     close(): void {
         if (!this.rootEl) return;
+        this.readingPosition?.capture();
         this.clearSlowReviewTimer();
         this.reviewRunPending = false;
         const root = this.rootEl;
         root.setAttribute("data-state", "hidden");
         this._isOpen = false;
+        this.readingPosition?.dispose();
+        this.readingPosition = null;
+        this.displayLifecycle?.dispose();
+        this.displayLifecycle = null;
+        this.disposeNativeBodies();
         this.detachGlobalListeners();
         this.destroySuggestionRenderers();
         this.renderComponent?.unload();
@@ -502,14 +546,14 @@ export class PanelView {
     }
 
     getReadingPosition(): PageletReadingPosition {
-        return this.bodyEl
-            ? capturePageletReadingPosition(this.bodyEl)
-            : { scrollTop: 0, sourcesExpanded: [] };
+        this.readingPosition?.capture();
+        return this.lastPosition;
     }
 
     restoreReadingPosition(position: PageletReadingPosition): void {
         if (this.bodyEl) restorePageletReadingPosition(this.bodyEl, position);
-        this.pendingReadingPosition = { key: this.currentContentKey, position, appliedScrollTop: this.bodyEl?.scrollTop ?? 0 };
+        this.lastPosition = position;
+        this.readingPosition?.restore(pageletReadingSnapshot(position));
     }
 
     updateReadingControls(controls: PageletReadingControls): void {
@@ -525,6 +569,11 @@ export class PanelView {
 
     /** Clean up -- remove DOM, detach listeners. */
     destroy(): void {
+        this.readingPosition?.dispose();
+        this.readingPosition = null;
+        this.displayLifecycle?.dispose();
+        this.displayLifecycle = null;
+        this.disposeNativeBodies();
         this.detachGlobalListeners();
         this.clearSlowReviewTimer();
         this.cancelPendingUnmount();
@@ -1233,7 +1282,8 @@ export class PanelView {
     // -----------------------------------------------------------------------
 
     private attachGlobalListeners(): void {
-        this.globalListenerDocument = getPlatformDocument();
+        this.detachGlobalListeners();
+        this.globalListenerDocument = this.rootEl?.ownerDocument ?? getPlatformDocument();
         this.globalListenerDocument.addEventListener("keydown", this.handleKeydown, true);
         if (this.rootEl) {
             this.rootEl.addEventListener("touchstart", this.handleTouchStart, { passive: true });
@@ -1300,5 +1350,20 @@ export class PanelView {
             e.stopPropagation();
             this.close();
         }
+    }
+
+    private mountNativeBody(host: HTMLElement, markdown: string): HTMLElement {
+        if (this.currentExtra?.entityId) host.setAttribute('data-pa-reading-id', `candidate:${this.currentExtra.entityId}`);
+        const native = new PageletNativeMarkdown(host, { app: this.options.app, locale: this.getLocale(),
+            visible: this.ui.getState().viewVisible, fallback: renderSimpleMarkdownPreview,
+            onLayout: () => this.readingPosition?.notifyLayout() });
+        this.nativeBodies.push(native);
+        native.update(markdown, this.currentExtra?.sourcePath ?? '');
+        return native.controls;
+    }
+
+    private disposeNativeBodies(): void {
+        for (const native of this.nativeBodies) native.dispose();
+        this.nativeBodies = [];
     }
 }

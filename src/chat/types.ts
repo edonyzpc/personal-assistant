@@ -8,6 +8,7 @@ import type { ChatWritingRecovery, ChatWritingMaterialContext } from '../ai-serv
 import type { WritingVersion } from './writing-types';
 import type { GenerationInputSnapshot } from '../ai-services/generation-input-snapshot';
 import type { ThinkingDebugNodeRef, ThinkingExecutionSummary } from './execution-summary';
+import type { NativeMarkdownBridge } from '../ui/native-markdown-bridge';
 
 export interface ThinkingStatusView {
     messageDiv: HTMLDivElement;
@@ -79,6 +80,9 @@ export type RenderedMessage = {
     renderToken: number;
     copyContent: string;
     renderOwner?: Component;
+    markdownBridge?: NativeMarkdownBridge;
+    markdownUpdateNotice?: HTMLElement;
+    imageResponseDisclosureToggle?: () => void;
     sourcePath: string;
     renderedContent?: string;
     renderedContentMode?: 'full' | 'deferred-mermaid';

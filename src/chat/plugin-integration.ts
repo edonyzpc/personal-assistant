@@ -5,6 +5,7 @@ import { ImageProcessor } from "./image-processor";
 import { ImageAssetService } from "./image-assets";
 import { ImageGenerationService } from "./image-generation-service";
 import { ChatHistoryManager } from "./chat-history-manager";
+import { deleteConversationRecovery } from '../ui/local-recovery';
 import { createChatHistoryStore, type ChatHistoryStore } from "./chat-history-store";
 import { WritingVersionService } from "./writing-versions";
 import { WritingSaveAction } from "./writing-save-action";
@@ -121,6 +122,7 @@ export class ChatPluginIntegration {
     private writingStyleService: WritingStyleService | undefined;
     private writingStyleCoordinator: MemoryGovernanceCoordinator | undefined;
     private layoutRecoveryStarted = false;
+    private unsubscribeRecoveryDeletion: (() => void) | undefined;
 
     constructor(private readonly dependencies: ChatPluginIntegrationDependencies) {}
 
@@ -130,6 +132,9 @@ export class ChatPluginIntegration {
         this.chatHistoryManager = new ChatHistoryManager({
             store: this.chatHistoryStore,
             log: (message, error) => this.dependencies.log(message, error),
+        });
+        this.unsubscribeRecoveryDeletion = this.chatHistoryManager.subscribeDeletedConversations(ids => {
+            for (const id of ids) deleteConversationRecovery(this.dependencies.app, id);
         });
         this.imageAssetService = new ImageAssetService(this.dependencies.app, this.chatHistoryStore, {
             processor: new ImageProcessor(this.dependencies.app),
@@ -485,6 +490,8 @@ export class ChatPluginIntegration {
     }
 
     releaseHistory(): void {
+        this.unsubscribeRecoveryDeletion?.();
+        this.unsubscribeRecoveryDeletion = undefined;
         const store = this.chatHistoryStore;
         if (store) {
             void store.dispose().catch((error) => {

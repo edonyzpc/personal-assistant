@@ -354,10 +354,13 @@ describe("ConversationPersistence", () => {
             recordTurn: jest.fn(async () => ({ ...conversation, id: "reserved-conversation" })),
             maybePrune: jest.fn(async () => []),
         } as unknown as ChatHistoryManager;
-        const persistence = makePersistence(manager);
+        const onConversationBound = jest.fn();
+        const persistence = new ConversationPersistence({ getManager: () => manager, log: jest.fn(), onConversationBound });
 
         await expect(persistence.reserveConversationId("hello")).resolves.toBe("reserved-conversation");
+        expect(onConversationBound).not.toHaveBeenCalled();
         await expect(persistence.persistFinalizedTurn("hello", historyEntry)).resolves.toBe(true);
+        expect(onConversationBound).toHaveBeenCalledWith('reserved-conversation');
 
         expect(manager.startConversation).toHaveBeenCalledWith("hello", undefined, "reserved-conversation",
             { schemaVersion: 1, scope: 'combined', revision: 0, basis: 'new-conversation' });
@@ -366,6 +369,9 @@ describe("ConversationPersistence", () => {
         persistence.resetActiveConversationState();
         await expect(persistence.reserveConversationId("next")).resolves.toBe("next-conversation");
         expect(manager.reserveConversationId).toHaveBeenCalledTimes(2);
+        expect(onConversationBound).toHaveBeenCalledTimes(1);
+        persistence.hydrateConversation(conversation, []);
+        expect(onConversationBound).toHaveBeenLastCalledWith(conversation.id);
     });
 
     it("durably anchors a paid image request before the turn and reuses that conversation on finalization", async () => {

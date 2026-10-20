@@ -1,4 +1,8 @@
 {
+    "pagelet.ui.contentUpdated": "正文有更新",
+    "pagelet.ui.showLatest": "查看最新",
+    "pagelet.ui.renderFailed": "此区域暂时无法显示。",
+    "pagelet.ui.retry": "重试",
     "pagelet.trigger.noActiveNote": "请先打开一篇 Markdown 笔记再运行拾页。",
     "pagelet.trigger.emptyNote": "拾页需要一些笔记正文才能审阅。",
     "pagelet.trigger.noSuggestions": "拾页已完成审阅，但没有发现值得保存的建议。",

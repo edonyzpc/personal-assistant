@@ -581,6 +581,8 @@ describe("ChatHistoryManager", () => {
 
     it("deleteConversation removes both conversation record and all of its turns", async () => {
         const { manager, store } = makeManager();
+        const deleted = jest.fn();
+        manager.subscribeDeletedConversations(deleted);
         await manager.initialize();
         const conversation = await manager.startConversation("hi");
         for (let i = 0; i < 3; i++) {
@@ -593,7 +595,11 @@ describe("ChatHistoryManager", () => {
             });
         }
         await expect(store.getTurns(conversation.id)).resolves.toHaveLength(3);
+        jest.spyOn(store, 'deleteConversation').mockRejectedValueOnce(new Error('disk failure'));
+        await expect(manager.deleteConversation(conversation.id)).rejects.toThrow('disk failure');
+        expect(deleted).not.toHaveBeenCalled();
         await manager.deleteConversation(conversation.id);
+        expect(deleted).toHaveBeenCalledWith([conversation.id]);
         await expect(store.getConversation(conversation.id)).resolves.toBeNull();
         await expect(store.getTurns(conversation.id)).resolves.toHaveLength(0);
     });
@@ -624,6 +630,8 @@ describe("ChatHistoryManager", () => {
 
     it("maybePrune only prunes once the pruneInterval is reached", async () => {
         const { manager, store } = makeManager({ maxConversations: 1, pruneInterval: 3 });
+        const deleted = jest.fn();
+        manager.subscribeDeletedConversations(deleted);
         await manager.initialize();
         const conv = await manager.startConversation("hi");
         await manager.recordTurn({
@@ -647,6 +655,8 @@ describe("ChatHistoryManager", () => {
         // Third call hits the interval boundary and prunes the older conversation.
         const removed = await manager.maybePrune();
         expect(removed).toHaveLength(1);
+        expect(deleted).toHaveBeenCalledTimes(1);
+        expect(deleted).toHaveBeenCalledWith(removed);
         const remaining = await store.listConversations();
         expect(remaining).toHaveLength(1);
     });

@@ -353,6 +353,68 @@ describe("OperationsRequestReviewModel", () => {
         expect(model.groups[1]).toMatchObject({ hasSnapshotBreakpoint: true });
     });
 
+    it.each(["saved", "editor"] as const)(
+        "anchors %s request segment identities to their starting operation",
+        representation => {
+            const binding = { snapshotId: "snapshot", viewId: "view", file: { path: "notes/a.md" }, editor: {} };
+            const makeOperation = (id: string, before: string, after: string): PreparedOperation => {
+                if (representation === "saved") return operation(id, "notes/a.md", before, after);
+                return {
+                    kind: "resource",
+                    id,
+                    toolCallId: `call-${id}`,
+                    name: "obsidian.workspace.applyEdits",
+                    input: { snapshotId: binding.snapshotId, edits: [{ from: 0, to: before.length, text: after }] },
+                    path: "notes/a.md",
+                    expectedBefore: before,
+                    expectedAfter: after,
+                    resource: { action: "editor", binding },
+                } as unknown as PreparedOperation;
+            };
+            const project = (operations: readonly PreparedOperation[], undoneReceiptIds?: string[]) => createOperationsRequestReviewModel({
+                runId: "request-run",
+                intents: [{
+                    intent: requestIntent("intent-identity", "turn-identity", operations),
+                    results: operations.map(current => ({
+                        operationId: current.id,
+                        toolCallId: current.toolCallId,
+                        name: current.name,
+                        path: current.path,
+                        status: "succeeded" as const,
+                        receiptId: `receipt-${current.id}`,
+                    })),
+                }],
+                ...(undoneReceiptIds ? { undoneReceiptIds } : {}),
+            });
+            const initial = project([makeOperation("operation-first", "A", "B")]).groups[0]!;
+            const continuous = project([
+                makeOperation("operation-first", "A", "B"),
+                makeOperation("operation-second", "B", "C"),
+            ]);
+            expect(continuous.groups).toHaveLength(1);
+            expect(continuous.groups[0]!.id).toBe(initial.id);
+            expect(continuous.groups[0]!.lines.map(line => line.id)).toEqual(initial.lines.map(line => line.id));
+
+            const segmented = project([
+                makeOperation("operation-first", "A", "B"),
+                makeOperation("operation-second", "X", "C"),
+            ]);
+            expect(segmented.groups).toHaveLength(2);
+            expect(segmented.groups[0]!.id).toBe(initial.id);
+            expect(segmented.groups[1]!.id).not.toBe(initial.id);
+            const initialLineIds = new Set(initial.lines.map(line => line.id));
+            expect(segmented.groups[1]!.lines.every(line => !initialLineIds.has(line.id))).toBe(true);
+
+            const surviving = project([
+                makeOperation("operation-first", "A", "B"),
+                makeOperation("operation-second", "X", "C"),
+            ], ["receipt-operation-first"]);
+            expect(surviving.groups.map(group => group.id)).toEqual([segmented.groups[1]!.id]);
+            expect(surviving.groups[0]!.lines.map(line => line.id))
+                .toEqual(segmented.groups[1]!.lines.map(line => line.id));
+        },
+    );
+
     it("does not count an already undone receipt as the request's current change", () => {
         const model = createOperationsRequestReviewModel({
             runId: "request-run",

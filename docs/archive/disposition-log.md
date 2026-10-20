@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-10-18
+Updated: 2026-10-20
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-10-20 | `docs/development/active/pa-ui-state-rendering/**` | deleted-after-absorption | [DEC-071](../product/decisions/dec-071-pa-ui-state-rendering.md), [Spec](../product/specs/pa-ui-state-rendering-product-spec.md), [Architecture](../architecture/pa-ui-state-rendering.md), [B-181 validation](./2026/b181-ui-state-rendering-validation.md), [Backlog](../backlog.md) | Owner授权B-181收尾并提交远程master。稳定职责与实现吸收至当前契约和回归测试；仅保留紧凑最终验证。两项恢复策略转B-182/B-183，设备补验转T-012；删除Home/SDD/Tracker及已吸收原型源码/快照。原未提交过程及终态Tracker留本机副本，不声称旧Git可恢复全部原文；其他track不变，无版本发布。 |
 | 2026-10-18 | `docs/development/active/chat-rendering-performance/**` | deleted-after-absorption | [DEC-070](../product/decisions/dec-070-chat-rendering-lifecycle-performance.md), [Product Spec](../product/specs/pa-chat-rendering-performance-product-spec.md), [B-180 validation](./2026/b180-chat-rendering-performance-validation.md), current source and focused tests | Owner 明确授权 B-180 收尾及本地 master 提交；四项优化和两个真实 P2 修复已验收，无本范围未完成项。稳定复用/调度/观察及领域生命周期约束吸收；仅保留独有性能对照、完整/差量验证复用和真实 App 边界，删除 Home/SDD/Tracker。未提交过程原文与终态 Tracker 留本机副本，不声称旧 Git 保存完整过程。原生构建/布局和表格流式候选边界保留，其他 track 不变，无推送或发布。 |
 | 2026-10-18 | `docs/development/active/chat-markdown-table-display/**` | deleted-after-absorption | [DEC-069](../product/decisions/dec-069-chat-markdown-table-display-compatibility.md), [Product Spec](../product/specs/pa-chat-markdown-table-display-product-spec.md), [B-179 validation](./2026/b179-chat-markdown-table-display-validation.md), current source and focused tests | 用户明确确认 B-179 收尾及本地 master 提交。目标表格兼容、原文/生命周期与必要验证完成，三线独立审查无阻塞；稳定约束吸收，独有真实交互和性能证据紧凑保留，删除 Home/SDD/Tracker。未提交过程原文和终态 Tracker 留本机副本，不声称旧 Git 保存。性能候选未实施，无本范围未完成项；其他 track 不变，不推送或发布。 |
 | 2026-10-18 | `docs/development/active/chat-request-change-summary/**` | deleted-after-absorption | [DEC-068](../product/decisions/dec-068-chat-request-change-summary.md), [Product Spec](../product/specs/pa-chat-request-change-summary-product-spec.md), [Operations Architecture](../architecture/pa-agent-architecture-plan.md#operations-agent-providers), [B-178 validation](./2026/b178-chat-request-change-summary-validation.md), current source and focused tests | 用户明确授权 B-178 收尾及本地 master 提交。单请求单卡、全部差异、整次恢复与终态/双语补修已验收，无本范围未完成项。稳定规则吸收，独有真实交互、构建与验证边界紧凑保留；删除 Home/SDD/Tracker，不完整归档。未提交过程原文及终态 Tracker 留本机副本，不声称旧 Git 保存。其他 track 不变，无推送或发布。 |

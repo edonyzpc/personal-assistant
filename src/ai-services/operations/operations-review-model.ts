@@ -198,7 +198,12 @@ export interface OperationsRequestReviewModel extends Omit<OperationsReviewModel
 
 interface RequestTextGroupState {
     operations: PreparedOperation[];
-    segments: Array<{ before: string; after: string; breakpoint: boolean }>;
+    segments: Array<{
+        before: string;
+        after: string;
+        breakpoint: boolean;
+        startOperationId: string;
+    }>;
     identity?: unknown;
 }
 
@@ -303,7 +308,12 @@ export function createOperationsRequestReviewModel(
                 // new editor segment; saved text stays a separate representation.
                 if (!last || !sameEditorIdentity(state.identity as EditorIdentity | null, identity) || before !== last.after) {
                     state.identity = identity;
-                    state.segments.push({ before, after, breakpoint: last !== undefined });
+                    state.segments.push({
+                        before,
+                        after,
+                        breakpoint: last !== undefined,
+                        startOperationId: operation.id,
+                    });
                 } else last.after = after;
                 state.operations.push(operation);
                 editorGroups.set(normalizedPath, state);
@@ -385,20 +395,30 @@ export function createOperationsRequestReviewModel(
             savedGroups.set(normalizedPath, state);
             state.operations.push(operation);
             const last = state.segments[state.segments.length - 1];
-            if (!last) state.segments.push({ before, after, breakpoint: false });
+            if (!last) state.segments.push({
+                before,
+                after,
+                breakpoint: false,
+                startOperationId: operation.id,
+            });
             // A created object never continues a prior object merely because
             // both normalize to an empty snapshot.
             else if (operation.expectedBefore !== null && before === last.after) last.after = after;
-            else state.segments.push({ before, after, breakpoint: true });
+            else state.segments.push({
+                before,
+                after,
+                breakpoint: true,
+                startOperationId: operation.id,
+            });
         }
     }
 
     const groups: OperationsReviewFileGroup[] = [];
     for (const [normalizedPath, state] of savedGroups) {
         const first = state.operations[0];
-        for (const [index, segment] of state.segments.entries()) {
+        for (const segment of state.segments) {
             groups.push({
-                id: `request-${normalizedPath}:${index}`,
+                id: `request-${normalizedPath}:${segment.startOperationId}`,
                 path: first.path,
                 normalizedPath,
                 before: segment.before,
@@ -409,16 +429,16 @@ export function createOperationsRequestReviewModel(
                 operationIds: Object.freeze(state.operations.map(operation => operation.id)),
                 operations: Object.freeze([...state.operations]),
                 ...(segment.breakpoint ? { hasSnapshotBreakpoint: true } : {}),
-                ...createLineDiff(segment.before, segment.after, `${normalizedPath}:${index}`),
+                ...createLineDiff(segment.before, segment.after, `${normalizedPath}:${segment.startOperationId}`),
             });
         }
     }
     groups.push(...resourceGroups);
     for (const [normalizedPath, state] of editorGroups) {
         const first = state.operations[0];
-        for (const [index, segment] of state.segments.entries()) {
+        for (const segment of state.segments) {
             groups.push({
-                id: `request-editor-${normalizedPath}:${index}`,
+                id: `request-editor-${normalizedPath}:${segment.startOperationId}`,
                 path: first.path,
                 normalizedPath,
                 before: segment.before,
@@ -430,7 +450,7 @@ export function createOperationsRequestReviewModel(
                 operations: Object.freeze([...state.operations]),
                 resourceKind: "editor",
                 ...(segment.breakpoint ? { hasSnapshotBreakpoint: true } : {}),
-                ...createLineDiff(segment.before, segment.after, `${normalizedPath}:editor:${index}`),
+                ...createLineDiff(segment.before, segment.after, `${normalizedPath}:editor:${segment.startOperationId}`),
             });
         }
     }

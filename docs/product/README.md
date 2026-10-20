@@ -13,6 +13,8 @@
 
 ## Capture、Recall 与 Context
 
+- [PA UI 状态与局部刷新](./specs/pa-ui-state-rendering-product-spec.md) — B-181：交互连续性、设备本地恢复和共享双端组件；[实现契约](../architecture/pa-ui-state-rendering.md)、[最终验证与后置边界](../archive/2026/b181-ui-state-rendering-validation.md)。
+
 - [Chat 渲染性能](./specs/pa-chat-rendering-performance-product-spec.md) — B-180：历史整轮视图复用、分批恢复、状态栏与 Mermaid 生命周期；[验证与性能边界](../archive/2026/b180-chat-rendering-performance-validation.md)。
 - [Chat 表格显示兼容](./specs/pa-chat-markdown-table-display-product-spec.md) — B-179：显示副本结构兼容、原文保护与原生渲染；[验证与性能边界](../archive/2026/b179-chat-markdown-table-display-validation.md)。
 - [Chat 本次修改单卡汇总](./specs/pa-chat-request-change-summary-product-spec.md) — B-178：本次请求的完整变化与整次「撤销 / Undo」、中英文 UI；[架构](../architecture/pa-agent-architecture-plan.md#operations-agent-providers)、[验证与边界](../archive/2026/b178-chat-request-change-summary-validation.md)。

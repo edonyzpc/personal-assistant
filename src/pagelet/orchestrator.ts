@@ -1920,6 +1920,7 @@ export class PageletOrchestrator {
         }];
         this.currentPanelLayout = "discover";
         this.panelView?.open("discover", findings, {
+            entityId: candidate.id,
             sourcePath: candidate.pageletAgent.handoff.anchor.path,
             ...(reading ? { reading: this.readingControls(reading) } : {}),
         });

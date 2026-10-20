@@ -1,4 +1,4 @@
-import { WorkspaceLeaf, MarkdownView, Notice, ItemView, Modal, Platform, setIcon, Component, TFile, type EventRef } from 'obsidian';
+import { WorkspaceLeaf, MarkdownView, Notice, ItemView, Modal, Platform, setIcon, Component, TFile, type EventRef, type ViewStateResult } from 'obsidian';
 import { ChatService, type AgentEvent, type ChatAgentStatus, type ChatContextUsedItem, type ChatMessage, type ChatTurnMemoryMetadata } from '../ai-services/chat-service';
 import { BUNDLED_SKILL_CATALOG } from '../ai-services/bundled-skill-catalog';
 import { parseGhostCommand } from '../ghost-publishing/entry';
@@ -75,6 +75,12 @@ import {
 } from './role-identicons';
 import { MobileInputAdapter } from './MobileInputAdapter';
 import { createQuantumLoader } from '../ui/loaders';
+import { NativeMarkdownBridge, type NativeMarkdownInput, type NativeMarkdownPrepared, type NativeMarkdownRenderPhase } from '../ui/native-markdown-bridge';
+import { ViewDisplayLifecycle } from '../ui/view-display-lifecycle';
+import { LocalRecovery, deleteConversationRecovery, type RecoveryRoute } from '../ui/local-recovery';
+import { ReadingPositionController, type ReadingSnapshot } from '../ui/reading-position';
+import { decodeComposerRecovery, isEmptyComposerRecovery, projectComposerRecovery, recoverComposerReferences,
+    type ComposerRecoveryDraft } from './composer-recovery';
 import { getPluginUiLanguage, makePluginTranslator, pluginT } from '../locales/plugin';
 import { createContextPagerStateFromChatContextUsed, mergeContextReductionFromMetrics } from '../pa/context-pager';
 import type { ContextReductionReceipt } from '../pa/contracts/context-trace';
@@ -84,7 +90,6 @@ import {
     getOptionalPlatformDocument,
     getOptionalPlatformWindow,
     getPlatformDocument,
-    getPlatformPerformance,
     requestPlatformAnimationFrame,
     setPlatformTimeout,
     setPlatformInterval,
@@ -103,8 +108,11 @@ import type {
 import { OperationsReviewSession } from '../ai-services/operations/operations-review-session';
 import type { OperationsStatusObservation } from '../ai-services/operations-status-tool';
 import { formatOperationsPreview } from '../ai-services/operations/operations-presentation';
-import { mountOperationsDiff } from './operations-review/mount';
+import { mountOperationsDiff, type OperationsDiffMountHandle } from './operations-review/mount';
 import { projectOperationsReviewResultRows } from './operations-review/OperationsReviewPanel';
+import { createChatUiStore, type ChatUiStore } from './ui/chat-ui-store';
+import { mountImageTaskCard, type ImageTaskCardMountHandle } from './ui/image-task-mount';
+import type { ImageTaskCardActions, ImageTaskMessageAction } from './ui/ImageTaskCard';
 import { ShareCardModal } from '../share-card/share-card-modal';
 import {
     captureComposerImageTextSource,
@@ -116,7 +124,7 @@ import {
     type ComposerSnapshot,
 } from './composer-draft';
 import { cloneImageRef, cloneMessageImages, type ImageRef, type MessageImage } from './image-types';
-import { ImagePreacceptError, imageSubrequestOperationId, type ImageGenerationTask } from './image-generation-types';
+import { ImagePreacceptError, imageSubrequestOperationId, type ImageGenerationTask, type ImageGenerationOutput } from './image-generation-types';
 import type { CreateImageHostBinding, CreateImageHostRuntime, CreateImageToolInput } from '../ai-services/chat-tool-types';
 import { ImageAttachmentDetailModal, renderComposerImageAttachments, renderImageAttachments } from './image-attachment-view';
 import { ImageSourcePickerModal, VaultImagePickerModal } from './image-management-modal';
@@ -324,11 +332,6 @@ function uniquePageletVaultSources(context: PageletChatHandoffContext): string[]
     return result;
 }
 
-const getMonotonicTimeMs = () => {
-    const performanceApi = getPlatformPerformance();
-    return typeof performanceApi?.now === 'function' ? performanceApi.now() : Date.now();
-};
-
 type MarkdownRenderOptions = {
     forceScroll?: boolean;
     observeMermaidLayout?: boolean;
@@ -371,6 +374,11 @@ export { CHAT_MENU_IDLE_CLOSE_MS } from './menu-helpers';
 
 
 export class LLMView extends ItemView {
+    private recoveryRoute: Partial<RecoveryRoute> | undefined;
+    private localRecovery: LocalRecovery<ComposerRecoveryDraft> | null = null;
+    private readingPosition: ReadingPositionController | null = null;
+    private flushRecovery: (() => void) | null = null;
+    private restoreRecoveryRoute: (() => Promise<void>) | null = null;
     private readonly host: ChatHost;
     result: string = '';
     responseDiv!: HTMLDivElement;
@@ -393,6 +401,9 @@ export class LLMView extends ItemView {
     private memoryStatusUnsubscribe: (() => void) | null = null;
     private settingsChangeUnsubscribe: (() => void) | null = null;
     private markdownRenderOwners = new Set<Component>();
+    private readonly markdownBridges = new Set<NativeMarkdownBridge>();
+    private chatUiStore: ChatUiStore | null = null;
+    private viewDisplayLifecycle: ViewDisplayLifecycle | null = null;
     private readonly knownChatRenderBuffers = new WeakSet<HTMLElement>();
     private chatDrawerHost: HTMLElement | null = null;
     private composerTextArea: HTMLTextAreaElement | null = null;
@@ -487,6 +498,10 @@ export class LLMView extends ItemView {
         this.conversationPersistence = new ConversationPersistence({
             getManager: () => host.chatHistoryManager,
             log: (message, error) => host.log(message, error),
+            onConversationBound: conversationId => {
+                this.localRecovery?.bindConversation(conversationId);
+                if (this.localRecovery) this.app.workspace.requestSaveLayout?.();
+            },
             scheduleMemoryExtractionAfterChatTurn: (conversationId, turnCount) => {
                 host.scheduleMemoryExtractionAfterChatTurn(conversationId, turnCount);
             },
@@ -510,6 +525,8 @@ export class LLMView extends ItemView {
     }
 
     private unloadAllMarkdownRenderOwners() {
+        for (const bridge of [...this.markdownBridges]) bridge.dispose(true);
+        this.markdownBridges.clear();
         for (const cleanup of this.messageElementCleanups.values()) cleanup();
         this.messageElementCleanups.clear();
         for (const owner of this.markdownRenderOwners) {
@@ -549,6 +566,22 @@ export class LLMView extends ItemView {
         return PA_CHAT_SUBAGENT_ICON;
     }
 
+    getState(): Record<string, unknown> {
+        const route = this.localRecovery ? this.localRecovery.workspaceRoute : this.recoveryRoute;
+        return route?.slotId ? { slotId: route.slotId, conversationId: route.conversationId ?? null } : {};
+    }
+
+    async setState(state: unknown, _result?: ViewStateResult): Promise<void> {
+        const route = state && typeof state === 'object' ? state as Partial<RecoveryRoute> : {};
+        if (typeof route.slotId !== 'string' || !route.slotId
+            || (route.conversationId !== null && typeof route.conversationId !== 'string')) return;
+        if (this.localRecovery?.route.slotId === route.slotId
+            && this.localRecovery.route.conversationId === route.conversationId) return;
+        this.flushRecovery?.();
+        this.recoveryRoute = { slotId: route.slotId, conversationId: route.conversationId };
+        await this.restoreRecoveryRoute?.();
+    }
+
     async onOpen() {
         const sessionId = this.startViewSession();
         const composerDraft = new ComposerDraft<MessageImage>();
@@ -556,6 +589,14 @@ export class LLMView extends ItemView {
         this.registerViewTeardown(() => composerDraft.dispose());
         this.resetRoleIdenticonSessionSeed();
         const t = makePluginTranslator(getPluginUiLanguage());
+        const chatUiStore = createChatUiStore();
+        this.chatUiStore = chatUiStore;
+        const transientMenuClosers = new Set<() => void>();
+        const closeTransientMenus = () => {
+            chatUiStore.getState().closeTaskMenus();
+            for (const close of transientMenuClosers) close();
+        };
+        this.registerViewTeardown(() => transientMenuClosers.clear());
         const thinkingLocale = getChatThinkingProcessLocale();
         const thinkingT = (key: string, params?: Readonly<Record<string, string | number>>) =>
             pluginT(key, thinkingLocale, params);
@@ -566,6 +607,35 @@ export class LLMView extends ItemView {
         this.markChatDrawerHost(containerEl);
         this.observePanelDensity(containerEl);
         this.observeStatusBarClearance(containerEl);
+        this.viewDisplayLifecycle?.dispose();
+        const viewDisplayLifecycle = new ViewDisplayLifecycle(
+            containerEl,
+            this.app.workspace as unknown as ConstructorParameters<typeof ViewDisplayLifecycle>[1],
+            {
+                onVisibilityChange: visible => {
+                    chatUiStore.getState().setViewVisible(visible);
+                    if (!visible) closeTransientMenus();
+                    if (!visible && this.scheduledScrollFrame !== null) {
+                        cancelPlatformAnimationFrame(this.scheduledScrollFrame);
+                        this.scheduledScrollFrame = null;
+                    }
+                    for (const bridge of this.markdownBridges) bridge.setDisplayPaused('view', !visible);
+                    if (!visible) this.flushRecovery?.();
+                    else this.readingPosition?.notifyLayout();
+                },
+                onDocumentChange: document => {
+                    closeTransientMenus();
+                    for (const bridge of this.markdownBridges) bridge.rebindDocument(document);
+                    this.readingPosition?.rebindDocument();
+                },
+            },
+        );
+        this.viewDisplayLifecycle = viewDisplayLifecycle;
+        viewDisplayLifecycle.start();
+        this.registerViewTeardown(() => {
+            viewDisplayLifecycle.dispose();
+            if (this.viewDisplayLifecycle === viewDisplayLifecycle) this.viewDisplayLifecycle = null;
+        });
 
         const chatContainer = containerEl.createDiv({ cls: 'llm-chat-container pa-chat-container' });
 
@@ -586,8 +656,9 @@ export class LLMView extends ItemView {
         const renderPageletHandoff = () => {
             pageletAttachment.empty();
             const context = this.pendingPageletHandoff;
-            pageletAttachment.hidden = context === null;
-            if (!context) return;
+            const needsReselection = composerDraft.snapshot('').pageletReselectionRequired === true;
+            pageletAttachment.hidden = context === null && !needsReselection;
+            if (!context && !needsReselection) return;
 
             const header = pageletAttachment.createDiv({ cls: 'pa-chat-pagelet-attachment__header' });
             header.createDiv({
@@ -614,6 +685,12 @@ export class LLMView extends ItemView {
                 syncComposerControls();
                 textArea.focus();
             };
+
+            if (!context) {
+                pageletAttachment.createDiv({ cls: 'pa-chat-pagelet-attachment__body',
+                    text: t('plugin.chat.recovery.reselectPagelet') });
+                return;
+            }
 
             pageletAttachment.createDiv({
                 cls: 'pa-chat-pagelet-attachment__body',
@@ -723,6 +800,7 @@ export class LLMView extends ItemView {
         textArea.addEventListener('compositionstart', () => { composing = true; hideActionTypeahead(); });
         textArea.addEventListener('compositionend', () => {
             composing = false;
+            composerDraft.touchText();
             syncComposerControls();
             renderSkillTypeahead();
         });
@@ -1017,6 +1095,7 @@ export class LLMView extends ItemView {
         const MERMAID_LAYOUT_STABILIZE_TIMEOUT_MS = 4000;
         const USER_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Spacebar']);
         let shouldAutoScroll = true;
+        let recoveredReadingActive = false;
         let explicitAutoScrollPause = false;
         let userScrollIntent = false;
         let userScrollIntentTimer: PlatformTimeoutHandle | null = null;
@@ -1032,12 +1111,14 @@ export class LLMView extends ItemView {
         };
 
         const scrollToBottom = (
-            { force = false, behavior = 'smooth', onSettled }: {
+            { force = false, behavior = 'smooth', onSettled, canScroll }: {
                 force?: boolean;
                 behavior?: ScrollBehavior;
                 onSettled?: () => void;
+                canScroll?: () => boolean;
             } = {}
         ) => {
+            if (recoveredReadingActive || !chatUiStore.getState().viewVisible || canScroll?.() === false) return;
             if (force) {
                 shouldAutoScroll = true;
                 explicitAutoScrollPause = false;
@@ -1053,8 +1134,9 @@ export class LLMView extends ItemView {
             frameId = requestPlatformAnimationFrame(() => {
                 if (frameId === null) return;
                 if (this.scheduledScrollFrame !== frameId) return;
-                if (!shouldAutoScroll || explicitAutoScrollPause) return;
                 this.scheduledScrollFrame = null;
+                if (!shouldAutoScroll || explicitAutoScrollPause
+                    || !chatUiStore.getState().viewVisible || canScroll?.() === false) return;
                 this.responseDiv.scrollLeft = 0;
                 this.responseDiv.scrollTo({
                     top: getScrollBottom(),
@@ -1067,6 +1149,7 @@ export class LLMView extends ItemView {
         const stabilizeChatViewport = (
             { force = false, behavior = 'auto' }: { force?: boolean; behavior?: ScrollBehavior } = {},
         ) => {
+            if (!chatUiStore.getState().viewVisible) return;
             this.responseDiv.scrollLeft = 0;
             scrollToBottom({ force, behavior });
         };
@@ -1140,9 +1223,11 @@ export class LLMView extends ItemView {
         // Host callbacks live only in this view; history contains data alone.
         const writingRecoverySources = new WeakMap<ChatMessage, () => boolean>();
         let selectedWritingParentExplicit = false;
+        let unresolvedWritingParentId: string | undefined;
         const clearSelectedWritingParent = () => {
             selectedWritingVersion = undefined;
             selectedWritingParentExplicit = false;
+            unresolvedWritingParentId = undefined;
         };
         let restoredTerminalDraft: { turnId: number; snapshot: ComposerSnapshot<MessageImage> } | undefined;
         let thinkingStatusId = 0;
@@ -1303,6 +1388,8 @@ export class LLMView extends ItemView {
             actionTypeahead.hidden = true;
             chooseActionTypeahead = undefined;
         };
+        transientMenuClosers.add(hideSkillTypeahead);
+        transientMenuClosers.add(hideActionTypeahead);
         const getActionTriggerMatch = () => {
             if (composing || textArea.selectionStart !== textArea.selectionEnd) return null;
             const prefix = textArea.value.slice(0, textArea.selectionStart);
@@ -1514,6 +1601,7 @@ export class LLMView extends ItemView {
                 clear();
                 closeMenu();
             };
+            transientMenuClosers.add(close);
             const refresh = () => {
                 if (!menu.hidden) schedule();
             };
@@ -1533,12 +1621,14 @@ export class LLMView extends ItemView {
             const unregisterTeardown = this.registerViewTeardown(() => {
                 clear();
                 removeIdleListeners();
+                transientMenuClosers.delete(close);
             });
             const dispose = () => {
                 if (disposed) return;
                 disposed = true;
                 clear();
                 removeIdleListeners();
+                transientMenuClosers.delete(close);
                 unregisterTeardown();
             };
             return {
@@ -1600,7 +1690,7 @@ export class LLMView extends ItemView {
             const imagesUnsupported = currentDraft.images.length > 0
                 && this.chatService.getImageCapability?.() === 'unsupported'
                 && (!this.host.imageGenerationService || !textArea.value.trim());
-            sendButton.disabled = generating || !hasDraft || setupIssue !== null || imagesUnsupported;
+            sendButton.disabled = generating || !hasDraft || setupIssue !== null || imagesUnsupported || Boolean(unresolvedWritingParentId);
             if (generating && !isStopping && !isFinalizing) {
                 textArea.setAttribute('placeholder', t("plugin.chat.placeholder.draftNextMessage"));
                 sendButton.classList.replace('send-button-visible', 'send-button-hidden');
@@ -1695,14 +1785,18 @@ export class LLMView extends ItemView {
                 imageIntentTitle.setText(t('plugin.chat.createImage.title'));
             }
             if (imageIntent) {
-                imageIntentTitle.setText(t(imageIntent.operation === 'edit'
-                    ? 'plugin.chat.createImage.edit' : 'plugin.chat.createImage.title'));
+                const title = t(imageIntent.operation === 'edit'
+                    ? 'plugin.chat.createImage.edit' : 'plugin.chat.createImage.title');
+                imageIntentTitle.setText(imageIntent.recoveryReferencesMissing
+                    ? `${title} · ${t('plugin.chat.recovery.attachmentUnavailable')}` : title);
                 const source = imageIntent.textSource;
                 const sourceLabel = source
                     ? t(source.kind === 'selection'
                         ? 'plugin.chat.createImage.source.selection' : 'plugin.chat.createImage.source.note',
                         { source: source.displayName })
-                    : t('plugin.chat.createImage.source.none');
+                    : imageIntent.recoverySourceLabel
+                        ? t('plugin.chat.recovery.reselectSource', { source: imageIntent.recoverySourceLabel })
+                        : t('plugin.chat.createImage.source.none');
                 imageSourceButton.setAttribute('aria-label', `${t('plugin.chat.createImage.source.control')} — ${sourceLabel}`);
                 imageSourceButton.setAttribute('title', `${t('plugin.chat.createImage.source.control')} — ${sourceLabel}`);
                 setIcon(imageSourceButton, source ? 'file-text' : 'file-plus');
@@ -1712,7 +1806,7 @@ export class LLMView extends ItemView {
                     imageSourcePreviewText.setText(source.text.length > 1200
                         ? `${source.text.slice(0, 1200)}…` : source.text);
                 }
-                imageRemoveSourceButton.hidden = !source;
+                imageRemoveSourceButton.hidden = !source && !imageIntent.recoverySourceLabel;
                 imageSourceControl.hidden = false;
                 imageCloseButton.hidden = false;
                 syncImageOptionsMenu();
@@ -1726,6 +1820,7 @@ export class LLMView extends ItemView {
             writingIntentEl.hidden = !draft.writingIntent;
             if (draft.writingIntent) {
                 writingIntentEl.createSpan({ text: t('plugin.chat.writing.action') });
+                if (unresolvedWritingParentId) writingIntentEl.createSpan({ text: t('plugin.chat.recovery.reselectParent') });
                 const removeIntent = writingIntentEl.createEl('button', {
                     attr: { type: 'button', title: t('plugin.chat.writing.removeAction'),
                         'aria-label': t('plugin.chat.writing.removeAction') },
@@ -2038,11 +2133,24 @@ export class LLMView extends ItemView {
             before?: HTMLElement;
             rendered?: RenderedMessage;
         };
-        const imageTaskCards = new Map<string, HTMLElement>();
+        type ImageTaskCardEntry = {
+            container: HTMLElement;
+            handle: ImageTaskCardMountHandle;
+        };
+        const imageTaskCards = new Map<string, ImageTaskCardEntry>();
+        let imageHistoryLoading = 0;
+        const pendingImageNoteSaves = new Set<string>();
         const imageTaskMessageTargets = new Map<string, ImageTaskCardTarget>();
         const imageTaskCardTargets = new Map<string, ImageTaskCardTarget>();
+        const pendingReadingDisclosures = new Set<string>();
+        const restoreImageResponseDisclosure = (rendered: RenderedMessage | undefined) => {
+            const details = rendered?.imageResponseDetails;
+            const id = details?.getAttribute('data-pa-reading-disclosure');
+            if (!details || !id || !pendingReadingDisclosures.delete(id)) return;
+            details.open = true;
+            rendered?.imageResponseDisclosureToggle?.();
+        };
         const imageTaskFallbackTarget: ImageTaskCardTarget = { parent: this.responseDiv };
-        const imageCardCleanups = new Map<string, Array<() => void>>();
         type ImagePlan = { total: number; frozen: boolean };
         type ImageOperationRecord = {
             stableMessageId: string;
@@ -2071,8 +2179,7 @@ export class LLMView extends ItemView {
         this.registerViewTeardown(clearGhostCards);
         let imageTasksConversationId: string | null = null;
         const clearImageTaskCards = () => {
-            for (const cleanups of imageCardCleanups.values()) for (const cleanup of cleanups) cleanup();
-            imageCardCleanups.clear();
+            for (const entry of imageTaskCards.values()) entry.handle.unmount();
             imageTaskCards.clear();
             imageTaskMessageTargets.clear();
             imageTaskCardTargets.clear();
@@ -2096,9 +2203,19 @@ export class LLMView extends ItemView {
                 // observers bound to this same content element while moving only
                 // its parent in the assistant message.
                 details.appendChild(rendered.contentDiv);
+                const readingId = rendered.contentDiv.getAttribute('data-pa-reading-id');
+                if (readingId) details.setAttribute('data-pa-reading-disclosure', readingId);
                 rendered.imageResponseDetails = details;
                 details.open = false;
+                rendered.markdownBridge?.setDisplayPaused('disclosure', true);
+                const responseDetails = details;
+                rendered.imageResponseDisclosureToggle = () => {
+                    rendered.markdownBridge?.setDisplayPaused('disclosure', !responseDetails.open);
+                    this.readingPosition?.notifyLayout();
+                };
+                details.addEventListener('toggle', rendered.imageResponseDisclosureToggle);
             }
+            restoreImageResponseDisclosure(rendered);
             target.before = details;
             rendered.actionDiv.classList.add('pa-chat-image-response-actions');
             rendered.actionDiv.hidden = true;
@@ -2110,40 +2227,30 @@ export class LLMView extends ItemView {
             if (rendered.contentDiv.parentElement === details) {
                 rendered.messageDiv.insertBefore(rendered.contentDiv, details);
             }
+            if (rendered.imageResponseDisclosureToggle) {
+                details.removeEventListener('toggle', rendered.imageResponseDisclosureToggle);
+                rendered.imageResponseDisclosureToggle = undefined;
+            }
+            rendered.markdownBridge?.setDisplayPaused('disclosure', false);
             details.remove();
             rendered.imageResponseDetails = undefined;
             rendered.actionDiv.classList.remove('pa-chat-image-response-actions');
             rendered.actionDiv.hidden = false;
         };
         const dropImageTaskCard = (taskId: string) => {
-            for (const cleanup of imageCardCleanups.get(taskId) ?? []) cleanup();
-            imageCardCleanups.delete(taskId);
-            imageTaskCards.get(taskId)?.remove();
+            const entry = imageTaskCards.get(taskId);
+            entry?.handle.unmount();
+            entry?.container.remove();
             imageTaskCards.delete(taskId);
             imageTaskCardTargets.delete(taskId);
         };
         const deactivateImageFirstMessageWithoutTasks = (rendered?: RenderedMessage) => {
             if (!rendered) return;
             const hasTask = [...imageTaskCards.values()]
-                .some(card => card.parentElement === rendered.messageDiv);
+                .some(entry => entry.container.parentElement === rendered.messageDiv);
             if (!hasTask) deactivateImageFirstMessage(rendered);
         };
         this.registerViewTeardown(clearImageTaskCards);
-        const taskStateLabel = (task: ImageGenerationTask): string => t(`plugin.chat.createImage.state.${task.state}`);
-        const imageRecoveryText = (reason: string): string => {
-            const labels: Record<string, string> = {
-                ready_to_continue: 'readyToContinue', provider_acceptance_unknown: 'acceptanceUnknown',
-                connection_changed: 'connectionChanged', connection_unavailable: 'connectionUnavailable',
-                credential_unavailable: 'credentialUnavailable', provider_result_expired: 'resultExpired',
-                source_changed: 'sourceChanged', source_changed_before_submit: 'sourceChanged',
-                version_record_failed: 'versionRecordFailed', local_delivery_stopped: 'stoppedLocally',
-                stopped_before_submit: 'stoppedBeforeSubmit',
-                message_removed: 'messageRemoved', provider_rejected: 'providerRejected',
-                provider_failed: 'providerFailed', save_failed: 'saveFailed',
-                transparent_input_needs_confirmation: 'transparentInputNeedsConfirmation',
-            };
-            return t(`plugin.chat.createImage.recovery.${labels[reason] ?? 'other'}`);
-        };
         const renderImageTaskCard = (task: ImageGenerationTask) => {
             if (!imageGeneration || !isCurrentSession() || task.conversationId !== imageTasksConversationId) return;
             if (historyRenderEpoch?.pendingImageMessageIds.has(task.stableMessageId)
@@ -2154,62 +2261,9 @@ export class LLMView extends ItemView {
                 deactivateImageFirstMessageWithoutTasks(suppressedTarget?.rendered);
                 return;
             }
-            let card = imageTaskCards.get(task.taskId);
-            if (!card) {
-                card = this.responseDiv.createDiv({ cls: 'pa-chat-image-task-card' });
-                imageTaskCards.set(task.taskId, card);
-            }
             const target = imageTaskMessageTargets.get(task.stableMessageId) ?? imageTaskFallbackTarget;
             activateImageFirstMessage(target);
-            card.setAttribute('data-created-at', task.createdAt);
-            card.setAttribute('data-task-id', task.taskId);
-            let insertionPoint: Element | undefined = target.before;
-            if (insertionPoint) {
-                let previous = insertionPoint.previousElementSibling;
-                while (
-                    previous?.classList.contains('pa-chat-image-task-card')
-                    && ((previous.getAttribute('data-created-at') ?? '') > task.createdAt
-                        || (previous.getAttribute('data-created-at') === task.createdAt
-                            && (previous.getAttribute('data-task-id') ?? '') > task.taskId))
-                ) {
-                    insertionPoint = previous;
-                    previous = insertionPoint.previousElementSibling;
-                }
-            }
-            const currentChildren = Array.from(target.parent.children);
-            const currentNext = card.parentElement === target.parent
-                ? currentChildren[currentChildren.indexOf(card) + 1]
-                : undefined;
-            if (
-                !card.isConnected
-                || card.parentElement !== target.parent
-                || imageTaskCardTargets.get(task.taskId) !== target
-                || (insertionPoint !== undefined && currentNext !== insertionPoint)
-            ) {
-                if (insertionPoint) target.parent.insertBefore(card, insertionPoint);
-                else target.parent.appendChild(card);
-                imageTaskCardTargets.set(task.taskId, target);
-            }
-            for (const cleanup of imageCardCleanups.get(task.taskId) ?? []) cleanup();
-            const cleanups: Array<() => void> = [];
-            imageCardCleanups.set(task.taskId, cleanups);
-            card.empty();
-            card.setAttribute('data-task-id', task.taskId);
-            card.setAttribute('data-state', task.state);
-            const header = card.createDiv({ cls: 'pa-chat-image-task-card__header' });
-            const headerText = header.createSpan({ cls: 'pa-chat-image-task-card__header-text' });
-            headerText.createSpan({ cls: 'pa-chat-image-task-card__title', text: t('plugin.chat.createImage.title') });
-            headerText.createSpan({ cls: 'pa-chat-image-task-card__state', text: taskStateLabel(task),
-                attr: { role: 'status', 'aria-live': 'polite' } });
-            const headerControls = header.createSpan({ cls: 'pa-chat-image-task-card__header-controls' });
-            if (task.recoveryReason) card.createDiv({ cls: 'pa-chat-image-task-card__recovery', text: imageRecoveryText(task.recoveryReason) });
-            if (task.inputWhiteBackgroundApplied) card.createDiv({ cls: 'pa-chat-image-task-card__recovery',
-                text: t('plugin.chat.createImage.whiteBackgroundApplied') });
-            const outputs = card.createDiv({ cls: 'pa-chat-image-task-card__outputs' });
             const canDeliverOutputs = canDeliverImageTask(task);
-            outputs.hidden = task.outputs.length === 0 || !canDeliverOutputs;
-            const hasSavedOutputs = canDeliverOutputs
-                && task.outputs.some(output => output.saveState === 'saved' && output.assetRef);
             const regenerateImageTask = () => {
                 if (composerDraft.hasDraft(textArea.value) || isGenerating()) {
                     showComposerHint(t('plugin.chat.createImage.finishDraft')); return;
@@ -2241,30 +2295,132 @@ export class LLMView extends ItemView {
                 syncComposerControls();
                 textArea.focus();
             };
-            const createTaskMoreControl = (parent: HTMLElement) => {
-                const control = parent.createSpan({
-                    cls: 'pa-chat-popover-control pa-chat-image-task-card__more-control',
-                });
-                const moreButton = createMessageActionButton(control, {
-                    cls: 'pa-chat-image-task-card__more',
-                    icon: 'ellipsis',
-                    label: t('plugin.chat.createImage.moreTaskActions'),
-                });
-                moreButton.setAttribute('aria-haspopup', 'menu');
-                moreButton.setAttribute('aria-expanded', 'false');
-                const menu = control.createDiv({
-                    cls: 'pa-chat-menu pa-chat-message-menu pa-chat-image-task-card__menu',
-                    attr: { role: 'menu' },
-                });
-                menu.hidden = true;
-                const autoClose = createIdleMenuAutoClose(menu, moreButton, () => {
-                    menu.hidden = true;
-                    moreButton.setAttribute('aria-expanded', 'false');
-                });
-                const closeTaskMenu = (focusTrigger = false) => {
-                    autoClose.close();
-                    if (focusTrigger) moreButton.focus();
-                };
+            const readOutput = async (output: ImageGenerationOutput) => {
+                if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
+                const file = await imageGeneration.readOutput(task.taskId, output.outputId);
+                if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
+                return file;
+            };
+            const actions: ImageTaskCardActions = {
+                regenerate: regenerateImageTask,
+                stop: () => {
+                    void imageGeneration.stop(task.taskId).catch(error => {
+                        this.host.log('Could not stop image task', error);
+                        new Notice(t('plugin.chat.createImage.stopFailed'));
+                    });
+                },
+                approveWhiteBackground: () => {
+                    void imageGeneration.approveWhiteBackground(task.taskId).catch(error => {
+                        this.host.log('Could not approve white-backed image input', error);
+                        new Notice(t('plugin.chat.createImage.recoverFailed'));
+                    });
+                },
+                resume: () => {
+                    void imageGeneration.resume(task.taskId).catch(error => {
+                        this.host.log('Could not resume image task', error);
+                        new Notice(t('plugin.chat.createImage.recoverFailed'));
+                    });
+                },
+                preview: output => {
+                    void readOutput(output).then(file => {
+                        if (isCurrentSession() && canDeliverImageTask(task)) {
+                            new GeneratedImagePreviewModal(this.app, file.bytes, file.mime).open();
+                        }
+                    }).catch(error => {
+                        this.host.log('Could not open generated image', error);
+                        new Notice(t('plugin.chat.createImage.imageUnavailable'));
+                    });
+                },
+                edit: output => {
+                    void imageGeneration.getVersionForOutput(task.taskId, output.outputId).then(version => {
+                        if (!version || !isCurrentSession() || !canDeliverImageTask(task)) {
+                            new Notice(t('plugin.chat.createImage.versionUnavailable')); return;
+                        }
+                        if (composerDraft.hasDraft(textArea.value) || isGenerating()) {
+                            showComposerHint(t('plugin.chat.createImage.finishDraftEdit')); return;
+                        }
+                        composerDraft.setImageIntent({ operation: 'edit', parentVersionId: version.versionId,
+                            referenceImageRefs: [cloneImageRef(version.assetRef)] });
+                        clearSelectedWritingParent();
+                        renderImageDraft(); syncComposerControls(); textArea.focus();
+                    }).catch(error => {
+                        this.host.log('Could not prepare image edit', error);
+                        new Notice(t('plugin.chat.createImage.versionUnavailable'));
+                    });
+                },
+                download: (output, ownerDocument) => {
+                    if (!ownerDocument) return;
+                    void readOutput(output).then(file => {
+                        if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
+                        return downloadGeneratedImage(ownerDocument, file.bytes, file.mime, file.filename);
+                    }).catch(error => {
+                        if ((error as { name?: string })?.name === 'AbortError') return;
+                        this.host.log('Could not export generated image', error);
+                        new Notice(t('plugin.chat.createImage.downloadFailed'));
+                    });
+                },
+                copy: (output, ownerDocument) => {
+                    if (!ownerDocument) return;
+                    void readOutput(output).then(file => {
+                        if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
+                        return copyGeneratedImage(ownerDocument, file.bytes, file.mime, () => {
+                            if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
+                        });
+                    }).then(() => new Notice(t('plugin.chat.createImage.copied'))).catch(error => {
+                        this.host.log('Could not copy generated image', error);
+                        new Notice(t('plugin.chat.createImage.copyFailed'));
+                    });
+                },
+                save: output => {
+                    const saveId = `${task.taskId}:${output.outputId}`;
+                    if (pendingImageNoteSaves.has(saveId) || !this.host.imageAssetService
+                        || !output.assetRef || !canDeliverImageTask(task)) return;
+                    const images = this.host.imageAssetService;
+                    const assetRef = cloneImageRef(output.assetRef);
+                    new GeneratedImageNotePickerModal(this.app, note => {
+                        if (pendingImageNoteSaves.has(saveId) || !canDeliverImageTask(task)) return;
+                        pendingImageNoteSaves.add(saveId);
+                        void saveGeneratedImageToNote(this.app, images, assetRef, note,
+                            `generated_${task.taskId}_${output.providerOrdinal}`, () => {
+                                if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
+                            }, task.request.attachmentPathHint).then(() => {
+                                new Notice(t('plugin.chat.createImage.savedToNote', { note: note.path }));
+                            }).catch(error => {
+                                this.host.log('Could not save generated image to note', error);
+                                new Notice(t('plugin.chat.createImage.saveToNoteFailed'));
+                            }).finally(() => { pendingImageNoteSaves.delete(saveId); });
+                    }).open();
+                },
+                resolvePreview: async output => {
+                    const images = this.host.imageAssetService;
+                    const assetRef = output.assetRef;
+                    if (!images || !assetRef || !canDeliverImageTask(task)) return null;
+                    const lease = await images.resolveVariant(cloneImageRef(assetRef), 'preview', {
+                        isCurrent: () => isCurrentSession()
+                            && imageTaskCards.get(task.taskId)?.container.isConnected === true
+                            && canDeliverImageTask(task),
+                    });
+                    if (!isCurrentSession()
+                        || imageTaskCards.get(task.taskId)?.container.isConnected !== true
+                        || !canDeliverImageTask(task)) {
+                        lease.release();
+                        return null;
+                    }
+                    const url = URL.createObjectURL(lease.blob);
+                    let released = false;
+                    return {
+                        url,
+                        release: () => {
+                            if (released) return;
+                            released = true;
+                            URL.revokeObjectURL(url);
+                            lease.release();
+                        },
+                    };
+                },
+            };
+            const getMessageActions = (): ImageTaskMessageAction[] => {
+                const messageActions: ImageTaskMessageAction[] = [];
                 const appendMessageAction = (
                     source: HTMLButtonElement | undefined,
                     icon: string,
@@ -2273,299 +2429,85 @@ export class LLMView extends ItemView {
                     if (!source) return;
                     const label = source.getAttribute('aria-label') ?? source.getAttribute('title');
                     if (!label) return;
-                    const item = createChatMenuItem(menu, {
-                        text: label,
-                        icon,
-                        cls: danger ? 'pa-chat-menu-item-danger' : '',
-                    });
-                    item.disabled = source.disabled;
-                    item.onclick = () => {
-                        autoClose.close();
-                        source.click();
-                    };
-                };
-                const rebuildMenu = () => {
-                    menu.empty();
-                    const regenerate = createChatMenuItem(menu, {
-                        text: t('plugin.chat.createImage.regenerate'),
-                        icon: 'refresh-cw',
-                    });
-                    regenerate.onclick = () => {
-                        autoClose.close();
-                        regenerateImageTask();
-                    };
-                    const rendered = target.rendered;
-                    if (rendered) {
-                        createChatMenuDivider(menu);
-                        createChatMenuLabel(menu, t('plugin.chat.createImage.responseText'), 'message-square');
-                        appendMessageAction(rendered.copyButton, 'copy');
-                        appendMessageAction(rendered.addMessageButton, 'file-plus');
-                        appendMessageAction(rendered.shareButton, 'share-2');
-                        appendMessageAction(rendered.writingButton, 'file-pen-line');
-                        appendMessageAction(rendered.retryMessageButton, 'rotate-cw');
-                        appendMessageAction(rendered.deleteButton, 'trash-2', true);
-                    }
-                };
-                const menuButtons = () => Array.from(menu.children).filter(child =>
-                    child.classList.contains('pa-chat-menu-item') && !(child as HTMLButtonElement).disabled
-                        && !(child as HTMLElement).hidden) as HTMLButtonElement[];
-                const handleMenuKeydown = (button: HTMLButtonElement, event: Event) => {
-                    const keyboardEvent = event as KeyboardEvent;
-                    if (keyboardEvent.key === 'Escape') {
-                        keyboardEvent.preventDefault?.();
-                        closeTaskMenu(true);
-                        return;
-                    }
-                    if (keyboardEvent.key !== 'ArrowDown' && keyboardEvent.key !== 'ArrowUp'
-                        && keyboardEvent.key !== 'Home' && keyboardEvent.key !== 'End') return;
-                    keyboardEvent.preventDefault?.();
-                    const items = menuButtons();
-                    if (!items.length) return;
-                    const currentIndex = items.indexOf(button);
-                    let nextIndex = keyboardEvent.key === 'Home' ? 0
-                        : keyboardEvent.key === 'End' ? items.length - 1
-                            : currentIndex + (keyboardEvent.key === 'ArrowDown' ? 1 : -1);
-                    if (nextIndex < 0) nextIndex = items.length - 1;
-                    if (nextIndex >= items.length) nextIndex = 0;
-                    items[nextIndex].focus();
-                };
-                const handleControlKeydown = (event: Event) => {
-                    const keyboardEvent = event as KeyboardEvent;
-                    if (keyboardEvent.key !== 'Escape' || menu.hidden) return;
-                    keyboardEvent.preventDefault?.();
-                    closeTaskMenu(true);
-                };
-                control.addEventListener('keydown', handleControlKeydown);
-                const taskMenuDocument = containerEl.ownerDocument ?? getOptionalPlatformDocument();
-                const onTaskMenuOutsidePointer = (event: Event) => {
-                    if (menu.hidden || control.contains(event.target as Node)) return;
-                    closeTaskMenu();
-                };
-                for (const event of ['pointerdown', 'click']) {
-                    taskMenuDocument?.addEventListener?.(event, onTaskMenuOutsidePointer, true);
-                }
-                moreButton.onclick = () => {
-                    if (menu.hidden) {
-                        rebuildMenu();
-                        for (const item of menuButtons()) {
-                            item.addEventListener('keydown', event => handleMenuKeydown(item, event));
-                        }
-                        menu.hidden = false;
-                        updateChatMenuAvailableWidth(menu);
-                        positionMessageActionMenu(control, menu);
-                        moreButton.setAttribute('aria-expanded', 'true');
-                        autoClose.schedule();
-                        menuButtons()[0]?.focus();
-                    } else {
-                        closeTaskMenu();
-                    }
-                };
-                cleanups.push(() => {
-                    for (const event of ['pointerdown', 'click']) {
-                        taskMenuDocument?.removeEventListener?.(event, onTaskMenuOutsidePointer, true);
-                    }
-                    control.removeEventListener('keydown', handleControlKeydown);
-                    autoClose.dispose();
-                });
-                return control;
-            };
-            for (const output of canDeliverOutputs ? task.outputs : []) {
-                const outputRow = outputs.createDiv({ cls: 'pa-chat-image-task-card__output' });
-                if (output.saveState !== 'saved' || !output.assetRef) {
-                    outputRow.createDiv({ cls: 'pa-chat-image-task-card__output-state',
-                        text: t('plugin.chat.createImage.output', { number: output.providerOrdinal + 1,
-                            state: t(`plugin.chat.createImage.outputState.${output.saveState}`) }) });
-                    if (output.recoveryReason) outputRow.createDiv({ text: imageRecoveryText(output.recoveryReason) });
-                    continue;
-                }
-                const assetRef = cloneImageRef(output.assetRef);
-                const imageFrame = outputRow.createDiv({ cls: 'pa-chat-image-task-card__image-frame' });
-                const previewButton = imageFrame.createEl('button', {
-                    cls: 'message-action-button pa-chat-image-task-card__preview',
-                    attr: { type: 'button', title: t('plugin.chat.createImage.view'),
-                        'aria-label': t('plugin.chat.createImage.viewNumber', { number: output.providerOrdinal + 1 }) },
-                });
-                const preview = previewButton.createEl('img', { attr: { alt: t('plugin.chat.createImage.viewNumber',
-                    { number: output.providerOrdinal + 1 }) } });
-                preview.hidden = true;
-                if (this.host.imageAssetService) {
-                    let release: (() => void) | undefined;
-                    cleanups.push(() => { release?.(); preview.removeAttribute('src'); });
-                    void this.host.imageAssetService.resolveVariant(assetRef, 'preview').then(lease => {
-                        if (!isCurrentSession() || imageTaskCards.get(task.taskId) !== card || !preview.isConnected
-                            || !canDeliverImageTask(task)) {
-                            lease.release(); return;
-                        }
-                        const urlApi = URL;
-                        const url = urlApi.createObjectURL(lease.blob);
-                        release = () => { urlApi.revokeObjectURL(url); lease.release(); };
-                        preview.src = url;
-                        preview.hidden = false;
-                    }).catch(error => this.host.log('Could not preview generated image', error));
-                }
-                const read = async () => {
-                    if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
-                    const file = await imageGeneration.readOutput(task.taskId, output.outputId);
-                    if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
-                    return file;
-                };
-                previewButton.onclick = () => { void read().then(file => {
-                    if (isCurrentSession() && canDeliverImageTask(task)) {
-                        new GeneratedImagePreviewModal(this.app, file.bytes, file.mime).open();
-                    }
-                }).catch(error => { this.host.log('Could not open generated image', error); new Notice(t('plugin.chat.createImage.imageUnavailable')); }); };
-
-                const outputActions = outputRow.createDiv({ cls: 'pa-chat-image-task-card__output-actions' });
-                const editButton = createMessageActionButton(outputActions, {
-                    cls: 'pa-chat-image-task-card__output-action pa-chat-image-task-card__output-action--edit',
-                    icon: 'pencil',
-                    label: t('plugin.chat.createImage.editThis'),
-                });
-                editButton.onclick = () => { void imageGeneration.getVersionForOutput(task.taskId, output.outputId).then(version => {
-                    if (!version || !isCurrentSession() || !canDeliverImageTask(task)) {
-                        new Notice(t('plugin.chat.createImage.versionUnavailable')); return;
-                    }
-                    if (composerDraft.hasDraft(textArea.value) || isGenerating()) {
-                        showComposerHint(t('plugin.chat.createImage.finishDraftEdit')); return;
-                    }
-                    composerDraft.setImageIntent({ operation: 'edit', parentVersionId: version.versionId,
-                        referenceImageRefs: [cloneImageRef(version.assetRef)] });
-                    clearSelectedWritingParent();
-                    renderImageDraft(); syncComposerControls(); textArea.focus();
-                }).catch(error => { this.host.log('Could not prepare image edit', error); new Notice(t('plugin.chat.createImage.versionUnavailable')); }); };
-
-                const downloadButton = createMessageActionButton(outputActions, {
-                    cls: 'pa-chat-image-task-card__output-action pa-chat-image-task-card__output-action--download',
-                    icon: 'download',
-                    label: t('plugin.chat.createImage.download'),
-                });
-                downloadButton.onclick = () => { void read().then(file => {
-                    if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
-                    return downloadGeneratedImage(outputRow.ownerDocument, file.bytes, file.mime, file.filename);
-                }).catch(error => {
-                    if ((error as { name?: string })?.name === 'AbortError') return;
-                    this.host.log('Could not export generated image', error); new Notice(t('plugin.chat.createImage.downloadFailed'));
-                }); };
-
-                const copyButton = createMessageActionButton(outputActions, {
-                    cls: 'pa-chat-image-task-card__output-action',
-                    icon: 'copy',
-                    label: t('plugin.chat.createImage.copy'),
-                });
-                copyButton.onclick = () => { void read().then(file => {
-                    if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
-                    return copyGeneratedImage(outputRow.ownerDocument, file.bytes, file.mime, () => {
-                        if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
-                    });
-                }).then(() =>
-                    new Notice(t('plugin.chat.createImage.copied'))).catch(error => {
-                    this.host.log('Could not copy generated image', error); new Notice(t('plugin.chat.createImage.copyFailed'));
-                }); };
-                if (this.host.imageAssetService) {
-                    const images = this.host.imageAssetService;
-                    let savingToNote = false;
-                    const saveButton = createMessageActionButton(outputActions, {
-                        cls: 'pa-chat-image-task-card__output-action',
-                        icon: 'file-plus',
-                        label: t('plugin.chat.createImage.saveToNote'),
-                    });
-                    saveButton.onclick = () => {
-                        if (savingToNote || !canDeliverImageTask(task)) return;
-                        new GeneratedImageNotePickerModal(this.app, note => {
-                            if (!canDeliverImageTask(task)) return;
-                            savingToNote = true;
-                            void saveGeneratedImageToNote(this.app, images, assetRef, note,
-                                `generated_${task.taskId}_${output.providerOrdinal}`, () => {
-                                    if (!canDeliverImageTask(task)) throw new Error('image_generation:source_changed');
-                                }, task.request.attachmentPathHint).then(() => {
-                                new Notice(t('plugin.chat.createImage.savedToNote', { note: note.path }));
-                            }).catch(error => {
-                                this.host.log('Could not save generated image to note', error);
-                                new Notice(t('plugin.chat.createImage.saveToNoteFailed'));
-                            }).finally(() => { savingToNote = false; });
-                        }).open();
-                    };
-                }
-                createTaskMoreControl(outputActions);
-            }
-
-            const needsStopAction = ['prepared', 'submitting', 'running', 'saving', 'partial'].includes(task.state)
-                || (task.state === 'not_submitted' && task.recoveryReason === 'transparent_input_needs_confirmation');
-            const needsWhiteBackgroundAction = task.recoveryReason === 'transparent_input_needs_confirmation'
-                && ['prepared', 'not_submitted'].includes(task.state);
-            const needsResumeAction = ['not_submitted', 'partial', 'running', 'saving'].includes(task.state)
-                && task.recoveryReason !== 'transparent_input_needs_confirmation';
-            if (needsStopAction || needsWhiteBackgroundAction || needsResumeAction) {
-                const actions = card.createDiv({ cls: 'pa-chat-image-task-card__actions' });
-                const button = (label: string, icon: string, action: () => void) => {
-                    const result = createMessageActionButton(actions, {
-                        cls: 'pa-chat-image-task-card__action',
-                        icon,
+                    messageActions.push({
+                        id: `message-action:${icon}`,
                         label,
+                        icon,
+                        danger,
+                        // More reads the existing action's current capability when it opens.
+                        get disabled() { return source.disabled; },
+                        run: () => source.click(),
                     });
-                    result.createSpan({ text: label });
-                    result.onclick = action;
-                    return result;
                 };
-                if (needsStopAction) {
-                    button(t('plugin.chat.createImage.stop'), 'square', () => { void imageGeneration.stop(task.taskId).catch(error => {
-                    this.host.log('Could not stop image task', error); new Notice(t('plugin.chat.createImage.stopFailed'));
-                    }); });
+                const rendered = target.rendered;
+                if (rendered) {
+                    appendMessageAction(rendered.copyButton, 'copy');
+                    appendMessageAction(rendered.addMessageButton, 'file-plus');
+                    appendMessageAction(rendered.shareButton, 'share-2');
+                    appendMessageAction(rendered.writingButton, 'file-pen-line');
+                    appendMessageAction(rendered.retryMessageButton, 'rotate-cw');
+                    appendMessageAction(rendered.deleteButton, 'trash-2', true);
                 }
-                if (needsWhiteBackgroundAction) {
-                    button(t('plugin.chat.createImage.approveWhiteBackground'), 'check', () => {
-                    void imageGeneration.approveWhiteBackground(task.taskId).catch(error => {
-                        this.host.log('Could not approve white-backed image input', error);
-                        new Notice(t('plugin.chat.createImage.recoverFailed'));
-                    });
-                    });
-                }
-                if (needsResumeAction) {
-                    button(t(task.state === 'not_submitted' ? 'plugin.chat.createImage.continue' : 'plugin.chat.createImage.recover'), 'rotate-cw', () => {
-                    void imageGeneration.resume(task.taskId).catch(error => {
-                        this.host.log('Could not resume image task', error); new Notice(t('plugin.chat.createImage.recoverFailed'));
-                    });
-                    });
+                return messageActions;
+            };
+
+            let entry = imageTaskCards.get(task.taskId);
+            const props = {
+                task, actions, getMessageActions, canDeliverOutputs,
+                canSaveToNote: Boolean(this.host.imageAssetService), store: chatUiStore,
+            };
+            if (!entry) {
+                const container = this.responseDiv.createDiv({ cls: 'pa-chat-image-task-card-root' });
+                entry = { container, handle: mountImageTaskCard(container, props) };
+                imageTaskCards.set(task.taskId, entry);
+            } else {
+                entry.handle.update(props);
+            }
+            const card = entry.container;
+            card.setAttribute('data-created-at', task.createdAt);
+            card.setAttribute('data-task-id', task.taskId);
+            card.setAttribute('data-pa-reading-id', `task:${task.taskId}`);
+            let insertionPoint: Element | undefined = target.before;
+            if (insertionPoint) {
+                let previous = insertionPoint.previousElementSibling;
+                while (
+                    previous?.classList.contains('pa-chat-image-task-card-root')
+                    && ((previous.getAttribute('data-created-at') ?? '') > task.createdAt
+                        || (previous.getAttribute('data-created-at') === task.createdAt
+                            && (previous.getAttribute('data-task-id') ?? '') > task.taskId))
+                ) {
+                    insertionPoint = previous;
+                    previous = insertionPoint.previousElementSibling;
                 }
             }
-            if (!hasSavedOutputs) createTaskMoreControl(headerControls);
-            const details = card.createEl('details', { cls: 'pa-chat-image-task-card__details' });
-            details.createEl('summary', { text: t('plugin.chat.createImage.details') });
-            const detailField = (label: string, value: string) => {
-                const field = details.createDiv({ cls: 'pa-chat-image-task-card__detail-field' });
-                field.createSpan({ cls: 'pa-chat-image-task-card__detail-label', text: label });
-                field.createSpan({ cls: 'pa-chat-image-task-card__detail-value', text: value });
-            };
-            detailField(t(task.request.promptOrigin?.defaultUserPrompt
-                ? 'plugin.chat.createImage.detail.defaultOriginalRequest'
-                : 'plugin.chat.createImage.detail.originalRequest'), task.request.userPrompt);
-            if (canDeliverOutputs) detailField(t('plugin.chat.createImage.detail.submittedRequest'),
-                task.request.submittedPrompt);
-            if (task.request.promptOrigin) detailField(t('plugin.chat.createImage.detail.source'),
-                t('plugin.chat.createImage.source.detail', {
-                    kind: t(task.request.promptOrigin.kind === 'selection'
-                        ? 'plugin.chat.createImage.source.selectionKind' : 'plugin.chat.createImage.source.noteKind'),
-                    source: task.request.promptOrigin.displayName,
-                    path: task.request.promptOrigin.path,
-                }));
-            detailField(t('plugin.chat.createImage.detail.model'), task.request.model);
-            detailField(t('plugin.chat.createImage.detail.count'), String(task.request.count));
-            if (task.request.size) detailField(t('plugin.chat.createImage.detail.size'), task.request.size);
-            detailField(t('plugin.chat.createImage.detail.createdAt'), task.createdAt);
-            if (task.request.inputRefs.length) detailField(t('plugin.chat.createImage.detail.inputCount'),
-                t('plugin.chat.createImage.inputCount', { count: task.request.inputRefs.length }));
-            if (task.request.parentVersionId) detailField(t('plugin.chat.createImage.detail.parentVersion'),
-                t('plugin.chat.createImage.parentVersion', { version: task.request.parentVersionId }));
+            const currentChildren = Array.from(target.parent.children);
+            const currentNext = card.parentElement === target.parent
+                ? currentChildren[currentChildren.indexOf(card) + 1]
+                : undefined;
+            if (
+                !card.isConnected
+                || card.parentElement !== target.parent
+                || imageTaskCardTargets.get(task.taskId) !== target
+                || (insertionPoint !== undefined && currentNext !== insertionPoint)
+            ) {
+                if (insertionPoint) target.parent.insertBefore(card, insertionPoint);
+                else target.parent.appendChild(card);
+                imageTaskCardTargets.set(task.taskId, target);
+            }
+            this.readingPosition?.notifyLayout();
         };
+
         const loadImageTaskCards = async () => {
             const conversationId = imageTasksConversationId;
             if (!imageGeneration || !conversationId) return;
+            imageHistoryLoading++;
             try {
                 const tasks = await imageGeneration.list(conversationId);
                 if (!isCurrentSession() || imageTasksConversationId !== conversationId) return;
                 tasks.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
                 for (const task of tasks) renderImageTaskCard(task);
             } catch (error) { this.host.log('Could not load image tasks', error); }
+            finally { imageHistoryLoading--; this.readingPosition?.notifyLayout(); }
         };
         const scheduleCompletedHistoryImageLoad = (epoch: HistoryRenderEpoch | null) => {
             if (!epoch || epoch.pendingImageMessageIds.size > 0 || epoch.imageLoadScheduled) return;
@@ -2844,9 +2786,10 @@ export class LLMView extends ItemView {
             compactMemoryButton.setAttribute('aria-expanded', 'false');
             if (composerMenu.hidden) moreButton.setAttribute('aria-expanded', 'false');
         };
-        const renderMemoryMenu = async () => {
-            memoryMenu.empty();
+        const renderMemoryMenu = async (requestId: number) => {
             const state = getMemoryChipState(await readMemoryPlan());
+            if (!isCurrentSession() || requestId !== memoryMenuRequestId) return;
+            memoryMenu.empty();
             setMemoryChipState(state);
             createChatMenuLabel(memoryMenu, state.label, 'brain');
             if (state.actionLabel && state.actionKind) {
@@ -3192,9 +3135,8 @@ export class LLMView extends ItemView {
         };
         const stabilizeMermaidMessageLayout = (
             rendered: RenderedMessage,
-            renderToken: number,
-            renderOwner: Component,
-            { force = false }: { force?: boolean } = {},
+            isLiveBuffer: () => boolean,
+            { force = false, canDisplay }: { force?: boolean; canDisplay?: () => boolean } = {},
         ) => {
             let stopped = false;
             let observer: ResizeObserver | null = null;
@@ -3227,9 +3169,10 @@ export class LLMView extends ItemView {
                 }
             };
             const isStillCurrent = () => !stopped
-                && rendered.renderToken === renderToken
+                && isLiveBuffer()
                 && isCurrentSession()
-                && rendered.messageDiv.parentElement === this.responseDiv;
+                && rendered.messageDiv.parentElement === this.responseDiv
+                && (canDisplay?.() ?? true);
             const stabilize = () => {
                 if (!isStillCurrent()) {
                     stop();
@@ -3247,6 +3190,10 @@ export class LLMView extends ItemView {
             };
             const scheduleObservedStabilize = () => {
                 if (stopped || observerFrameId !== null) return;
+                if (canDisplay && !canDisplay()) {
+                    stop();
+                    return;
+                }
                 observerFrameId = requestPlatformAnimationFrame(() => {
                     observerFrameId = null;
                     stabilize();
@@ -3269,8 +3216,6 @@ export class LLMView extends ItemView {
                 if (settleFrameCount >= MERMAID_LAYOUT_STABILIZE_FRAME_COUNT) return;
                 settleFrameId = requestPlatformAnimationFrame(settleNextFrame);
             };
-
-            renderOwner.register(stop);
 
             if (typeof ResizeObserver !== 'undefined') {
                 observer = new ResizeObserver(entries => {
@@ -3295,6 +3240,165 @@ export class LLMView extends ItemView {
             settleFrameId = requestPlatformAnimationFrame(settleNextFrame);
             timeoutId = setPlatformTimeout(stop, MERMAID_LAYOUT_STABILIZE_TIMEOUT_MS);
             (timeoutId as unknown as { unref?: () => void }).unref?.();
+            return stop;
+        };
+        const markdownRenderTokens = new WeakMap<RenderedMessage, number>();
+        const markdownRenderCurrentness = new WeakMap<RenderedMessage, () => boolean>();
+        const ensureMarkdownUpdateNotice = (rendered: RenderedMessage, bridge: NativeMarkdownBridge): HTMLElement => {
+            if (rendered.markdownUpdateNotice?.isConnected) return rendered.markdownUpdateNotice;
+            const notice = rendered.messageDiv.createDiv({
+                cls: 'pa-chat-markdown-update',
+                attr: { role: 'status' },
+            });
+            const text = notice.createSpan({ cls: 'pa-chat-markdown-update__text' });
+            text.textContent = t('plugin.chat.markdownUpdate.available');
+            const button = notice.createEl('button', {
+                cls: 'pa-chat-markdown-update__show',
+                attr: { type: 'button' },
+            });
+            button.textContent = t('plugin.chat.markdownUpdate.showLatest');
+            button.onclick = () => bridge.showLatest();
+            rendered.messageDiv.insertBefore(notice, rendered.actionDiv);
+            rendered.markdownUpdateNotice = notice;
+            return notice;
+        };
+        const getMarkdownBridge = (rendered: RenderedMessage): NativeMarkdownBridge => {
+            if (rendered.markdownBridge && !rendered.markdownBridge.getState().disposed) return rendered.markdownBridge;
+            let stopEffects: (() => void) | undefined;
+            let resumeEffects: (() => void) | undefined;
+            let effectsPaused = false;
+            const bridge = new NativeMarkdownBridge(
+                rendered.contentDiv,
+                rendered.contentDiv.ownerDocument ?? getOptionalPlatformDocument(),
+                {
+                    createOwner: () => this.createMarkdownRenderOwner(),
+                    unloadOwner: owner => {
+                        if (!owner) return;
+                        this.markdownRenderOwners.delete(owner);
+                        owner.unload();
+                    },
+                    detachOwner: owner => {
+                        if (owner) this.markdownRenderOwners.delete(owner);
+                    },
+                    createBuffer: () => {
+                        const document = rendered.contentDiv.ownerDocument;
+                        const buffer = document ? document.win.createDiv() : createRenderBuffer();
+                        this.knownChatRenderBuffers.add(buffer);
+                        return buffer;
+                    },
+                    prepare: (input: NativeMarkdownInput, phase: NativeMarkdownRenderPhase) => {
+                        if (phase === 'error') {
+                            return { input, markdown: '', mermaidSources: [], deferred: false, attachStaging: false, phase };
+                        }
+                        const displayMarkdown = prepareChatMarkdownForDisplay(input.content);
+                        const mermaidTransform = input.deferMermaid || phase === 'fallback'
+                            ? deferMermaidFences(displayMarkdown)
+                            : { markdown: displayMarkdown, deferred: false, sources: getMermaidFenceSources(displayMarkdown) };
+                        return {
+                            input,
+                            markdown: mermaidTransform.markdown,
+                            mermaidSources: mermaidTransform.sources,
+                            deferred: mermaidTransform.deferred,
+                            attachStaging: !mermaidTransform.deferred
+                                && mermaidTransform.sources.some(source => source.trim().length > 0)
+                                && rendered.contentDiv.parentElement !== null,
+                            phase,
+                        };
+                    },
+                    render: (prepared: NativeMarkdownPrepared, buffer: HTMLElement, owner?: Component) =>
+                        owner
+                            ? renderMarkdownWithOwner(this.host, prepared.markdown, buffer, owner, prepared.input.sourcePath)
+                            : Promise.reject(new Error('Native Markdown render owner is missing')),
+                    renderError: (prepared: NativeMarkdownPrepared, buffer: HTMLElement, error: unknown) => {
+                        buffer.setText(`Could not render message: ${String(error)}`);
+                    },
+                    shouldFallback: (input: NativeMarkdownInput) =>
+                        !input.deferMermaid && containsMermaidFence(prepareChatMarkdownForDisplay(input.content)),
+                    canPublish: (input: NativeMarkdownInput) => {
+                        void input;
+                        return markdownRenderTokens.get(rendered) === rendered.renderToken
+                            && isCurrentSession()
+                            && (markdownRenderCurrentness.get(rendered) ?? (() => true))();
+                    },
+                    onPublish: (prepared: NativeMarkdownPrepared, buffer: HTMLElement, owner?: Component) => {
+                        stopEffects?.();
+                        stopEffects = undefined;
+                        resumeEffects = undefined;
+                        if (prepared.phase === 'fallback') renderMermaidSourceWarning(buffer);
+                        rendered.renderOwner = owner;
+                        rendered.renderedContent = prepared.input.content;
+                        rendered.renderedContentMode = prepared.deferred ? 'deferred-mermaid' : 'full';
+                        this.updateClickableLink(buffer);
+                        recordDebugTextCommit(rendered, buffer, prepared.input.content);
+                        const canDisplay = () => {
+                            const state = bridge.getState();
+                            return !state.held && !state.displayPaused;
+                        };
+                        const isLiveBuffer = () => isCurrentSession()
+                            && bridge.isLive(prepared.input)
+                            && rendered.renderOwner === owner
+                            && buffer.parentElement === rendered.contentDiv;
+                        if (owner && prepared.mermaidSources.length > 0
+                            && prepared.phase === 'primary' && !prepared.input.deferMermaid) {
+                            resumeEffects = () => {
+                                if (stopEffects || !canDisplay()) return;
+                                const stopLayout = prepared.input.observeMermaidLayout
+                                    || prepared.input.forceScroll || isGenerating() || isFinalizing
+                                    ? stabilizeMermaidMessageLayout(rendered, isLiveBuffer, { canDisplay })
+                                    : undefined;
+                                const stopEnhancement = scheduleMermaidEnhancement(
+                                    buffer, this.host, prepared.mermaidSources,
+                                    isLiveBuffer,
+                                    undefined,
+                                    () => {
+                                        if (canDisplay()) stabilizeChatViewport({ force: false, behavior: 'auto' });
+                                    },
+                                );
+                                stopEffects = () => { stopLayout?.(); stopEnhancement(); };
+                            };
+                            resumeEffects();
+                        }
+                        scrollToBottom({
+                            force: prepared.input.forceScroll,
+                            behavior: prepared.input.forceScroll ? 'smooth' : 'auto',
+                            onSettled: prepared.input.onScrollSettled,
+                            canScroll: canDisplay,
+                        });
+                    },
+                    onStateChange: state => {
+                        this.readingPosition?.notifyLayout();
+                        const paused = state.held || state.displayPaused || state.disposed;
+                        if (paused) {
+                            stopEffects?.();
+                            stopEffects = undefined;
+                            if (state.disposed) resumeEffects = undefined;
+                        } else if (effectsPaused) {
+                            resumeEffects?.();
+                        }
+                        effectsPaused = paused;
+                        if (state.disposed) {
+                            this.markdownBridges.delete(bridge);
+                            rendered.markdownUpdateNotice?.remove();
+                            rendered.markdownUpdateNotice = undefined;
+                            return;
+                        }
+                        const shouldShow = state.updateAvailable && state.held && !state.displayPaused;
+                        if (!shouldShow) {
+                            rendered.markdownUpdateNotice?.setAttribute('hidden', '');
+                            return;
+                        }
+                        const notice = ensureMarkdownUpdateNotice(rendered, bridge);
+                        notice.removeAttribute('hidden');
+                    },
+                },
+                LIVE_MARKDOWN_RENDER_COOLDOWN_MS,
+            );
+            rendered.markdownBridge = bridge;
+            this.markdownBridges.add(bridge);
+            if (!chatUiStore.getState().viewVisible) bridge.setDisplayPaused('view', true);
+            const disclosureParent = rendered.contentDiv.parentElement as HTMLDetailsElement | null;
+            if (disclosureParent?.open === false) bridge.setDisplayPaused('disclosure', true);
+            return bridge;
         };
         const renderMarkdownInto = (
             rendered: RenderedMessage,
@@ -3302,273 +3406,46 @@ export class LLMView extends ItemView {
             isLive: () => boolean,
             options: MarkdownRenderOptions = {},
         ): Promise<boolean> => {
-            rendered.renderToken += 1;
             rendered.copyContent = content;
             syncMessageCopyButton(rendered);
-            const renderToken = rendered.renderToken;
-            const buffer = createRenderBuffer();
-            buffer.classList.add('message-render-buffer');
-            const displayMarkdown = prepareChatMarkdownForDisplay(content);
-            const mermaidTransform = options.deferMermaid
-                ? deferMermaidFences(displayMarkdown)
-                : { markdown: displayMarkdown, deferred: false, sources: getMermaidFenceSources(displayMarkdown) };
-            const renderOwner = this.createMarkdownRenderOwner();
-            const sourcePath = rendered.sourcePath;
-            const hasMermaidSources = mermaidTransform.sources.some((source) => source.trim().length > 0);
-            const renderInAttachedBuffer = !options.deferMermaid
-                && hasMermaidSources
-                && rendered.contentDiv.parentElement !== null;
-
-            if (renderInAttachedBuffer) {
-                this.unloadMarkdownRenderOwner(rendered.renderOwner);
-                rendered.renderOwner = undefined;
-                rendered.contentDiv.empty();
-                rendered.contentDiv.appendChild(buffer);
-            }
-
-            const renderPromise = renderMarkdownWithOwner(
-                this.host,
-                mermaidTransform.markdown,
-                buffer,
-                renderOwner,
-                sourcePath,
-            );
-
-            return renderPromise
-                .then(() => {
-                    if (rendered.renderToken !== renderToken || !isLive()) {
-                        this.unloadMarkdownRenderOwner(renderOwner);
-                        removeElement(buffer);
-                        return false;
-                    }
-                    if (!renderInAttachedBuffer) {
-                        this.unloadMarkdownRenderOwner(rendered.renderOwner);
-                        rendered.contentDiv.empty();
-                        rendered.contentDiv.appendChild(buffer);
-                    } else if (buffer.parentElement !== rendered.contentDiv) {
-                        rendered.contentDiv.empty();
-                        rendered.contentDiv.appendChild(buffer);
-                    }
-                    rendered.renderOwner = renderOwner;
-                    rendered.renderedContent = content;
-                    rendered.renderedContentMode = mermaidTransform.deferred ? 'deferred-mermaid' : 'full';
-                    this.updateClickableLink(buffer);
-                    recordDebugTextCommit(rendered, buffer, content);
-                    if (!options.deferMermaid) {
-                        if (hasMermaidSources && (
-                            options.observeMermaidLayout
-                            || options.forceScroll
-                            || isGenerating()
-                            || isFinalizing
-                        )) {
-                            stabilizeMermaidMessageLayout(
-                                rendered,
-                                renderToken,
-                                renderOwner,
-                                { force: Boolean(options.forceScroll) },
-                            );
-                        }
-                        scheduleMermaidEnhancement(
-                            buffer,
-                            this.host,
-                            mermaidTransform.sources,
-                            () => rendered.renderToken === renderToken
-                                && buffer.parentElement === rendered.contentDiv,
-                            renderOwner,
-                            () => stabilizeChatViewport({
-                                force: false,
-                                behavior: 'auto',
-                            }),
-                        );
-                    }
-                    scrollToBottom({
-                        force: options.forceScroll,
-                        behavior: options.forceScroll ? 'smooth' : 'auto',
-                        onSettled: options.onScrollSettled,
-                    });
-                    return true;
-                })
-                .catch(async (error) => {
-                    this.unloadMarkdownRenderOwner(renderOwner);
-                    if (rendered.renderToken !== renderToken || !isLive()) return false;
-                    if (!options.deferMermaid && containsMermaidFence(displayMarkdown)) {
-                        removeElement(buffer);
-                        const fallbackBuffer = createRenderBuffer();
-                        fallbackBuffer.classList.add('message-render-buffer');
-                        const fallbackOwner = this.createMarkdownRenderOwner();
-                        try {
-                            const fallbackTransform = deferMermaidFences(displayMarkdown);
-                            await renderMarkdownWithOwner(
-                                this.host,
-                                fallbackTransform.markdown,
-                                fallbackBuffer,
-                                fallbackOwner,
-                                sourcePath,
-                            );
-                            if (rendered.renderToken !== renderToken || !isLive()) {
-                                this.unloadMarkdownRenderOwner(fallbackOwner);
-                                removeElement(fallbackBuffer);
-                                return false;
-                            }
-                            renderMermaidSourceWarning(fallbackBuffer);
-                            this.unloadMarkdownRenderOwner(rendered.renderOwner);
-                            rendered.contentDiv.empty();
-                            rendered.contentDiv.appendChild(fallbackBuffer);
-                            rendered.renderOwner = fallbackOwner;
-                            rendered.renderedContent = content;
-                            rendered.renderedContentMode = 'deferred-mermaid';
-                            this.updateClickableLink(fallbackBuffer);
-                            recordDebugTextCommit(rendered, fallbackBuffer, content);
-                            scrollToBottom({
-                                force: options.forceScroll,
-                                behavior: options.forceScroll ? 'smooth' : 'auto',
-                                onSettled: options.onScrollSettled,
-                            });
-                            return true;
-                        } catch (fallbackError) {
-                            this.unloadMarkdownRenderOwner(fallbackOwner);
-                            removeElement(fallbackBuffer);
-                            error = fallbackError;
-                        }
-                    }
-                    this.unloadMarkdownRenderOwner(rendered.renderOwner);
-                    buffer.setText(`Could not render message: ${String(error)}`);
-                    rendered.contentDiv.empty();
-                    rendered.contentDiv.appendChild(buffer);
-                    rendered.renderOwner = undefined;
-                    rendered.renderedContent = content;
-                    rendered.renderedContentMode = mermaidTransform.deferred ? 'deferred-mermaid' : 'full';
-                    scrollToBottom({
-                        force: options.forceScroll, behavior: 'auto', onSettled: options.onScrollSettled,
-                    });
-                    return true;
-                });
-        };
-
-        type LiveMarkdownRenderState = {
-            inFlight: boolean;
-            inFlightContent?: string;
-            inFlightPromise?: Promise<boolean>;
-            pendingContent?: string;
-            pendingForceScroll?: boolean;
-            scheduledDrainTimer?: PlatformTimeoutHandle;
-            nextRenderAfterMs?: number;
-        };
-        const liveMarkdownRenderStates = new WeakMap<RenderedMessage, LiveMarkdownRenderState>();
-        const getLiveMarkdownRenderState = (rendered: RenderedMessage): LiveMarkdownRenderState => {
-            let state = liveMarkdownRenderStates.get(rendered);
-            if (!state) {
-                state = { inFlight: false };
-                liveMarkdownRenderStates.set(rendered, state);
-            }
-            return state;
-        };
-        function clearScheduledLiveMarkdownDrain(state: LiveMarkdownRenderState) {
-            if (state.scheduledDrainTimer === undefined) return;
-            clearPlatformTimeout(state.scheduledDrainTimer);
-            state.scheduledDrainTimer = undefined;
-        }
-        function scheduleLiveMarkdownDrain(
-            rendered: RenderedMessage,
-            state: LiveMarkdownRenderState,
-            isLive: () => boolean,
-            delayMs: number,
-            options: { forceScroll?: boolean } = {},
-        ) {
-            if (state.scheduledDrainTimer !== undefined) return;
-            state.scheduledDrainTimer = setPlatformTimeout(() => {
-                state.scheduledDrainTimer = undefined;
-                runLiveMarkdownRender(rendered, state, isLive, options);
-            }, delayMs);
-            (state.scheduledDrainTimer as unknown as { unref?: () => void }).unref?.();
-        }
-        function runLiveMarkdownRender(
-            rendered: RenderedMessage,
-            state: LiveMarkdownRenderState,
-            isLive: () => boolean,
-            options: { forceScroll?: boolean } = {},
-        ) {
-            if (state.inFlight || !isLive()) return;
-            if (state.scheduledDrainTimer !== undefined) return;
-            const content = state.pendingContent;
-            if (content === undefined) return;
-            const delayMs = Math.max(0, (state.nextRenderAfterMs ?? 0) - getMonotonicTimeMs());
-            if (delayMs > 0) {
-                scheduleLiveMarkdownDrain(rendered, state, isLive, delayMs, options);
-                return;
-            }
-            state.pendingContent = undefined;
-            const forceScroll = state.pendingForceScroll || options.forceScroll;
-            state.pendingForceScroll = false;
-            state.inFlight = true;
-            state.inFlightContent = content;
-            const isCurrentLiveMarkdownRender = () => {
-                if (!isLive()) return false;
-                const pending = state.pendingContent;
-                return pending === undefined || pending.startsWith(content);
+            const bridge = getMarkdownBridge(rendered);
+            markdownRenderCurrentness.set(rendered, isLive);
+            const deferMermaid = Boolean(options.deferMermaid && containsMermaidFence(content));
+            const input: NativeMarkdownInput = {
+                content,
+                sourcePath: rendered.sourcePath,
+                mode: deferMermaid ? 'deferred-mermaid' : 'full',
+                deferMermaid,
+                coalesce: Boolean(options.deferMermaid),
+                observeMermaidLayout: options.observeMermaidLayout,
+                forceScroll: options.forceScroll,
+                onScrollSettled: options.onScrollSettled,
             };
-            const renderPromise = renderMarkdownInto(rendered, content, isCurrentLiveMarkdownRender, {
-                deferMermaid: true,
-                forceScroll,
-                onScrollSettled: () => {
-                    if (isLive() && content) {
-                        state.nextRenderAfterMs = getMonotonicTimeMs() + LIVE_MARKDOWN_RENDER_COOLDOWN_MS;
-                    }
-                },
-            });
-            state.inFlightPromise = renderPromise;
-            void renderPromise.finally(() => {
-                state.inFlight = false;
-                state.inFlightContent = undefined;
-                state.inFlightPromise = undefined;
-                // Native parsing can be fast while publishing the full DOM and
-                // the following scroll/layout frame are expensive. Leave frame
-                // time after every intermediate publication before draining more.
-                state.nextRenderAfterMs = content
-                    ? getMonotonicTimeMs() + LIVE_MARKDOWN_RENDER_COOLDOWN_MS
-                    : undefined;
-                if (!isLive()) {
-                    clearScheduledLiveMarkdownDrain(state);
-                    state.pendingContent = undefined;
-                    state.pendingForceScroll = false;
-                    return;
-                }
-                if (state.pendingContent !== undefined && state.pendingContent !== rendered.renderedContent) {
-                    scheduleLiveMarkdownDrain(rendered, state, isLive,
-                        Math.max(0, (state.nextRenderAfterMs ?? 0) - getMonotonicTimeMs()), options);
-                }
-            });
-        }
+            if (!bridge.isLive(input)) {
+                rendered.renderToken += 1;
+                markdownRenderTokens.set(rendered, rendered.renderToken);
+            }
+            return bridge.request(input);
+        };
+
         const renderLiveMarkdownInto = (
             rendered: RenderedMessage,
             content: string,
             isLive: () => boolean,
             options: { forceScroll?: boolean } = {},
         ) => {
-            rendered.copyContent = content;
-            syncMessageCopyButton(rendered);
-            const state = getLiveMarkdownRenderState(rendered);
-            state.pendingContent = content;
-            state.pendingForceScroll = Boolean(state.pendingForceScroll || options.forceScroll);
-            if (state.inFlight || state.scheduledDrainTimer !== undefined) return;
-            // Show the first text immediately. Ready chunks after it share the
-            // existing latest-content drain even when every render is fast.
-            if (!rendered.renderedContent) runLiveMarkdownRender(rendered, state, isLive, options);
-            else scheduleLiveMarkdownDrain(rendered, state, isLive,
-                Math.max(0, (state.nextRenderAfterMs ?? 0) - getMonotonicTimeMs()), options);
+            void renderMarkdownInto(rendered, content, isLive, {
+                deferMermaid: true,
+                forceScroll: options.forceScroll,
+            });
         };
         const cancelLiveMarkdownRender = (rendered?: RenderedMessage | null) => {
             if (!rendered) return;
             rendered.renderToken += 1;
-            const state = liveMarkdownRenderStates.get(rendered);
-            if (state) {
-                clearScheduledLiveMarkdownDrain(state);
-                state.pendingContent = undefined;
-                state.pendingForceScroll = false;
-                state.inFlightContent = undefined;
-                state.inFlightPromise = undefined;
-                state.inFlight = false;
-            }
+            const bridge = rendered.markdownBridge;
+            bridge?.cancel();
+            if (bridge) this.markdownBridges.delete(bridge);
+            rendered.markdownBridge = undefined;
             this.unloadMarkdownRenderOwner(rendered.renderOwner);
             rendered.renderOwner = undefined;
         };
@@ -3577,29 +3454,24 @@ export class LLMView extends ItemView {
             finalContent: string,
             isLive: () => boolean,
         ) => {
-            const state = liveMarkdownRenderStates.get(rendered);
-            if (!state) return true;
-            clearScheduledLiveMarkdownDrain(state);
-            state.pendingContent = undefined;
-            state.pendingForceScroll = false;
-            state.nextRenderAfterMs = undefined;
-            const inFlightPromise = state.inFlightPromise;
-            if (!inFlightPromise || state.inFlightContent !== finalContent) return true;
-            await inFlightPromise;
+            const bridge = rendered.markdownBridge;
+            if (!bridge) return true;
+            const deferMermaid = containsMermaidFence(finalContent);
+            const settled = await bridge.settleBeforeFinal({
+                content: finalContent,
+                sourcePath: rendered.sourcePath,
+                mode: deferMermaid ? 'deferred-mermaid' : 'full',
+                deferMermaid,
+            });
             // A cancelled live render may be discarded while recovery still
             // owns this turn. Let the finalizer render again under its own
             // currentness guard instead of treating the old result as failure.
-            return isLive();
+            return settled && isLive();
         };
         const cancelPendingLiveMarkdownRender = (rendered?: RenderedMessage) => {
-            if (!rendered) return;
-            const state = liveMarkdownRenderStates.get(rendered);
-            if (!state) return;
-            clearScheduledLiveMarkdownDrain(state);
-            state.pendingContent = undefined;
-            state.pendingForceScroll = false;
-            state.nextRenderAfterMs = undefined;
+            rendered?.markdownBridge?.cancelPending();
         };
+
 
         const ensureCompletedMessageActions = (
             rendered: RenderedMessage,
@@ -3738,6 +3610,7 @@ export class LLMView extends ItemView {
                     if (!isCurrentSession() || version.conversationId !== this.conversationPersistence.activeConversationId) return;
                     selectedWritingVersion = version;
                     selectedWritingParentExplicit = true;
+                    unresolvedWritingParentId = undefined;
                     composerDraft.setWritingIntent();
                     renderImageDraft();
                     syncComposerControls();
@@ -3849,6 +3722,7 @@ export class LLMView extends ItemView {
         };
         const mobileLongPress = Platform.isMobile
             ? registerMessageLongPress(this.responseDiv, message => mobilePressTargets.get(message)) : null;
+        if (mobileLongPress) transientMenuClosers.add(() => mobileLongPress.cancel());
         if (Platform.isMobile) {
             const doc = containerEl.ownerDocument ?? getOptionalPlatformDocument();
             const onOutsidePointer = (event: Event) => {
@@ -3924,6 +3798,8 @@ export class LLMView extends ItemView {
             } = {},
         ): RenderedMessage => {
             const messageDiv = this.responseDiv.createDiv({ cls: `llm-message pa-chat-message ${message.role}` });
+            const readingId = message.hostProvenance?.messageId ?? message.canonicalTurn?.messages
+                ?.find(candidate => candidate.role === 'assistant')?.id;
             if (options.insertBefore) this.responseDiv.insertBefore(messageDiv, options.insertBefore);
             if (options.animate) {
                 messageDiv.classList.add('llm-message-enter');
@@ -3937,6 +3813,7 @@ export class LLMView extends ItemView {
                 activeIdenticon: options.showAssistantLoader,
             });
             const contentDiv = messageDiv.createDiv({ cls: 'message-content' }) as HTMLElement;
+            if (readingId) contentDiv.setAttribute('data-pa-reading-id', `message:${readingId}`);
             if (message.role === 'user' && message.pageletAttachment) {
                 renderSavedPageletAttachment(messageDiv, message.pageletAttachment);
             }
@@ -3996,6 +3873,7 @@ export class LLMView extends ItemView {
             this.messageElementCleanups.set(messageDiv, () => {
                 previousMessageCleanup?.();
                 actionMenuAutoClose.dispose();
+                cancelLiveMarkdownRender(rendered);
             });
             const openMessageActionMenu = (focusFirst = false) => {
                 if (Platform.isMobile) {
@@ -4164,8 +4042,8 @@ export class LLMView extends ItemView {
             // facts live in their own host so a refresh never drops the
             // committed preview body.
             const previewFacts = previewPartition.createDiv({ cls: 'pa-operations-intent-card__list' });
-            let unmountActualDiff: (() => void) | undefined;
-            let unmountPreviewDiff: (() => void) | undefined;
+            let actualDiff: OperationsDiffMountHandle | undefined;
+            let previewDiff: OperationsDiffMountHandle | undefined;
             let displayedActualModel: ReturnType<OperationsReviewSession['getSnapshot']>['model'] = null;
             let displayedPreviewModel: ReturnType<OperationsReviewSession['getSnapshot']>['model'] = null;
             const actions = card.createDiv({ cls: 'pa-operations-intent-card__actions' });
@@ -4262,10 +4140,10 @@ export class LLMView extends ItemView {
                 historyMode = false;
                 details.hidden = true;
                 viewAllButton.setAttribute('aria-expanded', 'false');
-                unmountActualDiff?.();
-                unmountActualDiff = undefined;
-                unmountPreviewDiff?.();
-                unmountPreviewDiff = undefined;
+                actualDiff?.unmount();
+                actualDiff = undefined;
+                previewDiff?.unmount();
+                previewDiff = undefined;
                 displayedActualModel = null;
                 displayedPreviewModel = null;
             };
@@ -4312,11 +4190,17 @@ export class LLMView extends ItemView {
                 viewAllButton.hidden = !hasReviewableFacts
                     && !(showHistory && snapshot.historicalModel);
                 if (expanded && displayedActualModel !== model) {
-                    unmountActualDiff?.();
-                    unmountActualDiff = model
+                    const actualModel = model
                         && (model.groups.length > 0 || (model.blockers?.length ?? 0) > 0)
-                        ? mountOperationsDiff(actualChanges, { model, mode: 'request' })
-                        : undefined;
+                        ? model
+                        : null;
+                    if (actualModel) {
+                        if (actualDiff) actualDiff.update({ model: actualModel, mode: 'request' });
+                        else actualDiff = mountOperationsDiff(actualChanges, { model: actualModel, mode: 'request' });
+                    } else {
+                        actualDiff?.unmount();
+                        actualDiff = undefined;
+                    }
                     displayedActualModel = model;
                 }
                 if (expanded && displayedPreviewModel !== snapshot.model) {
@@ -4325,13 +4209,17 @@ export class LLMView extends ItemView {
                             || (snapshot.model.previewAttachments?.length ?? 0) > 0)
                         ? snapshot.model
                         : null;
-                    unmountPreviewDiff?.();
-                    unmountPreviewDiff = previewModel
-                        ? mountOperationsDiff(previewBody, {
-                            model: { ...previewModel, groups: previewModel.previewGroups ?? [] },
-                            mode: 'request',
-                        })
-                        : undefined;
+                    if (previewModel) {
+                        const mountModel = {
+                            ...previewModel,
+                            groups: previewModel.previewGroups ?? [],
+                        };
+                        if (previewDiff) previewDiff.update({ model: mountModel, mode: 'request' });
+                        else previewDiff = mountOperationsDiff(previewBody, { model: mountModel, mode: 'request' });
+                    } else {
+                        previewDiff?.unmount();
+                        previewDiff = undefined;
+                    }
                     displayedPreviewModel = snapshot.model;
                     previewHeader.hidden = !previewModel;
                 }
@@ -4405,10 +4293,10 @@ export class LLMView extends ItemView {
                 details.hidden = !expanded;
                 viewAllButton.setAttribute('aria-expanded', String(expanded));
                 if (!expanded) {
-                    unmountActualDiff?.();
-                    unmountActualDiff = undefined;
-                    unmountPreviewDiff?.();
-                    unmountPreviewDiff = undefined;
+                    actualDiff?.unmount();
+                    actualDiff = undefined;
+                    previewDiff?.unmount();
+                    previewDiff = undefined;
                     displayedActualModel = null;
                     displayedPreviewModel = null;
                 }
@@ -4436,10 +4324,10 @@ export class LLMView extends ItemView {
             cleanupCard = () => {
                 if (state.discarded) return;
                 state.discarded = true;
-                unmountActualDiff?.();
-                unmountActualDiff = undefined;
-                unmountPreviewDiff?.();
-                unmountPreviewDiff = undefined;
+                actualDiff?.unmount();
+                actualDiff = undefined;
+                previewDiff?.unmount();
+                previewDiff = undefined;
                 displayedActualModel = null;
                 displayedPreviewModel = null;
                 unsubscribe();
@@ -4482,7 +4370,6 @@ export class LLMView extends ItemView {
             }
             for (const rendered of [view?.userRendered, view?.assistantRendered]) {
                 cancelLiveMarkdownRender(rendered);
-                this.unloadMarkdownRenderOwner(rendered?.renderOwner);
                 if (rendered) {
                     const elementCleanup = this.messageElementCleanups.get(rendered.messageDiv);
                     if (elementCleanup) {
@@ -4861,6 +4748,7 @@ export class LLMView extends ItemView {
         const trackHistoryRenderPromise = (epoch: HistoryRenderEpoch, entry: HistoryTurnEntry, promise: Promise<unknown>) => {
             const tracked = promise.finally(() => {
                 if (epoch.inFlight.get(tracked) === entry) epoch.inFlight.delete(tracked);
+                this.readingPosition?.notifyLayout();
             });
             epoch.inFlight.set(tracked, entry);
         };
@@ -4903,11 +4791,13 @@ export class LLMView extends ItemView {
                         && epoch.tasks.length === 0
                         && epoch.inFlight.size === 0) {
                         removeElement(epoch.boundary);
+                        this.readingPosition?.notifyLayout();
                     }
                 });
                 return;
             }
             removeElement(epoch.boundary);
+            this.readingPosition?.notifyLayout();
         };
         const scheduleHistoryRenderEpoch = (epoch: HistoryRenderEpoch) => {
             if (epoch.frame !== null || epoch.tasks.length === 0) return;
@@ -6197,6 +6087,18 @@ export class LLMView extends ItemView {
             if (!isLiveTurn()) return;
             const canonical = turn.canonicalLifecycle;
             if (canonical.terminalStatus) return;
+            const clearRevokedResponse = () => {
+                const rendered = turn.assistantMessage;
+                if (rendered) {
+                    // Revocation removes permission to keep the old body visible,
+                    // including a body the reader previously held.
+                    cancelLiveMarkdownRender(rendered);
+                    rendered.contentDiv.empty();
+                    rendered.renderedContent = undefined;
+                    rendered.renderedContentMode = undefined;
+                }
+                setResponseContent('');
+            };
 
             if (event.type === 'agent_start') {
                 canonical.active = true;
@@ -6353,7 +6255,7 @@ export class LLMView extends ItemView {
                         addCanonicalRuntimeWarnings(turn, event.metadata.diagnostics);
                     }
                     if (canonical.warnings.some((warning) => warning.type === 'assistant_source_changed')) {
-                        setResponseContent('');
+                        clearRevokedResponse();
                     }
                     return;
                 case 'agent_end':
@@ -6364,7 +6266,7 @@ export class LLMView extends ItemView {
                     addCanonicalRuntimeWarnings(turn, event.metadata?.warnings);
                     addCanonicalRuntimeWarnings(turn, event.metadata?.diagnostics);
                     if (canonical.warnings.some((warning) => warning.type === 'assistant_source_changed')) {
-                        setResponseContent('');
+                        clearRevokedResponse();
                     }
                     turn.statusView ??= createThinkingStatusView(turn);
                     turn.statusView.summaryEl.setText(
@@ -6526,25 +6428,6 @@ export class LLMView extends ItemView {
 
             assistantRendered.memoryMetadata = turn.memoryMetadata;
             assistantRendered.canonicalTurn = canonicalTurn;
-            const liveRenderSettled = await settleLiveMarkdownRenderBeforeFinal(
-                assistantRendered,
-                visibleContent,
-                isLiveTurn,
-            );
-            if (!liveRenderSettled || !isLiveTurn()) return false;
-            cancelPendingLiveMarkdownRender(assistantRendered);
-            if (
-                visibleContent
-                && (
-                    assistantRendered.renderedContent !== visibleContent
-                    || assistantRendered.renderedContentMode !== 'full'
-                )
-            ) {
-                const rendered = await renderMarkdownInto(assistantRendered, visibleContent, isLiveTurn);
-                if (!rendered || !isLiveTurn()) return false;
-            }
-
-            if (!isLiveTurn()) return false;
 
             const pageletAttachment = !sawLegacyPartialFailure && !sourceChanged
                 && (!canonicalTurn || canonicalTurn.status === 'completed')
@@ -6601,13 +6484,19 @@ export class LLMView extends ItemView {
                     ? { runtimeWarnings: turn.canonicalLifecycle.warnings.map((warning) => ({ ...warning })) }
                     : {}),
             };
+            if (userMessage.hostProvenance?.messageId) {
+                userRendered.contentDiv.setAttribute('data-pa-reading-id', `message:${userMessage.hostProvenance.messageId}`);
+            }
+            if (assistantMessage.hostProvenance?.messageId) {
+                assistantRendered.contentDiv.setAttribute('data-pa-reading-id', `message:${assistantMessage.hostProvenance.messageId}`);
+                assistantRendered.imageResponseDetails?.setAttribute('data-pa-reading-disclosure', `message:${assistantMessage.hostProvenance.messageId}`);
+                restoreImageResponseDisclosure(assistantRendered);
+            }
             if (turn.writingRecoverySourceCurrent) writingRecoverySources.set(assistantMessage, turn.writingRecoverySourceCurrent);
             if (canonicalTurn?.status === 'needs_user') {
                 assistantMessage.agentExecution = { runId: canonicalTurn.runId, state: 'awaiting_user' };
                 assistantMessage.sourceDecision = readPendingSourceDecision(assistantMessage);
             }
-            this.chatHistory.push(userMessage, assistantMessage);
-            if (pageletAttachment) renderSavedPageletAttachment(userRendered.messageDiv, pageletAttachment);
             const executionSummary = createFinalizedSummary();
             const historyEntry: TimelineEntry = {
                 kind: 'history',
@@ -6623,12 +6512,39 @@ export class LLMView extends ItemView {
                 providerReasoningLegacyText: turn.providerReasoningBuffer,
                 executionSummary,
             };
+            let committedToHistory = false;
+            const isDurableHistoryRender = () => isCurrentSession()
+                && assistantRendered.messageDiv.parentElement === this.responseDiv
+                && (committedToHistory
+                    ? timelineEntries.includes(historyEntry)
+                        && historyViews.get(historyEntry)?.assistantRendered === assistantRendered
+                    : isLiveTurn());
+            const liveRenderSettled = await settleLiveMarkdownRenderBeforeFinal(
+                assistantRendered,
+                visibleContent,
+                isLiveTurn,
+            );
+            if (!liveRenderSettled || !isLiveTurn()) return false;
+            cancelPendingLiveMarkdownRender(assistantRendered);
+            if (visibleContent) {
+                const rendered = await renderMarkdownInto(
+                    assistantRendered,
+                    visibleContent,
+                    isDurableHistoryRender,
+                );
+                if (!rendered || !isDurableHistoryRender()) return false;
+            }
+
+            if (!isDurableHistoryRender()) return false;
+            this.chatHistory.push(userMessage, assistantMessage);
             timelineEntries.push(historyEntry);
             historyViews.set(historyEntry, {
-                userRendered: userRendered,
-                assistantRendered: turn.assistantMessage,
+                userRendered,
+                assistantRendered,
                 statusView: turn.statusView,
             });
+            committedToHistory = true;
+            if (pageletAttachment) renderSavedPageletAttachment(userRendered.messageDiv, pageletAttachment);
             if (!sawLegacyPartialFailure) this.result = sourceChanged ? '' : visibleContent;
             readConversationImageAnchor();
             let createdWritingVersion: WritingVersion | undefined;
@@ -6751,6 +6667,7 @@ export class LLMView extends ItemView {
 
         const sendPrompt = async (rawPrompt: string, retryImages?: MessageImage[], retryTurnId?: number, retryWritingParent?: WritingVersion,
             retryWritingMaterialContext?: ChatWritingMaterialContext, retryWritingIntent = false) => {
+            if (retryImages === undefined && unresolvedWritingParentId) return;
             const currentDraftBeforeCommand = composerDraft.snapshot(rawPrompt);
             if (retryImages === undefined && currentDraftBeforeCommand.ghostIntent
                 && parseGhostCommand(rawPrompt) === null) {
@@ -6912,6 +6829,8 @@ export class LLMView extends ItemView {
             emptyStateEl = null;
             sendButton.disabled = true;
             shouldAutoScroll = true;
+            recoveredReadingActive = false;
+            this.readingPosition?.cancelRestore();
             const chatStartedAt = Date.now();
             const turnId = this.startTurn();
             const turnSourcePath = this.getMarkdownRenderSourcePath();
@@ -6993,16 +6912,18 @@ export class LLMView extends ItemView {
             imageOperationByTurn.set(turn.id, imageOperationRecord);
 
             turn.userMessage = createMessageElement(
-                { role: 'user', content: prompt, images: turnImages },
-                { animate: true, forceScroll: true, isLive: isUiTurnVisible, sourcePath: turnSourcePath },
+                { role: 'user', content: prompt, images: turnImages, hostProvenance: turn.userProvenance },
+                { animate: true, skipInitialRender: true, sourcePath: turnSourcePath },
             );
+            void renderMarkdownInto(turn.userMessage, prompt, isUiTurnVisible, { forceScroll: true });
             if (sentDraft) textArea.value = '';
             renderImageDraft();
             hideComposerHint();
             setHistoryDeleteButtonsDisabled(true);
             syncComposerControls();
             turn.assistantMessage = createMessageElement(
-                { role: 'assistant', content: '' },
+                { role: 'assistant', content: '', hostProvenance: { version: 1,
+                    messageId: `${turn.userProvenance!.messageId}-assistant`, kind: 'ai_draft' } },
                 {
                     isLive: isLiveTurn,
                     animate: true,
@@ -7978,9 +7899,15 @@ export class LLMView extends ItemView {
             });
             if (!confirmed) return;
             if (!isCurrentSession()) return;
+            const epoch = ++recoveryEpoch;
+            const initialDraft = composerDraft.snapshot(textArea.value);
+            this.flushRecovery?.();
             discardPendingOperations();
-            this.clearPendingPageletHandoff();
             await this.conversationPersistence.waitForPendingWrites();
+            if (!isCurrentSession() || recoveryEpoch !== epoch || !composerDraft.isUnchanged(initialDraft)) return;
+            leaveRecoveryRoute();
+            suppressRecovery = true;
+            this.clearPendingPageletHandoff();
             this.invalidateActiveTurn();
             isStopping = false;
             isFinalizing = false;
@@ -8002,11 +7929,13 @@ export class LLMView extends ItemView {
             composerDraft.clear();
             selectedWritingVersion = undefined;
             selectedWritingParentExplicit = false;
+            unresolvedWritingParentId = undefined;
             renderImageDraft();
             this.result = '';
             hideComposerHint();
             syncComposerControls();
             renderEmptyState();
+            suppressRecovery = false;
             if (conversationIdToDelete) {
                 await this.deleteConversationWithImageDeliveryBoundary(
                     conversationIdToDelete,
@@ -8018,6 +7947,7 @@ export class LLMView extends ItemView {
             } else {
                 await this.conversationPersistence.clearActiveConversationPointer();
             }
+            if (isCurrentSession()) bindRecovery(null, true);
             new Notice(t("plugin.chat.notice.currentChatCleared"));
         };
 
@@ -8336,6 +8266,202 @@ export class LLMView extends ItemView {
         if (unsubscribeSourceScope) this.registerViewTeardown(unsubscribeSourceScope);
         syncSourceScopeControl();
 
+        let recoveryEpoch = 0;
+        let suppressRecovery = false;
+        let recoveryEditQueued = false;
+        const recoveryStatus = inputDiv.createDiv({ cls: 'pa-chat-recovery-status', attr: { role: 'status' } });
+        recoveryStatus.hidden = true;
+        const showRecoveryFailure = (error: unknown) => {
+            recoveryStatus.setText(t('plugin.chat.recovery.saveFailed'));
+            recoveryStatus.hidden = false;
+            this.host.log('Chat local recovery is unavailable', error);
+        };
+        const currentProjection = (emptyText = false) => projectComposerRecovery(
+            composerDraft.snapshot(emptyText ? '' : textArea.value),
+            selectedWritingParentExplicit ? selectedWritingVersion?.id ?? unresolvedWritingParentId : undefined,
+            !emptyText && this.pendingPageletHandoff !== null,
+        );
+        // Chat owns the model context and visible timeline. A deleted slot alone
+        // must never turn an old history into context for a new conversation.
+        const resetConversationView = () => {
+            suppressRecovery = true;
+            try {
+                discardPendingOperations();
+                this.clearPendingPageletHandoff();
+                this.invalidateActiveTurn();
+                isStopping = false;
+                isFinalizing = false;
+                this.cancelScheduledScroll();
+                cancelHistoryRendering();
+                this.chatHistory = [];
+                timelineEntries = [];
+                imageTasksConversationId = null;
+                imageOperationByTurn.clear();
+                clearImageTaskCards();
+                clearGhostCards();
+                this.conversationPersistence.resetActiveConversationState();
+                syncSourceScopeControl();
+                conversationAnchorFile = undefined;
+                this.resetRoleIdenticonSessionSeed();
+                this.unloadAllMarkdownRenderOwners();
+                this.responseDiv.empty();
+                textArea.value = '';
+                composerDraft.clear();
+                clearSelectedWritingParent();
+                renderImageDraft();
+                this.result = '';
+                hideComposerHint();
+                syncComposerControls();
+                renderEmptyState();
+            } finally { suppressRecovery = false; }
+        };
+        const bindRecovery = (conversationId: string | null, fresh = false, startupRoutePending = false) => {
+            this.localRecovery?.close();
+            const recovery = new LocalRecovery<ComposerRecoveryDraft>({
+                app: this.app,
+                route: { ...(!fresh ? this.recoveryRoute : undefined), conversationId },
+                fresh,
+                startupRoutePending,
+                decode: decodeComposerRecovery,
+                isEmpty: isEmptyComposerRecovery,
+                onFailure: showRecoveryFailure,
+                onSaved: workspaceRouteChanged => {
+                    recoveryStatus.hidden = true;
+                    if (workspaceRouteChanged) this.app.workspace.requestSaveLayout?.();
+                },
+                onDeleted: () => {
+                    recoveryEpoch++;
+                    this.readingPosition?.cancelRestore();
+                    pendingReadingDisclosures.clear();
+                    recoveredReadingActive = false;
+                    this.localRecovery = null;
+                    this.recoveryRoute = undefined;
+                    resetConversationView();
+                    bindRecovery(null, true);
+                },
+            });
+            this.localRecovery = recovery;
+            this.recoveryRoute = recovery.route;
+            this.app.workspace.requestSaveLayout?.();
+            if (fresh) recovery.initializeEmpty(projectComposerRecovery(composerDraft.snapshot('')));
+            return recovery;
+        };
+        const captureReading = (snapshot: ReadingSnapshot | null) => {
+            if (!snapshot) return;
+            const taskId = snapshot.anchorId?.startsWith('task:') ? snapshot.anchorId.slice(5) : undefined;
+            const disclosure = Array.from(this.responseDiv.querySelectorAll<HTMLElement>('[data-pa-reading-disclosure]'))
+                .find(element => element.getAttribute('data-pa-reading-disclosure') === snapshot.anchorId);
+            const disclosures = taskId && chatUiStore.getState().taskDetailsOpen[taskId]
+                ? [`task:${taskId}`]
+                : disclosure && (disclosure as HTMLDetailsElement).open ? [snapshot.anchorId!] : [];
+            this.localRecovery?.setReading({ ...snapshot,
+                ...(disclosures.length ? { disclosures } : {}) });
+        };
+        this.readingPosition = new ReadingPositionController({
+            scrollport: this.responseDiv,
+            getAnchors: () => Array.from(this.responseDiv.querySelectorAll?.<HTMLElement>('[data-pa-reading-id]') ?? [])
+                .map(element => ({ id: element.getAttribute('data-pa-reading-id')!, element })),
+            isVisible: () => chatUiStore.getState().viewVisible,
+            isReady: () => imageHistoryLoading === 0
+                && (!historyRenderEpoch || (historyRenderEpoch.tasks.length === 0 && historyRenderEpoch.inFlight.size === 0))
+                && ![...this.markdownBridges].some(bridge => {
+                    const state = bridge.getState();
+                    return state.rendering && !state.displayPaused && !state.held;
+                }),
+            onSnapshot: snapshot => { if (userScrollIntent) captureReading(snapshot); },
+            onUserIntent: () => {
+                recoveredReadingActive = false;
+                pendingReadingDisclosures.clear();
+                markUserScrollIntent();
+            },
+            restoreDisclosures: ids => {
+                pendingReadingDisclosures.clear();
+                for (const id of ids) if (id.startsWith('task:')) chatUiStore.getState().setTaskDetailsOpen(id.slice(5), true);
+                for (const id of ids) if (id.startsWith('message:')) pendingReadingDisclosures.add(id);
+                for (const target of imageTaskMessageTargets.values()) restoreImageResponseDisclosure(target.rendered);
+            },
+        });
+        const saveCurrentDraft = (consume = false) => {
+            if (suppressRecovery || composing || !isCurrentSession()) return;
+            const committedDraft = currentProjection(consume);
+            const recovery = this.localRecovery ?? bindRecovery(this.conversationPersistence.activeConversationId);
+            recovery.edit(committedDraft, consume);
+        };
+        this.flushRecovery = () => {
+            if (recoveryEditQueued && !composing && !suppressRecovery) {
+                recoveryEditQueued = false;
+                saveCurrentDraft();
+            }
+            captureReading(this.readingPosition?.capture() ?? null);
+            this.localRecovery?.flush();
+        };
+        this.registerViewTeardown(composerDraft.subscribe(change => {
+            if (suppressRecovery) return;
+            // Consume/clear is a durable empty projection even before the textarea assignment.
+            if (change === 'consume' || change === 'clear') { saveCurrentDraft(true); return; }
+            if (recoveryEditQueued) return;
+            recoveryEditQueued = true;
+            queueMicrotask(() => {
+                if (!recoveryEditQueued) return;
+                recoveryEditQueued = false;
+                saveCurrentDraft();
+            });
+        }));
+        const unsubscribeRecoveryDeletion = this.getChatHistoryManager()?.subscribeDeletedConversations?.(ids => {
+            for (const id of ids) {
+                try { deleteConversationRecovery(this.app, id); }
+                catch (error) { showRecoveryFailure(error); }
+            }
+        });
+        if (unsubscribeRecoveryDeletion) this.registerViewTeardown(unsubscribeRecoveryDeletion);
+        const leaveRecoveryRoute = () => {
+            this.flushRecovery?.();
+            recoveryEpoch++;
+            this.readingPosition?.cancelRestore();
+            pendingReadingDisclosures.clear();
+            this.localRecovery?.close();
+            this.localRecovery = null;
+            this.recoveryRoute = undefined;
+            recoveredReadingActive = false;
+        };
+        const restoreDraftAndReading = async (recovery: LocalRecovery<ComposerRecoveryDraft>) => {
+            const saved = recovery.restored();
+            if (!saved) {
+                recovery.initializeEmpty(projectComposerRecovery(composerDraft.snapshot('')));
+                return;
+            }
+            const epoch = recoveryEpoch;
+            const original = composerDraft.snapshot(textArea.value);
+            const current = () => isCurrentSession() && epoch === recoveryEpoch
+                && this.localRecovery === recovery && composerDraft.isUnchanged(original);
+            const restored = await recoverComposerReferences(saved.draft, this.host.imageAssetService,
+                current, t('plugin.chat.recovery.attachmentUnavailable'));
+            let parent: WritingVersion | undefined;
+            if (saved.draft.writingParentId) {
+                try {
+                    const candidate = await this.host.writingVersions?.get(saved.draft.writingParentId);
+                    if (candidate?.conversationId === recovery.route.conversationId) parent = candidate;
+                } catch { /* Missing parents remain a visible explicit choice, never an implicit new task. */ }
+            }
+            if (!current()) return;
+            suppressRecovery = true;
+            try {
+                composerDraft.loadRecovered(restored);
+                textArea.value = restored.text;
+                selectedWritingVersion = parent;
+                selectedWritingParentExplicit = Boolean(saved.draft.writingParentId);
+                unresolvedWritingParentId = parent ? undefined : saved.draft.writingParentId;
+                renderImageDraft();
+                renderPageletHandoff();
+                syncComposerControls();
+            } finally { suppressRecovery = false; }
+            if (saved.reading) {
+                recoveredReadingActive = true;
+                pauseAutoScroll();
+                this.readingPosition?.restore(saved.reading);
+            }
+        };
+
         const applyRestoredConversation = (
             conversation: PersistedConversation,
             turns: PersistedTurn[],
@@ -8356,6 +8482,7 @@ export class LLMView extends ItemView {
             composerDraft.clear();
             selectedWritingVersion = undefined;
             selectedWritingParentExplicit = false;
+            unresolvedWritingParentId = undefined;
             renderImageDraft();
             this.clearPendingPageletHandoff();
             this.invalidateActiveTurn();
@@ -8395,16 +8522,82 @@ export class LLMView extends ItemView {
 
         const restoreActiveConversation = async () => {
             const initialDraft = composerDraft.snapshot(textArea.value);
+            const epoch = ++recoveryEpoch;
             try {
-                const loaded = await this.conversationPersistence.loadActiveConversation();
-                if (!loaded) return;
-                if (!isCurrentSession()) return;
+                const route = this.recoveryRoute;
+                // Claim a slot before any history await. Input committed while
+                // identity is still loading must remain reachable after close.
+                let recovery = this.localRecovery ?? bindRecovery(route?.conversationId ?? null, false, !route);
+                const resolvesActiveRoute = recovery.startupRoutePending;
+                const pendingSaved = recovery.restored();
+                if (recovery.startupRoutePending) {
+                    const manager = await getReadyHistoryManager();
+                    if (!isCurrentSession() || epoch !== recoveryEpoch || this.localRecovery !== recovery
+                        || !recovery.startupRoutePending || isGenerating()) return;
+                    const conversationId = manager ? await manager.getActiveConversationId() : null;
+                    if (!isCurrentSession() || epoch !== recoveryEpoch || this.localRecovery !== recovery
+                        || !recovery.startupRoutePending || isGenerating()) return;
+                    if (pendingSaved || !composerDraft.isUnchanged(initialDraft)) {
+                        recovery.bindConversation(conversationId);
+                        this.app.workspace.requestSaveLayout?.();
+                    } else {
+                        // No user intent belongs to the provisional slot. Reuse
+                        // the selected conversation's ordinary existing slot.
+                        recovery.close();
+                        this.localRecovery = null;
+                        this.recoveryRoute = undefined;
+                        recovery = bindRecovery(conversationId);
+                    }
+                }
+                const conversationId = recovery.route.conversationId;
+                const ownsRoute = () => isCurrentSession() && epoch === recoveryEpoch
+                    && this.localRecovery === recovery && recovery.route.conversationId === conversationId;
+                const loaded = conversationId
+                    ? await this.conversationPersistence.loadConversation(conversationId) : null;
+                if (!ownsRoute()) return;
                 if (isGenerating() || this.chatHistory.length > 0 || this.pendingPageletHandoff) return;
+                if (conversationId && !loaded) {
+                    // Only ordinary startup retains the existing missing-active
+                    // cleanup; an explicit workspace route does not own that pointer.
+                    if (resolvesActiveRoute) {
+                        const manager = await getReadyHistoryManager();
+                        if (!ownsRoute()) return;
+                        const activeId = await manager?.getActiveConversationId();
+                        if (!ownsRoute()) return;
+                        if (activeId === conversationId) await manager?.setActiveConversationId(null);
+                        if (!ownsRoute()) return;
+                    }
+                    if (!ownsRoute()) return;
+                    recovery.bindConversation(null);
+                    this.app.workspace.requestSaveLayout?.();
+                }
                 if (composerDraft.hasDraft(textArea.value) || !composerDraft.isUnchanged(initialDraft)) return;
-                applyRestoredConversation(loaded.conversation, loaded.turns);
+                if (loaded) {
+                    suppressRecovery = true;
+                    try { applyRestoredConversation(loaded.conversation, loaded.turns); }
+                    finally { suppressRecovery = false; }
+                }
+                await restoreDraftAndReading(recovery);
             } catch (error) {
                 this.host.log?.("Failed to restore chat history", error);
+                showRecoveryFailure(error);
             }
+        };
+        this.restoreRecoveryRoute = async () => {
+            const requested = this.recoveryRoute;
+            leaveRecoveryRoute();
+            this.recoveryRoute = requested;
+            suppressRecovery = true;
+            try {
+                textArea.value = '';
+                composerDraft.clear();
+                this.chatHistory = [];
+                timelineEntries = [];
+                this.conversationPersistence.resetActiveConversationState();
+                clearSelectedWritingParent();
+                renderTimeline();
+            } finally { suppressRecovery = false; }
+            await restoreActiveConversation();
         };
 
         const switchActiveConversation = async (conversationId: string) => {
@@ -8412,6 +8605,11 @@ export class LLMView extends ItemView {
                 new Notice(t("plugin.chat.notice.waitForSwitch"));
                 return;
             }
+            const initialDraft = composerDraft.snapshot(textArea.value);
+            const epoch = ++recoveryEpoch;
+            this.flushRecovery?.();
+            const canSwitch = () => isCurrentSession() && epoch === recoveryEpoch
+                && composerDraft.isUnchanged(initialDraft) && !isGenerating();
             await this.conversationPersistence.waitForPendingWrites();
             const readyManager = await getReadyHistoryManager(true);
             if (!readyManager) return;
@@ -8421,18 +8619,24 @@ export class LLMView extends ItemView {
                     new Notice(t("plugin.chat.notice.conversationMissing"));
                     return;
                 }
-                if (!isCurrentSession()) return;
+                if (!canSwitch()) return;
                 if (isGenerating()) {
                     new Notice(t("plugin.chat.notice.waitForSwitch"));
                     return;
                 }
                 const committed = await this.conversationPersistence.commitActiveConversationPointer(
                     loaded.conversation.id,
-                    isCurrentSession,
+                    canSwitch,
                 );
                 if (!committed) return;
-                if (!isCurrentSession()) return;
-                applyRestoredConversation(loaded.conversation, loaded.turns);
+                if (!canSwitch()) return;
+                leaveRecoveryRoute();
+                suppressRecovery = true;
+                try {
+                    textArea.value = '';
+                    applyRestoredConversation(loaded.conversation, loaded.turns);
+                } finally { suppressRecovery = false; }
+                await restoreDraftAndReading(bindRecovery(loaded.conversation.id));
             } catch (error) {
                 this.host.log?.("Failed to switch chat conversation", error);
                 new Notice(t("plugin.chat.notice.loadConversationFailed"));
@@ -8445,34 +8649,14 @@ export class LLMView extends ItemView {
                 return;
             }
             discardPendingOperations();
+            const epoch = ++recoveryEpoch;
+            const initialDraft = composerDraft.snapshot(textArea.value);
+            this.flushRecovery?.();
             await this.conversationPersistence.waitForPendingWrites();
-            this.clearPendingPageletHandoff();
-            this.invalidateActiveTurn();
-            isStopping = false;
-            isFinalizing = false;
-            this.cancelScheduledScroll();
-            cancelHistoryRendering();
-            this.chatHistory = [];
-            timelineEntries = [];
-            imageTasksConversationId = null;
-            imageOperationByTurn.clear();
-            clearImageTaskCards();
-            clearGhostCards();
-            this.conversationPersistence.resetActiveConversationState();
-            syncSourceScopeControl();
-            conversationAnchorFile = undefined;
-            this.resetRoleIdenticonSessionSeed();
-            this.unloadAllMarkdownRenderOwners();
-            this.responseDiv.empty();
-            textArea.value = '';
-            composerDraft.clear();
-            selectedWritingVersion = undefined;
-            selectedWritingParentExplicit = false;
-            renderImageDraft();
-            this.result = '';
-            hideComposerHint();
-            syncComposerControls();
-            renderEmptyState();
+            if (!isCurrentSession() || recoveryEpoch !== epoch || !composerDraft.isUnchanged(initialDraft)) return;
+            leaveRecoveryRoute();
+            resetConversationView();
+            bindRecovery(null, true);
             await this.conversationPersistence.clearActiveConversationPointer();
             new Notice(t("plugin.chat.notice.startedNewChat"));
         };
@@ -8499,6 +8683,8 @@ export class LLMView extends ItemView {
                     hasVisibleConversation: this.chatHistory.length > 0 || timelineEntries.length > 0,
                     canCommit: canCommitHandoff,
                     commit: () => {
+                        leaveRecoveryRoute();
+                        suppressRecovery = true;
                         discardPendingOperations();
                         this.invalidateActiveTurn();
                         isStopping = false;
@@ -8523,6 +8709,9 @@ export class LLMView extends ItemView {
                         hideComposerHint();
                         syncComposerControls();
                         renderEmptyState();
+                        suppressRecovery = false;
+                        bindRecovery(null, true);
+                        saveCurrentDraft();
                         textArea.focus();
                     },
                 });
@@ -8640,7 +8829,7 @@ export class LLMView extends ItemView {
             }
             anchor.appendChild(memoryMenu);
             const requestId = ++memoryMenuRequestId;
-            void renderMemoryMenu().then(() => {
+            void renderMemoryMenu(requestId).then(() => {
                 if (!isCurrentSession() || requestId !== memoryMenuRequestId) return;
                 memoryMenu.hidden = false;
                 updateChatMenuAvailableWidth(memoryMenu);
@@ -8704,11 +8893,15 @@ export class LLMView extends ItemView {
     }
 
     async onClose() {
+        this.finishRecoverySession();
         this.viewSessionId += 1;
         this.invalidateActiveTurn();
         this.runViewTeardownCallbacks();
         this.chatService.dispose?.();
         this.cancelScheduledScroll();
+        this.viewDisplayLifecycle?.dispose();
+        this.viewDisplayLifecycle = null;
+        this.chatUiStore = null;
         this.unloadAllMarkdownRenderOwners();
         this.panelResizeObserver?.disconnect();
         this.panelResizeObserver = null;
@@ -8728,6 +8921,7 @@ export class LLMView extends ItemView {
     }
 
     private startViewSession(): number {
+        this.finishRecoverySession();
         this.runViewTeardownCallbacks();
         this.chatService.cancelPendingOperations?.();
         this.clearPendingPageletHandoff();
@@ -8739,8 +8933,22 @@ export class LLMView extends ItemView {
         return this.viewSessionId;
     }
 
+    private finishRecoverySession(): void {
+        this.flushRecovery?.();
+        this.localRecovery?.close();
+        if (this.localRecovery) this.recoveryRoute = this.localRecovery.workspaceRoute ?? undefined;
+        this.localRecovery = null;
+        this.flushRecovery = null;
+        this.restoreRecoveryRoute = null;
+        this.readingPosition?.dispose();
+        this.readingPosition = null;
+    }
+
     private clearPendingPageletHandoff(): void {
+        const hadContext = this.pendingPageletHandoff !== null;
         this.pendingPageletHandoff = null;
+        this.composerDraft?.setPageletReselectionRequired(false);
+        if (hadContext) this.composerDraft?.touchText();
         this.renderPageletHandoffForOpenView?.();
     }
 

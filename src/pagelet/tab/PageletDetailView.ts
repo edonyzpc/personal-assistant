@@ -40,6 +40,7 @@ import {
     readExactGovernedMemoryClaimIds,
 } from "../contextual-memory";
 import type { MemoryRecordActionResult } from "./sections/types";
+import { ViewDisplayLifecycle } from "../../ui/view-display-lifecycle";
 
 export const PAGELET_DETAIL_VIEW_TYPE = "pa-pagelet-detail-view";
 export const PAGELET_DETAIL_ICON = "pa-pagelet";
@@ -400,6 +401,7 @@ export interface PageletMemoryLifecycleCallbacks {
 }
 
 export class PageletDetailView extends ItemView {
+    private displayLifecycle: ViewDisplayLifecycle | null = null;
     private readonly getLocale: () => PageletLocale;
     private readonly onSaveSummaryNote?: (note: GeneratedReviewNote) => Promise<WriteResult>;
     private readonly onApplyMaintenanceProposal?: (proposal: MaintenanceProposal) => Promise<MaintenanceMoveApplyResult>;
@@ -530,14 +532,25 @@ export class PageletDetailView extends ItemView {
             onOpenSettings: this.onOpenSettings,
         });
         this.renderer.mount(this.contentEl);
+        this.renderer.setDisplayed(this.isViewDisplayed());
         this.renderer.open(this.title, this.content, this.payloadOptions);
+        this.displayLifecycle?.dispose();
+        this.displayLifecycle = new ViewDisplayLifecycle(this.contentEl,
+            this.app.workspace as unknown as ConstructorParameters<typeof ViewDisplayLifecycle>[1], {
+            onVisibilityChange: visible => this.renderer?.setDisplayed(visible && this.isViewDisplayed()),
+            onDocumentChange: () => this.renderer?.rebindDocument(),
+        });
+        this.displayLifecycle.start();
     }
 
     onResize(): void {
+        this.displayLifecycle?.refresh();
         this.renderer?.notifyDisplayed();
     }
 
     async onClose(): Promise<void> {
+        this.displayLifecycle?.dispose();
+        this.displayLifecycle = null;
         this.renderer?.destroy();
         this.renderer = null;
         this.onViewClosed?.(this);
@@ -579,6 +592,8 @@ export class PageletDetailView extends ItemView {
     }
 
     notifyDisplayed(): void {
+        this.renderer?.setDisplayed(this.isViewDisplayed());
+        this.displayLifecycle?.refresh();
         this.renderer?.notifyDisplayed();
     }
 

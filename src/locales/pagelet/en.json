@@ -1,4 +1,8 @@
 {
+    "pagelet.ui.contentUpdated": "Content updated",
+    "pagelet.ui.showLatest": "Show latest",
+    "pagelet.ui.renderFailed": "This area could not be displayed.",
+    "pagelet.ui.retry": "Retry",
     "pagelet.trigger.noActiveNote": "Open a Markdown note before running Pagelet.",
     "pagelet.trigger.emptyNote": "Pagelet needs some note text to review.",
     "pagelet.trigger.noSuggestions": "Pagelet finished, but did not find suggestions worth saving.",
