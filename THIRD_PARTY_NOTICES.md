@@ -261,6 +261,8 @@ SOFTWARE.
 | `@langchain/openai` | `1.4.4` | `MIT` | `node_modules/@langchain/openai` |
 | `@sqlite.org/sqlite-wasm` | `3.53.0-build1` | `Apache-2.0` | `node_modules/@sqlite.org/sqlite-wasm` |
 | `@standard-schema/spec` | `1.1.0` | `MIT` | `node_modules/@standard-schema/spec` |
+| `@tanstack/react-virtual` | `3.14.21` | `MIT` | `node_modules/@tanstack/react-virtual` |
+| `@tanstack/virtual-core` | `3.19.6` | `MIT` | `node_modules/@tanstack/virtual-core` |
 | `@zumer/snapdom` | `2.23.2` | `MIT` | `node_modules/@zumer/snapdom` |
 | `ansi-styles` | `5.2.0` | `MIT` | `node_modules/@langchain/core/node_modules/ansi-styles` |
 | `argparse` | `1.0.10` | `MIT` | `node_modules/argparse` |
@@ -300,6 +302,7 @@ SOFTWARE.
 | `uc.micro` | `3.0.0` | `MIT` | `node_modules/uc.micro` |
 | `uuid` | `11.1.1` | `MIT` | `node_modules/@langchain/core/node_modules/uuid` |
 | `zod` | `3.25.76` | `MIT` | `node_modules/zod` |
+| `zustand` | `5.0.15` | `MIT` | `node_modules/zustand` |
 
 If a runtime dependency lacks a lockfile license field, the release is blocked
 until the license is confirmed and this notice is updated.
@@ -644,6 +647,66 @@ Apache License
 MIT License
 
 Copyright (c) 2024 Colin McDonnell
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+~~~
+
+### @tanstack/react-virtual@3.14.21
+
+- License: `MIT`
+- Lockfile path: `node_modules/@tanstack/react-virtual`
+- Source file: `node_modules/@tanstack/react-virtual/LICENSE`
+
+~~~text
+MIT License
+
+Copyright (c) 2021-present Tanner Linsley
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+~~~
+
+### @tanstack/virtual-core@3.19.6
+
+- License: `MIT`
+- Lockfile path: `node_modules/@tanstack/virtual-core`
+- Source file: `node_modules/@tanstack/virtual-core/LICENSE`
+
+~~~text
+MIT License
+
+Copyright (c) 2021-present Tanner Linsley
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -1946,6 +2009,36 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 MIT License
 
 Copyright (c) 2025 Colin McDonnell
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+~~~
+
+### zustand@5.0.15
+
+- License: `MIT`
+- Lockfile path: `node_modules/zustand`
+- Source file: `node_modules/zustand/LICENSE`
+
+~~~text
+MIT License
+
+Copyright (c) 2019 Paul Henschel
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
