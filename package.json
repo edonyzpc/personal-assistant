@@ -73,7 +73,7 @@
     "chart.js": "^4.4.4",
     "fflate": "^0.8.3",
     "js-yaml": "3.15.2",
-    "markdown-it": "15.0.2",
+    "markdown-it": "15.0.3",
     "nanoid": "^5.1.16",
     "obsidian-callout-manager": "^1.0.2-alpha1",
     "quickjs-wasi": "3.6.2",
