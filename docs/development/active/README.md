@@ -1,13 +1,14 @@
 # Active Development Registry
 
 Document status: Current
-Updated: 2026-10-20
+Updated: 2026-10-23
 Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governance/tooling track 索引。
 
 新 track 只登记 Work item、Feature Home 与 Tracker。执行状态唯一权威是 Tracker，本索引不复制状态、目标、日期或 task 明细。
 
 | Track | Work item | Feature Home | Tracker |
 | --- | --- | --- | --- |
+| Pagelet Chat Continuation | B-187 | [Feature Home](./pagelet-chat-continuation/README.md) | [Tracker](./pagelet-chat-continuation/tracker.md) |
 | Pagelet Reading Loop | B-176 | [Feature Home](./pagelet-reading-loop/README.md) | [Tracker](./pagelet-reading-loop/tracker.md) |
 | Pagelet Autonomous Discovery | B-175 | [Feature Home](./pagelet-autonomous-discovery/README.md) | [Tracker](./pagelet-autonomous-discovery/tracker.md) |
 | Complete Note Query | B-169 | [Feature Home](./complete-note-query/README.md) | [Tracker](./complete-note-query/tracker.md) |

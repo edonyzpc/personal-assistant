@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-10-20
+Updated: 2026-10-23
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-072 | 从 Pagelet 的发现继续思考 | 来源直达和继续输入为核心，附件全文稳定可读，原页查看为次级便利 | [Decision](./decisions/dec-072-pagelet-chat-continuation.md), [Spec](./specs/pagelet-chat-continuation-product-spec.md) | 真实使用证明附件全文与原生导航不足以支持继续思考 |
 | DEC-071 | PA UI 状态与局部刷新 | 稳定组件、原生正文、交互暂停及本地恢复已交付；两项恢复策略由Owner后置 | [Decision](./decisions/dec-071-pa-ui-state-rendering.md), [Spec](./specs/pa-ui-state-rendering-product-spec.md), [Architecture](../architecture/pa-ui-state-rendering.md), [验证](../archive/2026/b181-ui-state-rendering-validation.md) | B-182/B-183恢复策略重新选择，交互暂停仍无法保护必要操作，或原生单次构建继续主导卡顿 |
 | DEC-070 | Chat 渲染复用与生命周期性能优化 | 保留原生和完整内容，减少历史重建、分批恢复与无关观察；不含表格流式增量 | [Decision](./decisions/dec-070-chat-rendering-lifecycle-performance.md), [Spec](./specs/pa-chat-rendering-performance-product-spec.md), [验证](../archive/2026/b180-chat-rendering-performance-validation.md) | 需要改变内容/媒体/权限边界，或优化后仍由单条原生构建主导卡顿 |
 | DEC-069 | Chat 表格显示兼容 | 结构识别后仅补显示副本的必要空行，保留原文、原生 renderer 与现有调度；稳定 DOM 为后续候选 | [Decision](./decisions/dec-069-chat-markdown-table-display-compatibility.md), [Spec](./specs/pa-chat-markdown-table-display-product-spec.md), [验证](../archive/2026/b179-chat-markdown-table-display-validation.md) | 新边界复现、兼容成本成为主要阶段或真实 Chat 大表格卡顿 |
