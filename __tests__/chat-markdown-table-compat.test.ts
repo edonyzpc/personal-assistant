@@ -1,4 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { execFileSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import MarkdownIt from 'markdown-it';
 import { prepareChatMarkdownForDisplay } from '../src/chat/markdown-table-compat';
 
@@ -74,6 +76,36 @@ describe('Chat Markdown table display compatibility', () => {
 
         expect(prepareChatMarkdownForDisplay(source)).toBe(expected);
     });
+
+    it('preserves a large unclosed reference title without blocking (GHSA-gfr2-rv44-r23c)', () => {
+        // Run the real entry point outside Jest so a vulnerable synchronous parser
+        // cannot hang the suite. The limit allows ample time for normal parsing.
+        const output = execFileSync(process.execPath, ['-e', String.raw`
+            const assert = require('node:assert/strict');
+            const { readFileSync } = require('node:fs');
+            const ts = require('typescript');
+            const modulePath = process.argv[1];
+            const compiled = ts.transpileModule(readFileSync(modulePath, 'utf8'), {
+                compilerOptions: {
+                    module: ts.ModuleKind.CommonJS,
+                    esModuleInterop: true,
+                },
+            }).outputText;
+            const actualModule = { exports: {} };
+            new Function('require', 'module', 'exports', compiled)(
+                require, actualModule, actualModule.exports,
+            );
+            const source = '[a]: /u "' + 'x\n'.repeat(400_000) + '|-';
+            assert.equal(actualModule.exports.prepareChatMarkdownForDisplay(source), source);
+            process.stdout.write('parsed');
+        `, resolve(__dirname, '../src/chat/markdown-table-compat.ts')], {
+            encoding: 'utf8',
+            timeout: 10_000,
+            killSignal: 'SIGKILL',
+        });
+
+        expect(output).toBe('parsed');
+    }, 15_000);
 
     it.each([
         ['already separated table', 'Text\n\n| A | B |\n| --- | --- |\n| 1 | 2 |'],

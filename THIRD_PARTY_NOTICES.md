@@ -266,7 +266,7 @@ SOFTWARE.
 | `@zumer/snapdom` | `2.23.2` | `MIT` | `node_modules/@zumer/snapdom` |
 | `ansi-styles` | `5.2.0` | `MIT` | `node_modules/@langchain/core/node_modules/ansi-styles` |
 | `argparse` | `1.0.10` | `MIT` | `node_modules/argparse` |
-| `argparse` | `3.0.2` | `PSF-2.0` | `node_modules/markdown-it/node_modules/argparse` |
+| `argparse` | `3.0.3` | `PSF-2.0` | `node_modules/markdown-it/node_modules/argparse` |
 | `base64-js` | `1.5.1` | `MIT` | `node_modules/base64-js` |
 | `camelcase` | `6.3.0` | `MIT` | `node_modules/camelcase` |
 | `chart.js` | `4.4.9` | `MIT` | `node_modules/chart.js` |
@@ -281,7 +281,7 @@ SOFTWARE.
 | `langsmith` | `0.7.1` | `MIT` | `node_modules/langsmith` |
 | `linkify-it` | `6.1.0` | `MIT` | `node_modules/linkify-it` |
 | `loose-envify` | `1.4.0` | `MIT` | `node_modules/loose-envify` |
-| `markdown-it` | `15.0.2` | `MIT` | `node_modules/markdown-it` |
+| `markdown-it` | `15.0.3` | `MIT` | `node_modules/markdown-it` |
 | `mdurl` | `2.1.0` | `MIT` | `node_modules/mdurl` |
 | `mustache` | `4.2.0` | `MIT` | `node_modules/mustache` |
 | `nanoid` | `5.1.16` | `MIT` | `node_modules/nanoid` |
@@ -805,7 +805,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ~~~
 
-### argparse@3.0.2
+### argparse@3.0.3
 
 - License: `PSF-2.0`
 - Lockfile path: `node_modules/markdown-it/node_modules/argparse`
@@ -1248,7 +1248,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ~~~
 
-### markdown-it@15.0.2
+### markdown-it@15.0.3
 
 - License: `MIT`
 - Lockfile path: `node_modules/markdown-it`

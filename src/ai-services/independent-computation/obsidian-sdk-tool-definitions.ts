@@ -129,7 +129,7 @@ export function attachObsidianSdkGuidance(capability: AgentCapability, registry:
             ...definition,
             plannerGuidance: [...definition.plannerGuidance,
                 "Bound obsidian methods return Promise<SdkResult<T>>. tools.* preserves each existing tool's own result. Parent preview forces child effects to preview.",
-                "Fixed pure libraries in this VM: markdownit (markdown-it 15.0.2), jsyaml (js-yaml 3.15.2; safeLoad/safeDump). No arbitrary import or host object access.",
+                "Fixed pure libraries in this VM: markdownit (markdown-it 15.0.3), jsyaml (js-yaml 3.15.2; safeLoad/safeDump). No arbitrary import or host object access.",
                 ...registry.listCapabilities().filter(candidate => candidate.sdkOnly && registry.canExecute(candidate.name).allowed)
                     .map(candidate => {
                         const method = candidate.toRegistryDefinition();

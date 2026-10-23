@@ -37,7 +37,7 @@ function getNamedRule(markdownIt: ReturnType<typeof MarkdownIt>, name: string): 
         .flatMap((ruler) => ruler.__rules__)
         .find((candidate) => candidate.name === name && candidate.enabled !== false);
     if (!rule || typeof rule.fn !== "function") {
-        throw new Error(`markdown-it@15.0.2 ${name} rule is unavailable.`);
+        throw new Error(`markdown-it@15.0.3 ${name} rule is unavailable.`);
     }
     return rule;
 }

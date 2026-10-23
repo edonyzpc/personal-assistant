@@ -73,7 +73,7 @@
     "chart.js": "^4.4.4",
     "fflate": "^0.8.3",
     "js-yaml": "3.15.2",
-    "markdown-it": "15.0.2",
+    "markdown-it": "15.0.3",
     "nanoid": "^5.1.16",
     "obsidian-callout-manager": "^1.0.2-alpha1",
     "quickjs-wasi": "3.6.2",
@@ -88,7 +88,7 @@
     "postcss": "^8.5.18",
     "brace-expansion@^1": "^1.1.16",
     "brace-expansion@^2": "^2.1.4",
-    "brace-expansion@^5": "^5.0.7",
+    "brace-expansion@^5": "^5.0.12",
     "js-yaml@^3": "$js-yaml",
     "@babel/core@^7": "^7.29.6"
   }
