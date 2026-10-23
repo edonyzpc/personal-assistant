@@ -41,6 +41,12 @@ import {
     type MemoryManagementEvidence,
 } from "../ai-services/memory-management-evidence";
 import { cloneThinkingExecutionSummary } from "./execution-summary";
+import {
+    cloneCanvasArtifacts,
+    parseCanvasArtifacts,
+    type CanvasArtifactRecord,
+    type CanvasArtifactUpdateBinding,
+} from "./canvas/types";
 
 const TITLE_MAX_LENGTH = 60;
 const PREVIEW_MAX_LENGTH = 200;
@@ -245,6 +251,15 @@ export class ChatHistoryManager {
             if (!lease.isCurrent()) throw new Error('Conversation changed during action state update.');
             return updated;
         } finally { lease.release(); }
+    }
+
+    /** Patches Canvas associations only on the original assistant body; missing/replaced turns are never recreated. */
+    async updateCanvasArtifacts(binding: CanvasArtifactUpdateBinding,
+        transform: (records: CanvasArtifactRecord[]) => CanvasArtifactRecord[]): Promise<CanvasArtifactRecord[] | undefined> {
+        if (!this.isAvailable()) throw new Error('Chat history is unavailable for a Canvas artifact update.');
+        // The store validates this exact message in its write transaction. A
+        // conversation-wide source lease would also reject unrelated turn updates.
+        return this.store.updateCanvasArtifacts(binding, transform);
     }
 
     /** Action ownership changes no source text; keep existing source leases valid. */
@@ -500,6 +515,9 @@ export class ChatHistoryManager {
         const assistantMessage: PersistedChatMessage = {
             role: "assistant",
             content: entry.assistant.content,
+            ...(entry.assistant.canvasArtifacts !== undefined || entry.assistant.canvasArtifactsInvalid === true
+                ? parseCanvasArtifactsField(entry.assistant)
+                : {}),
             ...(actionStateBinding ? { actionStateBinding, ...(actionStates.length ? { actionStates } : {}) } : {}),
             ...(entry.assistant.writingVersionId !== undefined ? { writingVersionId: entry.assistant.writingVersionId } : {}),
             ...(entry.assistant.writingRecovery !== undefined ? { writingRecovery: { ...entry.assistant.writingRecovery,
@@ -621,6 +639,9 @@ export class ChatHistoryManager {
         });
         const assistantMessage: ChatMessage = {
             role: "assistant",
+            ...(turn.assistant.canvasArtifacts !== undefined || turn.assistant.canvasArtifactsInvalid === true
+                ? parseCanvasArtifactsField(turn.assistant)
+                : {}),
             ...(turn.assistant.actionStates !== undefined
                 ? { actionStates: boundActionStates(turn.assistant.actionStates, turn.assistant.actionStateBinding,
                     turn.conversationId, turn.turnIndex) } : {}),
@@ -661,6 +682,7 @@ export class ChatHistoryManager {
         };
         const historyEntry: HistoryTurnEntry = {
             kind: "history",
+            turnIndex: turn.turnIndex,
             user: userMessage,
             assistant: assistantMessage,
             ...(memoryMetadata ? { memoryMetadata: cloneMemoryMetadata(memoryMetadata) } : {}),
@@ -685,6 +707,14 @@ export class ChatHistoryManager {
             return new Date().toISOString();
         }
     }
+}
+
+function parseCanvasArtifactsField(message: {
+    canvasArtifacts?: CanvasArtifactRecord[];
+    canvasArtifactsInvalid?: true;
+}): { canvasArtifacts?: CanvasArtifactRecord[]; canvasArtifactsInvalid?: true } {
+    const parsed = message.canvasArtifactsInvalid !== true && parseCanvasArtifacts(message.canvasArtifacts);
+    return parsed ? { canvasArtifacts: cloneCanvasArtifacts(parsed) } : { canvasArtifactsInvalid: true };
 }
 
 export function deriveTitle(message: string): string {

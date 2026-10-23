@@ -50,6 +50,28 @@ function makePersistence(manager: ChatHistoryManager) {
 }
 
 describe("ConversationPersistence", () => {
+    it("binds a finalized Canvas owner to the actual sparse or reserved storage index", async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => "sparse-canvas" });
+        const persistence = makePersistence(manager);
+        await manager.initialize();
+        const initial = await manager.startConversation("first");
+        await store.appendTurn({ ...turns[0], conversationId: initial.id, turnIndex: 4 });
+        const hydrated = persistence.hydrateConversation(initial, await manager.getTurns(initial.id))!;
+        expect(persistence.getPersistedTurnBinding(hydrated.timelineEntries[0])?.turnIndex).toBe(4);
+        const entry: TimelineEntry = { kind: "history", user: { role: "user", content: "new" },
+            assistant: { role: "assistant", content: "canvas" } };
+        expect(persistence.getPersistedTurnBinding(entry)).toBeNull();
+        await persistence.persistRunningTurn("new", "pending-canvas", entry.user);
+        await persistence.deletePersistedTurnForEntry(hydrated.timelineEntries[0]);
+        expect(await persistence.persistFinalizedTurn("new", entry, undefined, "pending-canvas")).toBe(true);
+        expect(persistence.getPersistedTurnBinding(entry)).toEqual({ conversationId: initial.id, turnIndex: 5 });
+        const firstView = makePersistence(manager);
+        const first: TimelineEntry = { kind: "history", user: { role: "user", content: "first" },
+            assistant: { role: "assistant", content: "canvas" } };
+        expect(await firstView.persistFinalizedTurn("first", first)).toBe(true);
+        expect(firstView.getPersistedTurnBinding(first)?.turnIndex).toBe(0);
+    });
     it.each(["failed", "cancelled"] as const)(
         "revises the running execution summary in place for a %s terminal turn",
         async state => {

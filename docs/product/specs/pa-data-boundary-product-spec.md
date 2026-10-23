@@ -1,7 +1,7 @@
 # PA Data Boundary Product Spec
 
 Document status: Current
-Updated: 2026-10-05
+Updated: 2026-10-22
 Work item: B-118
 Scope note: DEC-023/DEC-024 reconciliation is owned by B-118; DEC-027/B-125 adds one narrow local-topology exception without changing excluded content/provider/output eligibility; DEC-028's narrow Memory exception is owned by B-126; the base cross-feature contract predates stable Backlog IDs.
 Scoped decisions: [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md)、[DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)、[DEC-027](../decisions/dec-027-bounded-retrieval-recovery.md)、[DEC-028](../decisions/dec-028-silent-memory-auto-prepare.md)
@@ -105,6 +105,16 @@ DEC-027 adds one narrow local-topology exception: PPR may cross one excluded
 Markdown routing node without reading or exposing it. This exception is not an
 override, cannot authorize any provider/model input, and cannot make the bridge
 itself relevant evidence.
+
+2026-10-22 Owner approved a scoped B-184 image-display exception in
+[DEC-073](../decisions/dec-073-chat-canvas-preview-native-open.md#2026-10-22-image-display-revision):
+Canvas preview displays native-supported local images (including excluded
+folders) and remote/embedded images under Obsidian's rendering rules. This
+applies to text, image file nodes, local group backgrounds and images inside
+otherwise allowed embedded notes. Image display does not authorize Agent or
+Memory reads, image understanding, provider input or source receipts. Embedded
+note bodies and non-image files retain the shared boundary; this exception
+does not open webpage iframes or change vault save/open confinement.
 
 ### 2.3 Generated Is Not Automatically Source
 

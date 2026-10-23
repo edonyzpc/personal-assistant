@@ -41,12 +41,15 @@ import {
 } from './execution-summary';
 import { confirmChatAction, pickChatConversation } from './modals';
 import type { ChatHost } from './ChatHost';
+import { matchCanvasCodeElements, parseCanvasBlocks } from './canvas/canvas-blocks';
+import { mountCanvasPreview } from './canvas/mountCanvasPreview';
 import type { ChatHistoryManager } from './chat-history-manager';
 import type { PersistedConversation, PersistedTurn } from './chat-history-store';
 import { ConversationPersistence } from './ConversationPersistence';
 import { prepareChatMarkdownForDisplay } from './markdown-table-compat';
 import { renderMarkdownWithOwner, containsMermaidFence, deferMermaidFences, getMermaidFenceSources, scheduleMermaidEnhancement, renderMermaidSourceWarning } from './mermaid';
 import { CHAT_MENU_IDLE_CLOSE_MS, createChatMenuItem, createChatChoiceMenuItem, createChatMenuDivider, createChatMenuLabel, updateChatMenuAvailableWidth } from './menu-helpers';
+import { stableHash } from '../pa/helpers';
 import { registerMessageLongPress } from './message-long-press';
 import {
     formatAgentStatus,
@@ -3267,6 +3270,8 @@ export class LLMView extends ItemView {
             let stopEffects: (() => void) | undefined;
             let resumeEffects: (() => void) | undefined;
             let effectsPaused = false;
+            let canvasDisplayPaused = false;
+            const canvasResumeListeners = new Set<() => void>();
             const bridge = new NativeMarkdownBridge(
                 rendered.contentDiv,
                 rendered.contentDiv.ownerDocument ?? getOptionalPlatformDocument(),
@@ -3338,6 +3343,44 @@ export class LLMView extends ItemView {
                             && bridge.isLive(prepared.input)
                             && rendered.renderOwner === owner
                             && buffer.parentElement === rendered.contentDiv;
+                        if (owner && this.host.canvasResources && this.host.canvasArtifacts
+                            && prepared.phase !== 'error') {
+                            const canvasBlocks = parseCanvasBlocks(prepared.input.content, prepared.markdown);
+                            const mounts: Array<() => void> = [];
+                            for (const match of matchCanvasCodeElements(buffer, canvasBlocks)) {
+                                const previewProps = () => ({
+                                    app: this.app,
+                                    locale: getPluginUiLanguage(),
+                                    block: match.block,
+                                    capturedSourcePath: prepared.input.sourcePath,
+                                    conversationId: rendered.canvasContext?.conversationId ?? null,
+                                    turnIndex: rendered.canvasContext?.turnIndex ?? -1,
+                                    messageId: rendered.canvasContext?.messageId,
+                                    userMessageSourceHash: rendered.canvasContext?.userMessageSourceHash,
+                                    messageContent: prepared.input.content,
+                                    records: rendered.canvasContext?.records,
+                                    recordsInvalid: rendered.canvasContext?.recordsInvalid,
+                                    resourcePort: this.host.canvasResources,
+                                    artifactService: this.host.canvasArtifacts,
+                                    isCurrent: () => isLiveBuffer() && (rendered.canvasContext?.isCurrent() ?? true),
+                                    isVisible: () => !bridge.getState().displayPaused,
+                                    onDisplayResume: (listener: () => void) => {
+                                        canvasResumeListeners.add(listener);
+                                        return () => { canvasResumeListeners.delete(listener); };
+                                    },
+                                    onSettingsChanged: (listener: () => void | Promise<void>) => this.host.onSettingsChanged(listener),
+                                });
+                                const mount = mountCanvasPreview(match.pre, owner, previewProps());
+                                if (mount) mounts.push(() => mount.update(previewProps()));
+                            }
+                            const refresh = () => {
+                                if (isLiveBuffer()) for (const update of mounts) update();
+                            };
+                            rendered.refreshCanvasBindings = refresh;
+                            owner.register(() => {
+                                if (rendered.refreshCanvasBindings === refresh) rendered.refreshCanvasBindings = undefined;
+                            });
+                        }
                         if (owner && prepared.mermaidSources.length > 0
                             && prepared.phase === 'primary' && !prepared.input.deferMermaid) {
                             resumeEffects = () => {
@@ -3366,6 +3409,11 @@ export class LLMView extends ItemView {
                         });
                     },
                     onStateChange: state => {
+                        if (canvasDisplayPaused && !state.displayPaused && !state.disposed) {
+                            for (const listener of canvasResumeListeners) listener();
+                        }
+                        canvasDisplayPaused = state.displayPaused;
+                        if (state.disposed) canvasResumeListeners.clear();
                         this.readingPosition?.notifyLayout();
                         const paused = state.held || state.displayPaused || state.disposed;
                         if (paused) {
@@ -3794,6 +3842,7 @@ export class LLMView extends ItemView {
                 showAssistantLoader?: boolean;
                 skipInitialRender?: boolean;
                 sourcePath?: string;
+                canvasContext?: RenderedMessage['canvasContext'];
                 insertBefore?: HTMLElement;
             } = {},
         ): RenderedMessage => {
@@ -3859,6 +3908,7 @@ export class LLMView extends ItemView {
                 renderToken: 0,
                 copyContent: message.content,
                 sourcePath,
+                ...(options.canvasContext ? { canvasContext: options.canvasContext } : {}),
                 memoryMetadata: options.memoryMetadata ?? message.memoryMetadata,
                 canonicalTurn: message.canonicalTurn,
             };
@@ -4633,6 +4683,9 @@ export class LLMView extends ItemView {
                         );
                     }
                     if (historyPart === 'metadata') return;
+                    const canvasHistoryCurrent = () => isCurrentSession()
+                        && timelineEntries.includes(entry)
+                        && (historyOptions.isLive?.() ?? true);
                     const assistantRendered = createMessageElement(entry.assistant, {
                         forceScroll: historyOptions.sourcePath === undefined && forceScroll,
                         onDelete: () => deleteHistoryPairForMessages(entry.user, entry.assistant),
@@ -4651,6 +4704,19 @@ export class LLMView extends ItemView {
                         memoryMetadata: metadata,
                         skipInitialRender: historyOptions.sourcePath !== undefined,
                         sourcePath: historyOptions.sourcePath,
+                        canvasContext: entry.turnIndex !== undefined
+                            ? {
+                                conversationId: this.conversationPersistence.activeConversationId,
+                                turnIndex: entry.turnIndex,
+                                ...(entry.assistant.hostProvenance?.messageId
+                                    ? { messageId: entry.assistant.hostProvenance.messageId }
+                                    : {}),
+                                userMessageSourceHash: stableHash(entry.user.content),
+                                records: entry.assistant.canvasArtifacts,
+                                recordsInvalid: entry.assistant.canvasArtifactsInvalid,
+                                isCurrent: canvasHistoryCurrent,
+                            }
+                            : undefined,
                         insertBefore: historyOptions.insertBefore,
                     });
                     historyView.assistantRendered = assistantRendered;
@@ -6519,6 +6585,14 @@ export class LLMView extends ItemView {
                     ? timelineEntries.includes(historyEntry)
                         && historyViews.get(historyEntry)?.assistantRendered === assistantRendered
                     : isLiveTurn());
+            assistantRendered.canvasContext = {
+                conversationId: null,
+                turnIndex: -1,
+                messageId: assistantMessage.hostProvenance?.messageId,
+                userMessageSourceHash: stableHash(userMessage.content),
+                isCurrent: isDurableHistoryRender,
+            };
+            assistantRendered.refreshCanvasBindings?.();
             const liveRenderSettled = await settleLiveMarkdownRenderBeforeFinal(
                 assistantRendered,
                 visibleContent,
@@ -6583,6 +6657,14 @@ export class LLMView extends ItemView {
                 } : undefined,
                 turn.userProvenance?.messageId,
             );
+            if (persisted && isDurableHistoryRender()) {
+                const binding = this.conversationPersistence.getPersistedTurnBinding(historyEntry);
+                if (binding) {
+                    historyEntry.turnIndex = binding.turnIndex;
+                    assistantRendered.canvasContext = { ...assistantRendered.canvasContext!, ...binding };
+                    assistantRendered.refreshCanvasBindings?.();
+                }
+            }
             if (createdWritingVersion && isCurrentSession()) {
                 selectedWritingVersion = createdWritingVersion;
                 selectedWritingParentExplicit = false;

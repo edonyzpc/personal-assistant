@@ -59,6 +59,7 @@ jest.mock('obsidian', () => {
     class MockPlugin {
         app: unknown;
         manifest: unknown;
+        registerEvent(_event: unknown) {}
         constructor(app: unknown, manifest: unknown) {
             this.app = app;
             this.manifest = manifest;
@@ -852,7 +853,7 @@ describe('Plugin source and vault-event shell integration', () => {
         expect(plugin.registerEvent).toHaveBeenCalledTimes(8);
         expect(metadataHandlers.has('resolved')).toBe(true);
         expect(metadataHandlers.has('changed')).toBe(true);
-        expect([...vaultHandlers.keys()]).toEqual(['create', 'modify', 'rename', 'delete']);
+        expect(new Set(vaultHandlers.keys())).toEqual(new Set(['create', 'modify', 'rename', 'delete']));
         expect([...workspaceHandlers.keys()]).toEqual(['active-leaf-change', 'file-open']);
 
         const beforeEpoch = (internals.getMemoryGraphTopologyEpoch as (consumer: 'chat') => string)

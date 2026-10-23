@@ -9,6 +9,7 @@ import type { WritingVersion } from './writing-types';
 import type { GenerationInputSnapshot } from '../ai-services/generation-input-snapshot';
 import type { ThinkingDebugNodeRef, ThinkingExecutionSummary } from './execution-summary';
 import type { NativeMarkdownBridge } from '../ui/native-markdown-bridge';
+import type { CanvasArtifactRecord } from './canvas/types';
 
 export interface ThinkingStatusView {
     messageDiv: HTMLDivElement;
@@ -88,6 +89,16 @@ export type RenderedMessage = {
     renderedContentMode?: 'full' | 'deferred-mermaid';
     memoryMetadata?: ChatTurnMemoryMetadata;
     canonicalTurn?: PaAgentPersistedTurn;
+    refreshCanvasBindings?: () => void;
+    canvasContext?: {
+        conversationId: string | null;
+        turnIndex: number;
+        messageId?: string;
+        userMessageSourceHash?: string;
+        records?: CanvasArtifactRecord[];
+        recordsInvalid?: boolean;
+        isCurrent(): boolean;
+    };
 };
 
 export type RuntimeWarningViewItem = ChatRuntimeWarning;
@@ -149,6 +160,8 @@ export type UiTurn = {
 
 export type HistoryTurnEntry = {
     kind: 'history';
+    /** Storage identity; absent only for an unpersisted live turn. */
+    turnIndex?: number;
     user: ChatMessage;
     assistant: ChatMessage;
     memoryMetadata?: ChatTurnMemoryMetadata;

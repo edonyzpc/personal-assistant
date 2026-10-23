@@ -8,6 +8,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-073 | Chat Canvas 生成时预览与原生打开 | Accepted | 可修改默认路径后显式保存；Chat 保留原始 JSON，打开文件最新内容及完整原生交互 | [Record](./dec-073-chat-canvas-preview-native-open.md) |
 | DEC-072 | 从 Pagelet 的发现继续思考 | Accepted | 来源直达、内容线索与继续输入优先；原页查看为辅助，不扩展历史和恢复 | [Record](./dec-072-pagelet-chat-continuation.md) |
 | DEC-071 | PA UI 状态、局部刷新与宿主生命周期 | Accepted | 共享组件、交互优先及本地恢复；两项恢复策略和物理设备证据明确后置 | [Record](./dec-071-pa-ui-state-rendering.md) |
 | DEC-070 | Chat 渲染复用与生命周期性能优化 | Accepted | 未变历史整轮复用、分批显示、局部观察与稳定处理；保留原生能力及既有领域语义 | [Record](./dec-070-chat-rendering-lifecycle-performance.md) |

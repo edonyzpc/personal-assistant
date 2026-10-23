@@ -24,6 +24,8 @@ import type { PrepareFeaturedImagePromptInput,
 import type { OperationsReviewSession } from '../ai-services/operations/operations-review-session';
 import type { DebugContent, DebugTracePage, DebugTraceQuery } from '../agent-debug/types';
 import type { AgentDebugRouteTarget } from '../agent-debug/view';
+import type { CanvasArtifactService } from './canvas/canvas-artifact-service';
+import type { CanvasPreviewResourcePort } from './canvas/canvas-resource-port';
 
 export type AISetupFailureCode =
     | "invalid_configuration"
@@ -89,6 +91,8 @@ export interface ChatHost {
     /** Host compatibility candidate; set only for the validated native rollout. */
     readonly writingOutputProtocol?: 'native';
     readonly writingSave?: WritingSaveAction;
+    readonly canvasResources?: CanvasPreviewResourcePort;
+    readonly canvasArtifacts?: CanvasArtifactService;
     rememberWritingStyle?(versionId: string, scene: WritingScene): Promise<void>;
     readWritingStyleReferences?(revisionIds: readonly string[], signal?: AbortSignal): Promise<WritingStyleReference[]>;
     prepareWritingRecoverySources?(recovery: ChatWritingRecovery, images: readonly MessageImage[],

@@ -19,6 +19,8 @@ import {
 import type { HistoryTurnEntry } from "../src/chat/types";
 import { createContextPagerStateFromChatContextUsed } from "../src/pa/context-pager";
 import { readChatHistoryTurnMetadata } from "../src/ai-services/pa-agent-history";
+import { stableHash } from '../src/pa/helpers';
+import type { CanvasArtifactRecord } from '../src/chat/canvas/types';
 
 function makeManager(options: {
     now?: () => Date;
@@ -775,6 +777,94 @@ describe("ChatHistoryManager", () => {
         expect(hydrated.assistantMessage.hostProvenance?.kind).toBe("ai_draft");
         hydrated.userMessage.images![0].ref.assetId = "also-changed";
         expect(serialized.user.images![0].ref.assetId).toBe("asset-1");
+    });
+
+    it('round-trips Canvas associations without aliasing and keeps an unconfirmed envelope explicit', () => {
+        const { manager } = makeManager();
+        const artifact: CanvasArtifactRecord = { version: 1, id: 'canvas-1',
+            block: { language: 'canvas', startLine: 0, occurrence: 0, sourceHash: stableHash('{"nodes":[]}') } };
+        const entry = makeHistoryEntry();
+        entry.assistant.canvasArtifacts = [artifact];
+        const serialized = manager.serializeTurn(entry, 'conversation', 0);
+        artifact.id = 'mutated';
+        const hydrated = manager.deserializeTurn(serialized);
+        expect(hydrated.assistantMessage.canvasArtifacts?.[0]).toMatchObject({ id: 'canvas-1', block: artifact.block });
+        expect(hydrated.assistantMessage.canvasArtifacts?.[0].save).toBeUndefined();
+        hydrated.assistantMessage.canvasArtifacts![0].block.startLine = 10;
+        expect(serialized.assistant.canvasArtifacts?.[0].block.startLine).toBe(0);
+        expect(hydrated.assistantMessage.content).toBe(entry.assistant.content);
+        const unconfirmed = { ...serialized, assistant: { ...serialized.assistant, canvasArtifactsInvalid: true as const } };
+        const restored = manager.deserializeTurn(unconfirmed).historyEntry;
+        expect(restored.assistant.canvasArtifactsInvalid).toBe(true);
+        expect(restored.assistant.canvasArtifacts).toBeUndefined();
+        expect(manager.serializeTurn(restored, 'conversation', 0).assistant).toMatchObject({
+            content: entry.assistant.content, canvasArtifactsInvalid: true,
+        });
+    });
+
+    it('commits a Canvas saved association while another turn updates the same conversation', async () => {
+        const { manager, store } = makeManager();
+        await manager.initialize();
+        const sourceHash = stableHash('{"nodes":[]}');
+        const pending: CanvasArtifactRecord = { version: 1, id: 'canvas-1',
+            block: { language: 'canvas', startLine: 0, occurrence: 0, sourceHash },
+            save: { operationId: 'save-1', phase: 'pending', path: 'Graph.canvas', sourceHash } };
+        const saved: CanvasArtifactRecord = { ...pending, save: { ...pending.save!, phase: 'saved' } };
+        const entry = makeHistoryEntry();
+        entry.assistant.hostProvenance = { version: 1, messageId: 'canvas-assistant', kind: 'ai_draft' };
+        entry.assistant.canvasArtifacts = [pending];
+        const conversation = await manager.startConversation(entry.user.content);
+        await manager.recordTurn({ conversationId: conversation.id, turnIndex: 0, entry,
+            userPrompt: entry.user.content, conversation });
+        const originalUpdate = store.updateCanvasArtifacts.bind(store);
+        let release!: () => void;
+        let reached!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const boundary = new Promise<void>(resolve => { reached = resolve; });
+        store.updateCanvasArtifacts = async (...args) => { reached(); await gate; return originalUpdate(...args); };
+        try {
+            const update = manager.updateCanvasArtifacts({ conversationId: conversation.id, turnIndex: 0,
+                assistantMessageId: 'canvas-assistant', messageSourceHash: stableHash(entry.assistant.content),
+                userMessageSourceHash: stableHash(entry.user.content) }, () => [saved]);
+            const result = expect(update).resolves.toEqual([saved]);
+            await boundary;
+            const nextEntry = makeHistoryEntry({ user: { role: 'user', content: 'Next request' },
+                assistant: { role: 'assistant', content: 'Next answer' } });
+            await manager.recordTurn({ conversationId: conversation.id, turnIndex: 1, entry: nextEntry,
+                userPrompt: nextEntry.user.content, conversation });
+            release();
+            await result;
+            const restored = await manager.getTurns(conversation.id);
+            expect(restored[0].assistant).toMatchObject({ content: entry.assistant.content, canvasArtifacts: [saved] });
+            expect(restored[1].assistant.content).toBe(nextEntry.assistant.content);
+        } finally { release(); await store.dispose(); }
+    });
+
+    it('does not apply a delayed Canvas update after its original conversation is deleted', async () => {
+        const { manager, store } = makeManager();
+        await manager.initialize();
+        const entry = makeHistoryEntry();
+        const conversation = await manager.startConversation(entry.user.content);
+        await manager.recordTurn({ conversationId: conversation.id, turnIndex: 0, entry,
+            userPrompt: entry.user.content, conversation });
+        const originalUpdate = store.updateCanvasArtifacts.bind(store);
+        let release!: () => void;
+        let reached!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const boundary = new Promise<void>(resolve => { reached = resolve; });
+        store.updateCanvasArtifacts = async (...args) => { reached(); await gate; return originalUpdate(...args); };
+        const transform = jest.fn(() => [] as CanvasArtifactRecord[]);
+        try {
+            const update = manager.updateCanvasArtifacts({ conversationId: conversation.id, turnIndex: 0,
+                messageSourceHash: stableHash(entry.assistant.content), userMessageSourceHash: stableHash(entry.user.content) }, transform);
+            await boundary;
+            await manager.deleteConversation(conversation.id);
+            release();
+            await expect(update).resolves.toBeUndefined();
+            expect(transform).not.toHaveBeenCalled();
+            expect(await store.getTurns(conversation.id)).toEqual([]);
+            expect(await store.getConversation(conversation.id)).toBeNull();
+        } finally { release(); await store.dispose(); }
     });
 
     it("gracefully marks itself unavailable if store.initialize throws", async () => {

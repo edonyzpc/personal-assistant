@@ -84,6 +84,13 @@ export class ConversationPersistence {
         return this.activeId;
     }
 
+    /** A turn's storage index is sparse; visible history position is not its identity. */
+    getPersistedTurnBinding(entry: TimelineEntry): { conversationId: string; turnIndex: number } | null {
+        const turnIndex = this.persistedTurnIndexByEntry.get(entry);
+        return this.activeId && turnIndex !== undefined
+            ? { conversationId: this.activeId, turnIndex } : null;
+    }
+
     get currentSourceSelection(): Pick<ConversationSourceSelection, 'scope' | 'basis'> {
         return { scope: this.sourceSelection.scope, basis: this.sourceSelection.basis };
     }
@@ -634,6 +641,7 @@ export class ConversationPersistence {
             chatHistory.push(rehydrated.userMessage, rehydrated.assistantMessage);
             timelineEntries.push(rehydrated.historyEntry);
             persistedTurnIndexByEntry.set(rehydrated.historyEntry, turn.turnIndex);
+            if (rehydrated.historyEntry.kind === 'history') rehydrated.historyEntry.turnIndex = turn.turnIndex;
             if (turn.turnIndex > maxTurnIndex) maxTurnIndex = turn.turnIndex;
         }
 

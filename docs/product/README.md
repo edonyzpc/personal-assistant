@@ -13,6 +13,7 @@
 
 ## Capture、Recall 与 Context
 
+- [Chat Canvas 预览与原生打开](./specs/pa-chat-canvas-preview-product-spec.md) — B-184：生成时 JSON 快照、可修改保存路径与原生 Canvas 文件/tab 复用；[当前架构](../architecture/chat-canvas-preview.md)。
 - [PA UI 状态与局部刷新](./specs/pa-ui-state-rendering-product-spec.md) — B-181：交互连续性、设备本地恢复和共享双端组件；[实现契约](../architecture/pa-ui-state-rendering.md)、[最终验证与后置边界](../archive/2026/b181-ui-state-rendering-validation.md)。
 
 - [Chat 渲染性能](./specs/pa-chat-rendering-performance-product-spec.md) — B-180：历史整轮视图复用、分批恢复、状态栏与 Mermaid 生命周期；[验证与性能边界](../archive/2026/b180-chat-rendering-performance-validation.md)。

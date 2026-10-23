@@ -27,6 +27,7 @@ import {
     parseMemoryManagementEvidence,
 } from "../ai-services/memory-management-evidence";
 import { hasForbiddenPersistedTextFields, validateSourceRefPathShape, type PersistedSourceRef } from '../pa/contracts/source-ref';
+import { stableHash } from '../pa/helpers';
 import { cloneImageAsset, cloneImageRef, cloneImageVariant, cloneMessageImages, imageTurnOwnerId, validateImagePath,
     type ImageAsset, type ImageAssetOwner, type ImageRef, type ImageVariantRecord,
     type MessageImage } from "./image-types";
@@ -40,6 +41,12 @@ import type {
     ChatMessage,
 } from "../ai-services/chat-types";
 import { cloneThinkingExecutionSummary, type ThinkingDebugNodeRef, type ThinkingExecutionSummary } from "./execution-summary";
+import {
+    cloneCanvasArtifacts,
+    parseCanvasArtifacts,
+    type CanvasArtifactRecord,
+    type CanvasArtifactUpdateBinding,
+} from "./canvas/types";
 
 export const CHAT_HISTORY_SCHEMA_VERSION = 2;
 export const CHAT_HISTORY_IDB_VERSION = 4;
@@ -91,6 +98,8 @@ export interface PersistedChatMessage {
     actionStateBinding?: PaAgentActionStateBinding;
     role: "user" | "assistant";
     content: string;
+    canvasArtifacts?: CanvasArtifactRecord[];
+    canvasArtifactsInvalid?: true;
     shareCardEligible?: boolean;
     sourceRecords?: SourceRecord[];
     runtimeWarnings?: ChatRuntimeWarning[];
@@ -142,6 +151,9 @@ export interface ChatHistoryStore {
     /** Patches an existing turn atomically; does not create a conversation, turn, or action. */
     updateActionStates(binding: PaAgentActionStateBinding,
         transform: (states: PaAgentActionState[]) => PaAgentActionState[], pendingRunId?: string): Promise<PaAgentActionState[] | undefined>;
+    /** Patches only Canvas associations on the same original assistant message. */
+    updateCanvasArtifacts(binding: CanvasArtifactUpdateBinding,
+        transform: (records: CanvasArtifactRecord[]) => CanvasArtifactRecord[]): Promise<CanvasArtifactRecord[] | undefined>;
     appendTurn(turn: PersistedTurn): Promise<void>;
     appendTurnAndUpdateConversation(
         turn: PersistedTurn,
@@ -397,9 +409,23 @@ export class MemoryChatHistoryStore extends ChatDebugDeletionNotifications imple
         return cloneActionStates(states);
     }
 
+    async updateCanvasArtifacts(binding: CanvasArtifactUpdateBinding,
+        transform: (records: CanvasArtifactRecord[]) => CanvasArtifactRecord[]): Promise<CanvasArtifactRecord[] | undefined> {
+        const key = buildTurnRecordKey(binding.conversationId, binding.turnIndex);
+        const turn = this.turns.get(key);
+        if (!turn || !sameCanvasArtifactMessage(turn, binding)) return undefined;
+        const current = confirmedCanvasArtifacts(turn.assistant);
+        const records = cloneCanvasArtifacts(transform(cloneCanvasArtifacts(current)));
+        const assistant = { ...turn.assistant };
+        delete assistant.canvasArtifactsInvalid;
+        this.turns.set(key, { ...turn, assistant: { ...assistant, canvasArtifacts: records } });
+        return cloneCanvasArtifacts(records);
+    }
+
     private commitTurn(turn: PersistedTurn): void {
         const copy = cloneTurn(turn);
         preserveLatestActionStates(copy, this.turns.get(buildTurnRecordKey(turn.conversationId, turn.turnIndex)));
+        preserveLatestCanvasArtifacts(copy, this.turns.get(buildTurnRecordKey(turn.conversationId, turn.turnIndex)));
         assertTurnWritingVersions(copy, (id) => this.writingVersions.get(id));
         const assets = applyTurnAssetOwners([...this.assets.values()], copy);
         for (const asset of assets) this.assets.set(asset.id, asset);
@@ -814,6 +840,25 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
             store.put({ key, turn: { ...record.turn, assistant: { ...record.turn.assistant,
                 actionStateBinding: { ...binding }, actionStates: states } } } satisfies TurnRecord);
             result = cloneActionStates(states);
+        });
+        return result;
+    }
+
+    async updateCanvasArtifacts(binding: CanvasArtifactUpdateBinding,
+        transform: (records: CanvasArtifactRecord[]) => CanvasArtifactRecord[]): Promise<CanvasArtifactRecord[] | undefined> {
+        let result: CanvasArtifactRecord[] | undefined;
+        await this.writeTransaction([TURNS_STORE], async transaction => {
+            const store = transaction.objectStore(TURNS_STORE);
+            const key = buildTurnRecordKey(binding.conversationId, binding.turnIndex);
+            const record = await requestToPromise<TurnRecord | undefined>(store.get(key));
+            if (!record || !sameCanvasArtifactMessage(record.turn, binding)) return;
+            const current = confirmedCanvasArtifacts(record.turn.assistant);
+            const records = cloneCanvasArtifacts(transform(cloneCanvasArtifacts(current)));
+            const assistant = { ...record.turn.assistant };
+            delete assistant.canvasArtifactsInvalid;
+            store.put({ key, turn: { ...record.turn,
+                assistant: { ...assistant, canvasArtifacts: records } } } satisfies TurnRecord);
+            result = cloneCanvasArtifacts(records);
         });
         return result;
     }
@@ -1286,6 +1331,7 @@ export class IndexedDbChatHistoryStore extends ChatDebugDeletionNotifications im
         const turnStore = transaction.objectStore(TURNS_STORE);
         const prior = await requestToPromise<TurnRecord | undefined>(turnStore.get(buildTurnRecordKey(turn.conversationId, turn.turnIndex)));
         preserveLatestActionStates(turn, prior?.turn);
+        preserveLatestCanvasArtifacts(turn, prior?.turn);
         const versions = new Map<string, WritingVersion>();
         for (const message of [turn.user, turn.assistant]) for (const id of [message.writingVersionId,
             message.writingRecovery?.parentVersionId, message.writingAction?.parentVersionId]) if (id) {
@@ -1363,6 +1409,10 @@ export class UnavailableChatHistoryStore implements ChatHistoryStore {
     async updateActionStates(_binding: PaAgentActionStateBinding,
         _transform: (states: PaAgentActionState[]) => PaAgentActionState[]): Promise<PaAgentActionState[] | undefined> {
         return undefined;
+    }
+    async updateCanvasArtifacts(_binding: CanvasArtifactUpdateBinding,
+        _transform: (records: CanvasArtifactRecord[]) => CanvasArtifactRecord[]): Promise<CanvasArtifactRecord[] | undefined> {
+        throw this.error;
     }
     private readonly error = new Error(
         "Chat history is unavailable because local app storage is not available.",
@@ -1748,6 +1798,43 @@ function preserveLatestActionStates(turn: PersistedTurn, previous: PersistedTurn
         boundActionStates(turn.assistant.actionStates, binding, turn.conversationId, turn.turnIndex));
 }
 
+function sameCanvasArtifactMessage(turn: PersistedTurn, binding: CanvasArtifactUpdateBinding): boolean {
+    const messageId = turn.assistant.hostProvenance?.messageId;
+    if (messageId !== binding.assistantMessageId) return false;
+    if (messageId === undefined && binding.userMessageSourceHash === undefined) return false;
+    if (binding.userMessageSourceHash !== undefined
+        && stableHash(turn.user.content) !== binding.userMessageSourceHash) return false;
+    return stableHash(turn.assistant.content) === binding.messageSourceHash;
+}
+
+function confirmedCanvasArtifacts(message: PersistedChatMessage): CanvasArtifactRecord[] {
+    const records = parseCanvasArtifacts(message.canvasArtifacts ?? []);
+    if (message.canvasArtifactsInvalid === true || !records) {
+        throw new Error('Canvas artifact associations are unconfirmed.');
+    }
+    return records;
+}
+
+function preserveLatestCanvasArtifacts(turn: PersistedTurn, previous: PersistedTurn | undefined): void {
+    if (!previous || !sameOriginalTurn(turn, previous)) return;
+    const messageId = turn.assistant.hostProvenance?.messageId;
+    const previousMessageId = previous.assistant.hostProvenance?.messageId;
+    if (messageId !== previousMessageId) return;
+    if (messageId === undefined && turn.assistant.content !== previous.assistant.content) return;
+    const prior = parseCanvasArtifacts(previous.assistant.canvasArtifacts);
+    if (previous.assistant.canvasArtifactsInvalid === true
+        || (previous.assistant.canvasArtifacts !== undefined && !prior)) {
+        turn.assistant.canvasArtifacts = undefined;
+        turn.assistant.canvasArtifactsInvalid = true;
+        return;
+    }
+    if (!prior) return;
+    // Only the narrow Canvas update owns these facts. A whole-turn snapshot has
+    // no ordering evidence, even when it has the same phase or a different path.
+    turn.assistant.canvasArtifacts = cloneCanvasArtifacts(prior);
+    delete turn.assistant.canvasArtifactsInvalid;
+}
+
 function cloneTurn(turn: PersistedTurn, discardInvalidGenerationInput = false): PersistedTurn {
     const assistant = cloneMessage(turn.assistant, discardInvalidGenerationInput);
     if (assistant.actionStates !== undefined) assistant.actionStates = boundActionStates(
@@ -1774,6 +1861,11 @@ function cloneMessage(message: PersistedChatMessage, discardInvalidGenerationInp
     return {
         role: message.role,
         content: message.content,
+        ...(message.canvasArtifacts !== undefined || message.canvasArtifactsInvalid === true
+            ? message.canvasArtifactsInvalid !== true && parseCanvasArtifacts(message.canvasArtifacts)
+                ? { canvasArtifacts: cloneCanvasArtifacts(message.canvasArtifacts!) }
+                : { canvasArtifactsInvalid: true as const }
+            : {}),
         ...(pageletAttachment ? { pageletAttachment } : {}),
         ...(message.actionStates !== undefined ? { actionStates: cloneActionStates(message.actionStates) } : {}),
         ...(cloneActionStateBinding(message.actionStateBinding)

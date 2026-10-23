@@ -25,7 +25,8 @@ export type ShareCardResourceKind =
     | "html-image"
     | "svg-reference"
     | "css-image"
-    | "vault-embed";
+    | "vault-embed"
+    | "html-active";
 
 export type ShareCardResourceFailureReason =
     | "aborted"
@@ -136,6 +137,17 @@ interface ResourceOccurrence {
     reference: string;
     label: string;
     replace: (dataUrl: string) => string;
+}
+
+export interface ShareCardResourceScan {
+    literalRanges: Array<{ start: number; end: number }>;
+    references: Array<{
+        start: number;
+        end: number;
+        kind: ShareCardResourceKind;
+        reference: string;
+        label: string;
+    }>;
 }
 
 interface LiteralRange {
@@ -1241,7 +1253,7 @@ const RAW_TEXT_HTML_TAGS = [
     "xmp",
 ] as const;
 
-function collectRawTextHtmlRanges(markdown: string): LiteralRange[] {
+function collectRawTextHtmlRanges(markdown: string, includeActiveHtml = false): LiteralRange[] {
     const ranges: LiteralRange[] = [];
     for (const match of markdown.matchAll(/<!--[\s\S]*?(?:-->|$)/g)) {
         if (match.index !== undefined) {
@@ -1249,7 +1261,8 @@ function collectRawTextHtmlRanges(markdown: string): LiteralRange[] {
         }
     }
 
-    const tagNames = RAW_TEXT_HTML_TAGS.join("|");
+    const tagNames = RAW_TEXT_HTML_TAGS.filter(tag => !includeActiveHtml
+        || !["iframe", "style", "script", "pre", "code"].includes(tag)).join("|");
     const openingTag = new RegExp(`<\\s*(${tagNames})\\b`, "gi");
     let match: RegExpExecArray | null;
     while ((match = openingTag.exec(markdown)) !== null) {
@@ -1318,7 +1331,7 @@ function collectCodeSpanRanges(markdown: string, excluded: LiteralRange[]): Lite
     return ranges;
 }
 
-function findLiteralRanges(markdown: string): LiteralRange[] {
+function findLiteralRanges(markdown: string, includeActiveHtml = false): LiteralRange[] {
     const ranges: LiteralRange[] = [];
     let offset = 0;
     let fence: FenceState | null = null;
@@ -1347,7 +1360,7 @@ function findLiteralRanges(markdown: string): LiteralRange[] {
         offset += line.length;
     }
 
-    ranges.push(...collectRawTextHtmlRanges(markdown));
+    ranges.push(...collectRawTextHtmlRanges(markdown, includeActiveHtml));
     const structuralRanges = mergeRanges(ranges);
     return mergeRanges([...structuralRanges, ...collectCodeSpanRanges(markdown, structuralRanges)]);
 }
@@ -1506,7 +1519,8 @@ function inlineDestinationRange(
 function collectMarkdownImages(
     markdown: string,
     literalRanges: LiteralRange[],
-    definitions: Map<string, string>,
+    definitions: { get(label: string): string | undefined },
+    includeImageSyntax = false,
 ): ResourceOccurrence[] {
     const occurrences: ResourceOccurrence[] = [];
     let cursor = 0;
@@ -1533,8 +1547,8 @@ function collectMarkdownImages(
             const destination = inlineDestinationRange(markdown, altEnd + 1, closing);
             if (destination && !overlapsLiteral(destination.start, destination.end, literalRanges)) {
                 occurrences.push({
-                    start: destination.start,
-                    end: destination.end,
+                    start: includeImageSyntax ? start : destination.start,
+                    end: includeImageSyntax ? closing + 1 : destination.end,
                     kind: "markdown-image",
                     reference: destination.reference.replace(/\\([()])/g, "$1"),
                     label: alt,
@@ -1704,6 +1718,87 @@ function collectRawHtmlResources(
                     replace: (dataUrl) => dataUrl,
                 });
             }
+        }
+    }
+    return occurrences;
+}
+
+/** Pure syntax discovery shared with local-only UI renderers; performs no resource reads. */
+export function scanShareCardResourceReferences(
+    markdown: string,
+    options: {
+        includeActiveHtml?: boolean;
+        includeImageSyntax?: boolean;
+        /** A caller may supply its host-compatible block reference definitions. */
+        referenceDefinitions?: { get(label: string): string | undefined };
+    } = {},
+): ShareCardResourceScan {
+    const literalRanges = findLiteralRanges(markdown, options.includeActiveHtml);
+    const definitions = options.referenceDefinitions ?? collectReferenceDefinitions(markdown, literalRanges);
+    const references = [
+        ...collectWikiEmbeds(markdown, literalRanges),
+        ...collectMarkdownImages(markdown, literalRanges, definitions, options.includeImageSyntax),
+        ...collectRawHtmlResources(markdown, literalRanges),
+        ...(options.includeActiveHtml
+            ? collectActiveRawHtmlResources(markdown, literalRanges)
+            : []),
+    ].map(({ start, end, kind, reference, label }) => ({ start, end, kind, reference, label }));
+    return {
+        literalRanges,
+        references: references.sort((left, right) => left.start - right.start || right.end - left.end),
+    };
+}
+
+export function splitShareCardVaultReference(reference: string): { linkpath: string; subpath: string } {
+    return splitVaultReference(reference);
+}
+
+function collectActiveRawHtmlResources(
+    markdown: string,
+    literalRanges: LiteralRange[],
+): ResourceOccurrence[] {
+    const occurrences: ResourceOccurrence[] = [];
+    let cursor = 0;
+    while (cursor < markdown.length) {
+        const start = markdown.indexOf("<", cursor);
+        if (start < 0) break;
+        const end = rawTagEnd(markdown, start);
+        if (end < 0) break;
+        cursor = end;
+        if (overlapsLiteral(start, end, literalRanges)) continue;
+        const rawTag = markdown.slice(start, end);
+        const tagName = /^<\s*([a-z][a-z0-9:-]*)/i.exec(rawTag)?.[1]?.toLowerCase();
+        if (!tagName || tagName === "a") continue;
+        // These elements can initiate work from their body (srcdoc, CSS imports,
+        // script), so attribute-only discovery cannot safely hand them to a host.
+        if (tagName === "iframe" || tagName === "style" || tagName === "script") {
+            const close = new RegExp(`<\\/\\s*${tagName}\\s*>`, "gi");
+            close.lastIndex = end;
+            const closing = close.exec(markdown);
+            const elementEnd = closing ? closing.index + closing[0].length : markdown.length;
+            occurrences.push({
+                start, end: elementEnd, kind: "html-active", reference: "", label: tagName,
+                replace: value => value,
+            });
+            cursor = elementEnd;
+            continue;
+        }
+        for (const attribute of rawAttributes(rawTag, start)) {
+            if (attribute.name === "style") continue;
+            if (!["src", "href", "poster", "data", "srcset", "background"].includes(attribute.name)) continue;
+            if (attribute.value.trim().startsWith("#")) continue;
+            if (attribute.name === "srcset") {
+                occurrences.push(...collectSrcsetUrls(attribute));
+                continue;
+            }
+            occurrences.push({
+                start: attribute.start,
+                end: attribute.end,
+                kind: "html-active",
+                reference: attribute.value,
+                label: `${tagName} ${attribute.name}`,
+                replace: value => value,
+            });
         }
     }
     return occurrences;

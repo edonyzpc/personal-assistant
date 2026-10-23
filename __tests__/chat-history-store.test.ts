@@ -12,6 +12,8 @@ import { ChatHistoryManager } from '../src/chat/chat-history-manager';
 import { completeInputLineage } from '../src/ai-services/input-lineage';
 import type { PageletChatAttachment } from '../src/ai-services/pagelet-handoff';
 import { refreshWritingSaveStates, type PaAgentActionState } from '../src/ai-services/pa-agent-result-facts';
+import { stableHash } from '../src/pa/helpers';
+import type { CanvasArtifactRecord } from '../src/chat/canvas/types';
 
 const generationInput = (): GenerationInputSnapshotV1 => ({
     schemaVersion: 1, inputPurpose: 'writing', task: { state: 'none', sources: [] },
@@ -347,6 +349,8 @@ describe("UnavailableChatHistoryStore", () => {
         await expect(store.initialize()).rejects.toThrow("local app storage is not available");
         await expect(store.listConversations()).rejects.toThrow("local app storage is not available");
         await expect(store.appendTurn(makeTurn())).rejects.toThrow();
+        await expect(store.updateCanvasArtifacts({ conversationId: 'conv-1', turnIndex: 0,
+            messageSourceHash: stableHash('answer') }, () => [])).rejects.toThrow('local app storage is not available');
         await expect(store.getSchemaVersion()).rejects.toThrow();
         await expect(store.dispose()).resolves.toBeUndefined();
     });
@@ -577,6 +581,209 @@ describe('B157 atomic historical state updates', () => {
             await store.deleteTurn(binding.conversationId, binding.turnIndex);
             await expect(store.updateActionStates(binding, () => [ready])).resolves.toBeUndefined();
             expect(await store.getTurns(binding.conversationId)).toEqual([]);
+        } finally { await store.dispose(); }
+    });
+});
+
+describe('B-184 Canvas artifact history updates', () => {
+    const artifact = (): CanvasArtifactRecord => ({
+        version: 1, id: 'canvas-1',
+        block: { language: 'canvas', startLine: 0, sourceHash: stableHash('{"nodes":[]}'), occurrence: 0 },
+        save: { operationId: 'save-1', phase: 'saved', path: 'A/graph.canvas', sourceHash: stableHash('{"nodes":[]}') },
+    });
+
+    it.each(['memory', 'indexeddb'] as const)('keeps Canvas save facts through old snapshots and validates the original message in %s', async backend => {
+        const factory = new FakeIndexedDbFactory();
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('b184-canvas-history', factory as unknown as IDBFactory);
+        await store.initialize();
+        const content = 'Canvas answer';
+        const binding = {
+            conversationId: 'conv-1',
+            turnIndex: 0,
+            assistantMessageId: 'assistant-1',
+            messageSourceHash: stableHash(content),
+        };
+        const original = makeTurn({
+            assistant: {
+                role: 'assistant',
+                content,
+                hostProvenance: { version: 1, messageId: 'assistant-1', kind: 'ai_draft' },
+                actionStateBinding: { conversationId: 'conv-1', turnIndex: 0, runId: 'run-1', turnId: 'turn-1' },
+                actionStates: [{ schemaVersion: 1, owner: 'image', operationId: 'op-1', phase: 'accepted', revision: 0,
+                    origin: { runId: 'run-1', turnId: 'turn-1', assistantId: 'assistant-1', callId: 'call-1', resultId: 'result-1' },
+                    receipt: { kind: 'image-accepted', taskId: 'op-1' },
+                    inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'user-1' }]) }],
+            },
+        });
+        const pending = {
+            version: 1 as const,
+            id: 'canvas-1',
+            block: { language: 'canvas', startLine: 0, sourceHash: stableHash('{"nodes":[]}'), occurrence: 0 },
+            save: { operationId: 'canvas-save-1', phase: 'pending' as const, path: 'A/canvas.canvas',
+                sourceHash: stableHash('{"nodes":[]}') },
+        };
+        try {
+            await store.upsertConversation(makeConversation({ id: 'conv-1' }));
+            await store.appendTurn(original);
+            await expect(store.updateCanvasArtifacts(binding, () => [pending])).resolves.toEqual([pending]);
+
+            await store.appendTurn(original);
+            await store.reviseTurn({ ...original, assistant: { ...original.assistant, content: 'Late Canvas revision' } },
+                '2026-10-22T10:00:00.000Z');
+            const stored = (await store.getTurns('conv-1'))[0];
+            expect(stored.assistant.canvasArtifacts).toEqual([pending]);
+            expect(stored.assistant.actionStates).toEqual(original.assistant.actionStates);
+
+            await expect(store.updateCanvasArtifacts({ ...binding, messageSourceHash: stableHash('wrong') },
+                () => [pending])).resolves.toBeUndefined();
+            await expect(store.updateCanvasArtifacts({ ...binding, assistantMessageId: 'other',
+                messageSourceHash: stableHash(stored.assistant.content) },
+                () => [pending])).resolves.toBeUndefined();
+            await expect(store.updateCanvasArtifacts({ ...binding, assistantMessageId: undefined,
+                messageSourceHash: stableHash(stored.assistant.content) },
+                () => [pending])).resolves.toBeUndefined();
+            expect((await store.getTurns('conv-1'))[0].assistant.canvasArtifacts).toEqual([pending]);
+
+            const reader = backend === 'indexeddb'
+                ? new IndexedDbChatHistoryStore('b184-canvas-history', factory as unknown as IDBFactory) : store;
+            if (reader !== store) await reader.initialize();
+            try {
+                const manager = new ChatHistoryManager({ store: reader });
+                const reopened = (await reader.getTurns('conv-1'))[0];
+                const hydrated = manager.deserializeTurn(reopened);
+                expect(hydrated.assistantMessage.canvasArtifacts).toEqual([pending]);
+                hydrated.assistantMessage.canvasArtifacts![0].id = 'mutated';
+                expect((await reader.getTurns('conv-1'))[0].assistant.canvasArtifacts).toEqual([pending]);
+            } finally { if (reader !== store) await reader.dispose(); }
+
+            await store.deleteTurn('conv-1', 0);
+            await expect(store.updateCanvasArtifacts(binding, () => [pending])).resolves.toBeUndefined();
+        } finally {
+            await store.dispose();
+        }
+    });
+
+    it.each(['memory', 'indexeddb'] as const)('preserves narrow Canvas updates against same-phase stale snapshots in %s', async backend => {
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('b184-canvas-stale', new FakeIndexedDbFactory() as unknown as IDBFactory);
+        await store.initialize();
+        const oldRecord = artifact();
+        const old = makeTurn({ assistant: { role: 'assistant', content: 'Graph',
+            hostProvenance: { version: 1, messageId: 'assistant-1', kind: 'ai_draft' }, canvasArtifacts: [oldRecord] },
+            executionSummary: { version: 1, elapsedMs: 10, steps: [] } });
+        const binding = { conversationId: old.conversationId, turnIndex: old.turnIndex,
+            assistantMessageId: 'assistant-1', messageSourceHash: stableHash(old.assistant.content) };
+        const renamed: CanvasArtifactRecord = { ...oldRecord, save: { ...oldRecord.save!, path: 'B/graph.canvas' } };
+        try {
+            await store.upsertConversation(makeConversation());
+            await store.appendTurn(old);
+            const source = { kind: 'memory-reference' as const, dedupKey: 'memory:notes/a.md', path: 'notes/a.md', citationEligible: true };
+            await store.appendTurn({ ...old, assistant: { ...old.assistant, sourceRecords: [source] } });
+            await store.updateExecutionElapsedMs(old, 20);
+            const beforePatch = (await store.getTurns(old.conversationId))[0];
+            expect(beforePatch).toMatchObject({ assistant: { sourceRecords: [source] }, executionSummary: { elapsedMs: 20 } });
+            await store.updateCanvasArtifacts(binding, () => [renamed]);
+            expect((await store.getTurns(old.conversationId))[0]).toEqual({ ...beforePatch,
+                assistant: { ...beforePatch.assistant, canvasArtifacts: [renamed] } });
+            await store.updateExecutionElapsedMs(old, 30);
+            expect((await store.getTurns(old.conversationId))[0]).toMatchObject({
+                assistant: { canvasArtifacts: [renamed], sourceRecords: [source] }, executionSummary: { elapsedMs: 30 },
+            });
+            await expect(store.updateCanvasArtifacts(binding, current => {
+                current[0].save!.path = 'uncommitted.canvas';
+                throw new Error('Canvas update failed');
+            })).rejects.toThrow('Canvas update failed');
+            expect((await store.getTurns(old.conversationId))[0].assistant.canvasArtifacts).toEqual([renamed]);
+            await store.appendTurn({ ...beforePatch, assistant: { ...beforePatch.assistant, canvasArtifacts: [oldRecord] } });
+            expect((await store.getTurns(old.conversationId))[0].assistant.canvasArtifacts).toEqual([renamed]);
+            await store.reviseTurn(old, '2026-10-22T10:00:00.000Z');
+            expect((await store.getTurns(old.conversationId))[0].assistant.canvasArtifacts).toEqual([renamed]);
+            // A later save attempt has the same phase as its old snapshot too.
+            const pending = { ...renamed, save: { ...renamed.save!, phase: 'pending' as const, operationId: 'save-2' } };
+            await store.updateCanvasArtifacts(binding, () => [pending]);
+            await store.appendTurn(old);
+            expect((await store.getTurns(old.conversationId))[0].assistant.canvasArtifacts).toEqual([pending]);
+        } finally { await store.dispose(); }
+    });
+
+    it.each(['memory', 'indexeddb'] as const)('does not inherit Canvas state across assistant replacement in %s', async backend => {
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('b184-canvas-replacement', new FakeIndexedDbFactory() as unknown as IDBFactory);
+        await store.initialize();
+        const original = makeTurn({ assistant: { role: 'assistant', content: 'Same answer',
+            hostProvenance: { version: 1, messageId: 'assistant-1', kind: 'ai_draft' }, canvasArtifacts: [artifact()] } });
+        try {
+            for (const replacementId of ['assistant-2', undefined]) {
+                await store.appendTurn(original);
+                const replacement = makeTurn({ assistant: { role: 'assistant', content: original.assistant.content,
+                    ...(replacementId ? { hostProvenance: { version: 1 as const, messageId: replacementId, kind: 'ai_draft' as const } } : {}) } });
+                await store.appendTurn(replacement);
+                expect((await store.getTurns('conv-1'))[0].assistant.canvasArtifacts).toBeUndefined();
+                await expect(store.updateCanvasArtifacts({ conversationId: 'conv-1', turnIndex: 0,
+                    assistantMessageId: 'assistant-1', messageSourceHash: stableHash(original.assistant.content) },
+                () => [artifact()])).resolves.toBeUndefined();
+            }
+            await store.appendTurn({ ...original, assistant: { ...original.assistant,
+                canvasArtifacts: undefined, canvasArtifactsInvalid: true } });
+            await store.appendTurn(makeTurn({ assistant: { role: 'assistant', content: 'Same answer',
+                hostProvenance: { version: 1, messageId: 'assistant-2', kind: 'ai_draft' } } }));
+            expect((await store.getTurns('conv-1'))[0].assistant.canvasArtifactsInvalid).toBeUndefined();
+            // Legacy messages inherit only within the same original request and body.
+            const legacy = makeTurn({ assistant: { role: 'assistant', content: 'Legacy answer', canvasArtifacts: [artifact()] } });
+            await store.appendTurn(legacy);
+            await store.appendTurn(makeTurn({ assistant: { role: 'assistant', content: 'Legacy answer' } }));
+            expect((await store.getTurns('conv-1'))[0].assistant.canvasArtifacts).toEqual([artifact()]);
+            await store.appendTurn(makeTurn({ user: { role: 'user', content: 'Different request' },
+                assistant: { role: 'assistant', content: 'Legacy answer' } }));
+            expect((await store.getTurns('conv-1'))[0].assistant.canvasArtifacts).toBeUndefined();
+            await expect(store.updateCanvasArtifacts({ conversationId: 'conv-1', turnIndex: 0,
+                messageSourceHash: stableHash('Legacy answer'), userMessageSourceHash: stableHash(legacy.user.content) },
+            () => [artifact()])).resolves.toBeUndefined();
+            await expect(store.updateCanvasArtifacts({ conversationId: 'conv-1', turnIndex: 0,
+                messageSourceHash: stableHash('Legacy answer') }, () => [artifact()])).resolves.toBeUndefined();
+        } finally { await store.dispose(); }
+    });
+
+    it.each(['memory', 'indexeddb'] as const)('keeps malformed Canvas associations unconfirmed without losing readable history in %s', async backend => {
+        const factory = new FakeIndexedDbFactory();
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('b184-canvas-damaged', factory as unknown as IDBFactory);
+        await store.initialize();
+        const valid = artifact();
+        const malformed: unknown[] = [
+            [{ ...valid, version: 2 }],
+            [valid, { ...valid, block: { ...valid.block, startLine: 5, occurrence: 1 } }],
+            [valid, { ...valid, id: 'canvas-2' }],
+            [valid, { ...valid, id: 'canvas-2', block: { ...valid.block, startLine: 5 } }],
+            [{ ...valid, save: { ...valid.save!, sourceHash: stableHash('different') } }],
+            [{ ...valid, owner: { runtime: true } }],
+        ];
+        try {
+            for (let turnIndex = 0; turnIndex < malformed.length; turnIndex += 1) {
+                const turn = makeTurn({ turnIndex, assistant: { role: 'assistant', content: `Readable ${turnIndex}`,
+                    canvasArtifacts: malformed[turnIndex] as CanvasArtifactRecord[] } });
+                await store.appendTurn(turn);
+            }
+            const reader = backend === 'indexeddb'
+                ? new IndexedDbChatHistoryStore('b184-canvas-damaged', factory as unknown as IDBFactory) : store;
+            if (reader !== store) await reader.initialize();
+            try {
+                const manager = new ChatHistoryManager({ store: reader });
+                const restored = await reader.getTurns('conv-1');
+                expect(restored).toHaveLength(malformed.length);
+                for (const turn of restored) {
+                    expect(turn.assistant).toMatchObject({ content: `Readable ${turn.turnIndex}`, canvasArtifactsInvalid: true });
+                    expect(turn.assistant.canvasArtifacts).toBeUndefined();
+                    expect(manager.deserializeTurn(turn).assistantMessage.canvasArtifactsInvalid).toBe(true);
+                    await expect(reader.updateCanvasArtifacts({ conversationId: 'conv-1', turnIndex: turn.turnIndex,
+                        messageSourceHash: stableHash(turn.assistant.content), userMessageSourceHash: stableHash(turn.user.content) },
+                    () => [valid])).rejects.toThrow('unconfirmed');
+                    await reader.appendTurn(makeTurn({ turnIndex: turn.turnIndex,
+                        assistant: { role: 'assistant', content: turn.assistant.content, canvasArtifacts: [valid] } }));
+                    expect((await reader.getTurns('conv-1'))[turn.turnIndex].assistant.canvasArtifactsInvalid).toBe(true);
+                }
+            } finally { if (reader !== store) await reader.dispose(); }
         } finally { await store.dispose(); }
     });
 });

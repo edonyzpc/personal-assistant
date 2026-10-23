@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-073 | Chat Canvas 生成时预览与原生打开 | Chat 保留生成时 JSON；默认路径可改，显式保存并在原生 tab 交互；后续打开最新文件 | [Decision](./decisions/dec-073-chat-canvas-preview-native-open.md), [Spec](./specs/pa-chat-canvas-preview-product-spec.md), [Architecture](../architecture/chat-canvas-preview.md) | 需要预览随文件更新、改变媒体/数据边界，或公共宿主接线无法兑现原生打开 |
 | DEC-072 | 从 Pagelet 的发现继续思考 | 来源直达和继续输入为核心，附件全文稳定可读，原页查看为次级便利 | [Decision](./decisions/dec-072-pagelet-chat-continuation.md), [Spec](./specs/pagelet-chat-continuation-product-spec.md) | 真实使用证明附件全文与原生导航不足以支持继续思考 |
 | DEC-071 | PA UI 状态与局部刷新 | 稳定组件、原生正文、交互暂停及本地恢复已交付；两项恢复策略由Owner后置 | [Decision](./decisions/dec-071-pa-ui-state-rendering.md), [Spec](./specs/pa-ui-state-rendering-product-spec.md), [Architecture](../architecture/pa-ui-state-rendering.md), [验证](../archive/2026/b181-ui-state-rendering-validation.md) | B-182/B-183恢复策略重新选择，交互暂停仍无法保护必要操作，或原生单次构建继续主导卡顿 |
 | DEC-070 | Chat 渲染复用与生命周期性能优化 | 保留原生和完整内容，减少历史重建、分批恢复与无关观察；不含表格流式增量 | [Decision](./decisions/dec-070-chat-rendering-lifecycle-performance.md), [Spec](./specs/pa-chat-rendering-performance-product-spec.md), [验证](../archive/2026/b180-chat-rendering-performance-validation.md) | 需要改变内容/媒体/权限边界，或优化后仍由单条原生构建主导卡顿 |

@@ -7,6 +7,7 @@ import type { VaultObservationEvidence } from "./vault-observation-evidence";
 import type { TaskSourcePendingDecision } from './task-source-history';
 import type { RunSourceSelection } from './chat-source-scope';
 import type { InputLineage } from './input-lineage';
+import type { CanvasArtifactRecord } from '../chat/canvas/types';
 
 export interface ChatMessage {
     role: 'user' | 'assistant';
@@ -30,6 +31,9 @@ export interface ChatMessage {
     canonicalTurn?: PaAgentPersistedTurn;
     /** Host-proven finite domain state; independently admitted from this message's prose. */
     actionStates?: import('./pa-agent-result-facts').PaAgentActionState[];
+    /** Host-owned Canvas preview/save associations; the raw body remains in content. */
+    canvasArtifacts?: CanvasArtifactRecord[];
+    canvasArtifactsInvalid?: true;
     actionStateBinding?: import('./pa-agent-result-facts').PaAgentActionStateBinding;
     /** Host-admitted source choice retained when canonical tool messages are compacted from history. */
     sourceDecision?: TaskSourcePendingDecision;

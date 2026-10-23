@@ -2,13 +2,14 @@
 
 Document status: Current
 Delivery status: Implementing
-Updated: 2026-10-16
+Updated: 2026-10-23
 Work item: B-124
 Authority: 本 track 唯一执行状态、设计、finding 与验证证据。
 Product spec: [PA Share Card Product Spec](../../../product/specs/pa-share-card-product-spec.md)
 
 ## Current Snapshot
 
+- Scheduling: 2026-10-22 Owner 明确启动 B-184 全部开发测试，本 track 的剩余原生交互验收临时重排为 Next。2026-10-23 B-184 收尾并合入远程 master 后，本 track 恢复原有 Now；保留远程 B-187 的 Planned/Next。此处仅协调合并后的调度，保留原任务、授权和证据，不代表启动新工作或完成验收。
 - Authorization: 用户于2026-10-16要求“控制页面上增加一个外观控制配置，注意页面设置
   的布局设计”。包含本次Modal内外观选择的设计、文档、开发及必要测试/部署验证；
   沿用此前Author标签微调。移动轮次发现F-04后，用户明确要求“按照建议完成修复”，

@@ -4,6 +4,8 @@ import { type Command, type MarkdownFileInfo, type TAbstractFile, Component, Edi
 import { getApi } from "obsidian-callout-manager";
 
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
+import { CanvasArtifactService } from "./chat/canvas/canvas-artifact-service";
+import { createCanvasPreviewResourcePort } from "./chat/canvas/canvas-resource-port";
 import { OperationsReviewRouter, OPERATIONS_REVIEW_VIEW_TYPE } from './chat/operations-review/OperationsReviewRouter';
 import { OperationsReviewView } from './chat/operations-review/OperationsReviewView';
 import { AgentDebugPluginIntegration } from './agent-debug/plugin-integration';
@@ -1053,6 +1055,17 @@ export class PluginManager extends Plugin {
             pagelet: this.settings?.pagelet ?? DEFAULT_SETTINGS.pagelet,
         }),
         log: (message, detail) => this.log(message, detail),
+    });
+    private readonly canvasResourcePort = createCanvasPreviewResourcePort({
+        app: this.app,
+        sourceAccess: this.sourceAccess,
+    });
+    private readonly canvasArtifactService = new CanvasArtifactService({
+        app: this.app,
+        sourceAccess: this.sourceAccess,
+        getHistoryManager: () => this.chatIntegration.getHistoryManager(),
+        registerEvent: eventRef => this.registerEvent(eventRef),
+        log: (message, error) => this.log(message, error),
     });
     private readonly pageletIntegration = new PageletFeatureIntegration({
         createFeatureScope: () => this.createPageletFeatureScope(),
@@ -5891,7 +5904,10 @@ export class PluginManager extends Plugin {
         host.createGhostPublishingBinding = request => this.ghostPublishingIntegration?.createBinding(request);
         host.readGhostContextReceipt = operationId => this.ghostPublishingIntegration?.readContextReceipt(operationId) ?? Promise.resolve(undefined);
         host.clearGhostContextPersistence = conversationId => this.ghostPublishingIntegration?.clearContextPersistence(conversationId);
-        return host;
+        return Object.assign(host, {
+            canvasResources: this.canvasResourcePort,
+            canvasArtifacts: this.canvasArtifactService,
+        });
     }
 
     private unavailableMemoryPlan() {
