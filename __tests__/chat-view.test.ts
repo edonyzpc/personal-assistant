@@ -12003,9 +12003,10 @@ describe('LLMView turn lifecycle', () => {
             const fragments = Array.from({ length: 4096 }, (_, index) => `${String(index).padStart(4, '0')}${'x'.repeat(25)}\n`);
             const received: string[] = [];
             const work = createCooperativeTask(call.signal);
+            let sliceCount = 0;
             try {
                 for (const text of fragments) {
-                    await work.checkpoint();
+                    if (await work.checkpoint()) sliceCount += 1;
                     received.push(text);
                     emitCanonical(call, canonicalEvent({ type: 'message_update', messageId: 'ready-assistant',
                         update: { kind: 'text_delta', text } }));
@@ -12043,8 +12044,9 @@ describe('LLMView turn lifecycle', () => {
             expect(navigator.clipboard.writeText).toHaveBeenCalledWith(content);
             expect(allText(containerEl)).not.toContain('LATE_AFTER_STOP');
             // One latest render per cooperative slice plus the first/final
-            // render replaces thousands of whole-prefix Markdown parses.
-            expect(renderedMarkdown.length - 2).toBeLessThanOrEqual(Math.ceil(received.length / 64) + 2);
+            // render replaces thousands of whole-prefix Markdown parses. Count
+            // actual slices: the time budget can yield before 64 ready chunks.
+            expect(renderedMarkdown.length - 2).toBeLessThanOrEqual(sliceCount + 2);
             if (outcome === 'cancel') {
                 expect(view.chatHistory[1].shareCardEligible).toBe(false);
                 expect(allText(containerEl)).toContain('Generation cancelled');
