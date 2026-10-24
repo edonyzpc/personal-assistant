@@ -1,7 +1,7 @@
 # PA Share Card Product Spec
 
 Document status: Approved
-Updated: 2026-10-16
+Updated: 2026-10-24
 Work item: B-124
 Decision: [DEC-026 — Share Card 采用本地、显式导出的完整渲染卡片](../decisions/dec-026-local-share-card.md)
 Authority: Share Card 的入口、可分享内容、视觉、分页、导出、失败、数据与兼容性边界。
@@ -14,14 +14,14 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 > [!note] Owner amendment 2026-10-16 — Control UI
 > 用户确认署名说明合并至标签、两项配置对齐、根目录说明及单张/多张保存文案，
 > 并授权按方案更新文档、实现和必要测试。详见 B-124/REQ-14、B-124/AC-14；
-> 实现状态和验证范围仅见现有 Tracker，不以独立预览代替部署后的验证。
+> 验证范围见文末修订验收记录，不以独立预览代替部署后的验证。
 
 > [!note] Owner amendment 2026-10-15 — Independent diagrams
 > 用户明确批准独立完整图表整体等比缩小入页，已知本次 941px → 585px 约为 62%，
 > 图内 24px 文字随图缩到约 15px；正文和脚注的批次字号不变。本轮准入为最终静态
 > DOM 的单顶层 TABLE（可含 nested 树图），只缩完整图表，不混缩正文、不裁剪或
-> 丢失节点/关系，不泛化所有 HTML。详见 B-124/REQ-13、B-124/AC-13；此为新增规则，
-> 不代表实现或整篇 `cat` 已通过。
+> 丢失节点/关系，不泛化所有 HTML。详见 B-124/REQ-13、B-124/AC-13；实际整篇与
+> 定向 PNG 验证的范围分别见文末修订验收记录。
 
 > [!note] Owner amendment 2026-10-15 — Footnotes
 > 原完整渲染契约未定义脚注位置。用户现明确批准正文保留全批统一的可见
@@ -34,8 +34,8 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 > 用户确认当前预览并授权实现分享者署名：产品品牌保留在左侧，右下角默认显示
 > 低强调斜体 `by` + `32×24` CSS px 的 EZ SVG；填写自定义名字后显示 `by` + 名字，
 > 清空后恢复默认。名字仅属于当前 Modal，不新增全局设置或持久状态；详见
-> B-124/REQ-11、B-124/AC-11。当前修订执行与证据见
-> [Share Card Sharer Tracker](../../development/active/share-card-sharer/tracker.md)，
+> B-124/REQ-11、B-124/AC-11。对应验证范围见
+> [B-124 修订验收记录](../../development/validation/pagelet-smoke-checklist.md#2026-10-24--b-124-sharer-interaction-closeout)，
 > 原有验收不证明本次修订完成。
 
 > [!note] Owner amendment 2026-10-06
@@ -56,7 +56,7 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 
 > [!note] Owner decision 2026-08-05
 > 用户选择完整渲染保真（方案 C）与 SnapDOM 窄例外（方案 A）。REQ-04、REQ-05、
-> REQ-09 已据此修订；执行状态与验证证据仅以 Active Package Tracker 为准。
+> REQ-09 已据此修订；原交付验证证据见文末的 Share Card smoke checklist。
 
 > [!note] Owner amendment 2026-08-06
 > 用户新增 Pagelet Action Ring 的第四项 Share，并锁定 selection-first / current-note
@@ -119,7 +119,7 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   纸灰 light 与夜松墨 dark 两种样式，默认由Modal打开时当前主题选定，也可按REQ-15
   在当前Modal内切换；两者均使用固定
   十字折痕和纤维纸纹的整张本地背景，深色高光/暗面保持松墨色相，不叠加旧平铺噪声。
-  正文、引用、强调和细线采用[已确认配色](../../development/active/share-card-sharer/paper-folds-design.md)，
+  正文、引用、强调和细线采用[已确认配色](../../architecture/share-card-architecture.md#paper-palette-and-frozen-provenance)，
   纸面就绪失败时可重试，不静默导出缺失纸面的卡片；不增加运行时 Shader 或远程请求。
   每页有一致内容区、细 divider、PA 图形 logo + `Personal Assistant`
   品牌和必要页码；预览同时响应 modal/viewport 的宽度和高度，常见窗口应与保存路径、
@@ -402,12 +402,13 @@ per-Modal 保存目录和 Ring compact fallback 为最终规则。模板自定�
 分享和外部发布仍不在 v1。2026-10-15 已确认默认 EZ、自定义名字替换和清空恢复，
 名字仅当前 Modal 的实现沿用无新增持久设置边界；同日用户已确认脚注集中于整组
 末尾并完整分页，并明确批准独立完整图表等比缩小入页。上述产品选择已解决，
-2026-10-16 控制页方案已确认，当前无产品阻断决定；实现与验收状态仍见 Tracker。
+2026-10-16 控制页方案已确认，当前无产品阻断决定；对应验证范围见下列修订验收记录。
 
 ## Current Implementation
 
 - Architecture contract: [Share Card Architecture](../../architecture/share-card-architecture.md)
 - Validation evidence: [Pagelet and Share Card smoke checklist](../../development/validation/pagelet-smoke-checklist.md)
-- Current amendment: [Share Card Sharer Tracker](../../development/active/share-card-sharer/tracker.md)
-- Release / rollout boundary: B-124 原交付已关闭，本次署名修订执行状态仅见 Tracker；
-  后续 closeout、commit、push、beta/stable packaging 与 release 仍需独立授权。
+- Amendment evidence: [B-124 修订验收记录](../../development/validation/pagelet-smoke-checklist.md#2026-10-24--b-124-sharer-interaction-closeout)
+- Release / rollout boundary: B-124 原交付已关闭；署名及后续修订的本轮交互、复用证据
+  与收尾范围见修订验收记录。2026-10-24 授权补齐交互验收、收尾并提交本地 master，
+  不含 push、beta/stable packaging 或 release；实际验收与 Git 交付按各自回执判断。

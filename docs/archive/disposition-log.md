@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-10-23
+Updated: 2026-10-24
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-10-24 | `docs/development/active/share-card-sharer/**` | deleted-after-absorption | [DEC-026](../product/decisions/dec-026-local-share-card.md), [Spec](../product/specs/pa-share-card-product-spec.md), [Architecture](../architecture/share-card-architecture.md#paper-palette-and-frozen-provenance), [B-124 interaction evidence](../development/validation/pagelet-smoke-checklist.md#2026-10-24--b-124-sharer-interaction-closeout) | Owner 授权补齐交互、收尾并提交本地 master，暂不推送。剩余原生输入、Copy/Save/剪贴板、关闭重开及窄屏交互已验收；旧排期和缺口描述由最终证据取代。纸面配色、冻结来源与两张预览移入 Architecture，字节不变；删除已吸收的 Home/Tracker/设计过程稿。未提交过程与终态 Tracker 留本机副本，Git 保留此前版本；无本范围未完成项，不新增真机门禁或发布动作。 |
 | 2026-10-23 | `docs/development/active/chat-canvas-preview/**` | deleted-after-absorption | [DEC-073](../product/decisions/dec-073-chat-canvas-preview-native-open.md), [Spec](../product/specs/pa-chat-canvas-preview-product-spec.md), [Architecture](../architecture/chat-canvas-preview.md), [B-184 validation](./2026/b184-chat-canvas-preview-validation.md), current source and regression tests | Owner 授权 B-184 收尾及本地 master 提交；九组 REQ/AC 和确认 findings 已验证，无本范围未完成项。稳定实现吸收，原生路径真实反例、图片展示修订及实际验收边界紧凑保留；删除 Home/SDD/Tracker 和已吸收原型。未提交原文与终态 Tracker 留本机副本，不声称旧 Git 可恢复全部过程。保留 B-124 开发期间临时让位为 Next 的历史；合入远程 master 后恢复其原有 Now，并保留 B-187 Next，不推进其他 track，不推送或发布。 |
 | 2026-10-20 | `docs/development/active/pa-ui-state-rendering/**` | deleted-after-absorption | [DEC-071](../product/decisions/dec-071-pa-ui-state-rendering.md), [Spec](../product/specs/pa-ui-state-rendering-product-spec.md), [Architecture](../architecture/pa-ui-state-rendering.md), [B-181 validation](./2026/b181-ui-state-rendering-validation.md), [Backlog](../backlog.md) | Owner授权B-181收尾并提交远程master。稳定职责与实现吸收至当前契约和回归测试；仅保留紧凑最终验证。两项恢复策略转B-182/B-183，设备补验转T-012；删除Home/SDD/Tracker及已吸收原型源码/快照。原未提交过程及终态Tracker留本机副本，不声称旧Git可恢复全部原文；其他track不变，无版本发布。 |
 | 2026-10-18 | `docs/development/active/chat-rendering-performance/**` | deleted-after-absorption | [DEC-070](../product/decisions/dec-070-chat-rendering-lifecycle-performance.md), [Product Spec](../product/specs/pa-chat-rendering-performance-product-spec.md), [B-180 validation](./2026/b180-chat-rendering-performance-validation.md), current source and focused tests | Owner 明确授权 B-180 收尾及本地 master 提交；四项优化和两个真实 P2 修复已验收，无本范围未完成项。稳定复用/调度/观察及领域生命周期约束吸收；仅保留独有性能对照、完整/差量验证复用和真实 App 边界，删除 Home/SDD/Tracker。未提交过程原文与终态 Tracker 留本机副本，不声称旧 Git 保存完整过程。原生构建/布局和表格流式候选边界保留，其他 track 不变，无推送或发布。 |

@@ -1,5 +1,5 @@
 /* Frozen 540x720 paper textures. Generated from the approved PNGs without resampling.
- * Source and recipe: docs/development/active/share-card-sharer/paper-folds-design.md
+ * Source and recipe: docs/architecture/share-card-architecture.md#paper-palette-and-frozen-provenance
  * PaperTexture source attribution: THIRD_PARTY_NOTICES.md.
  */
 

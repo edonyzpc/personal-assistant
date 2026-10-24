@@ -1,6 +1,6 @@
 # Share Card Architecture
 
-Updated: 2026-10-16
+Updated: 2026-10-24
 
 | Field | Value |
 | --- | --- |
@@ -11,18 +11,18 @@ Updated: 2026-10-16
 
 > [!note] Owner amendment 2026-10-15
 > 用户确认分享者署名预览并授权实现：左侧产品品牌保留，右下角默认显示 `by` +
-> `32×24` CSS px EZ SVG，自定义名字替换、清空恢复。以下为本次目标技术契约，
-> 实现状态与本次证据见 [Share Card Sharer Tracker](../development/active/share-card-sharer/tracker.md)；
-> 不以当前契约文字或旧验证结果声明本次已实现。
+> `32×24` CSS px EZ SVG，自定义名字替换、清空恢复。以下技术契约承接该修订；
+> 对应验证范围见 [B-124 修订验收记录](../development/validation/pagelet-smoke-checklist.md#2026-10-24--b-124-sharer-interaction-closeout)，
+> 不以产品批准、旧验证或独立预览代替本轮实际交互证据。
 
 > [!note] Owner amendment 2026-08-07
-> 用户选择方案 A，并明确以当前 `master` 实现作为最终行为基线：短单页内容从
-> 字号规则已由 2026-10-06 用户修订取代，见下文 batch-level 决策。保存目录在
+> 用户选择方案 A，并明确以当时 `master` 实现作为行为基线；当时字号规则已由
+> 2026-10-06 用户修订取代，见下文 batch-level 决策。保存目录在
 > 每次 Modal 打开时优先采用有效的 Vault attachment folder，否则回退 `PA-Cards`；
 > 用户可在当前 Modal 中选择已有目录、输入新目录或 Vault 根目录，但该选择不持久化。
 > Action Ring 优先采用朝向内容区的内向弧，空间不足时整组降级为紧凑横排或竖排。
-> 当前 neutral paper light / warm dark 纸张、纤维纹理、枝叶装饰和品牌视觉一并作为
-> 现行设计接受。
+> 当时的 neutral paper light / warm dark 纸张、纤维纹理、枝叶装饰和品牌视觉一并接受；
+> 纸面与配色现由 2026-10-16 的纸灰／夜松墨修订承接，见下文 Current Visual Contract。
 
 本文只描述当前代码必须保持的技术契约，不承担交付状态或历史验证权威。后续实现变化
 应先更新 DEC/Product Spec，再同步本文件和对应自动化、运行时验证。
@@ -117,7 +117,7 @@ Renderer 移除 script、runtime style、事件处理器、交互控件和外部
 
 2026-10-15 用户首次明确脚注位置：正文保留统一编号，脚注正文集中在整组
 正文之后继续分页。此前 full-fidelity 选择未规定该位置，宿主按局部渲染生成脚注列表
-不能成为隐含产品权威。以下为已批准规则的目标实现设计，状态与证据见当前 Tracker。
+不能成为隐含产品权威。以下为已批准规则的技术契约，对应验证范围见 B-124 修订验收记录。
 
 - 在当前 Modal 的 prepare 阶段，对同一份分享输入执行一次本地投影；正文按首次引用
   顺序分配编号，同 label 多次引用保持同号。未被引用的定义也保留，排在已引用脚注
@@ -153,7 +153,7 @@ Renderer 移除 script、runtime style、事件处理器、交互控件和外部
 把可证明安全的三字符开闭组合判为歧义；同时保留真实歧义、不成对分隔符及其他
 无法证明安全结构的拒绝。片段为维持格式补回的 markup 不能改变源区间或冒充原始
 字符，不重渲染正文来替换源身份。本修订不扩展为完整 CommonMark/HTML parser，
-实际修复状态与整篇运行证据见 [当前 Tracker](../development/active/share-card-sharer/tracker.md)。
+实际整篇运行与定向 PNG 证据见 [B-124 修订验收记录](../development/validation/pagelet-smoke-checklist.md#2026-10-24--b-124-sharer-interaction-closeout)。
 
 链接外围的 emphasis 也沿用同一源坐标责任：当 opener 后紧邻完整 inline link，且
 link 后紧邻同字符、同长度（1/2/3）的完整 closer run，并满足原始源码的 closing
@@ -167,7 +167,7 @@ flanking 条件时，该确切 pair 可以消除括号或标点引起的双向 f
 的 fragment/boundary plan 将完整标注作为不可拆 inline token，切点只能在其周边正文，
 保留源 token 与原有 sanitizer 允许的标签/属性；`renderText` 只投影可见标注文字，
 不能把 tag 或 title 属性当成正文坐标。Renderer 继续复用静态 DOM 保留对应格式。
-闭合不全、错配等负例仍安全失败，不扩成任意 HTML parser；执行证据见同一 Tracker。
+闭合不全、错配等负例仍安全失败，不扩成任意 HTML parser；验证范围见同一修订验收记录。
 
 字号选择是 batch-level 决策：
 
@@ -200,7 +200,7 @@ availableHeight / height)`；宽高同时受约束，不单独改变横纵比例
 经过同一适配路径，不新建图表 renderer，不以 export-only transform 或另外一轮内容
 投影补救。不改变 prepared prototype 的内容身份、资源本地化权限或固定 PNG 尺寸。
 验证必须检查完整 TABLE/nested 内容的最终 bounds 和节点保留，不能只看父盒 scroll
-数值或截图中未见溢出。实现与实际整篇证据仍见当前 Tracker，未验收前不宣称通过。
+数值或截图中未见溢出。实际整篇与 PNG 证据及其输入边界见上述修订验收记录。
 
 非代码文字使用随包的 `PA Share Serif`（Source Han Serif-derived WOFF2）及同字号的
 device-local serif glyph fallback；代码使用本地 monospace stack。字体从插件字节生成
@@ -214,7 +214,7 @@ data URL，必须在测量前就绪。SnapDOM 的 document-wide font discovery �
 - Light 为纸灰纸面和深墨正文，Dark 为夜松墨纸面和米白正文；引用文字、强调和
   细 divider 独立配色，枝叶角饰、图形 logo 与 `Personal Assistant` 品牌不变。
   深浅主题均采用固定十字折痕和纤维；配色、资源身份与完整效果见
-  [纸面设计](../development/active/share-card-sharer/paper-folds-design.md)。
+  [纸面配色与冻结来源](#paper-palette-and-frozen-provenance)。
 - 页脚左侧保留 PA 图形 logo、`Personal Assistant` 与既有 source hint；右侧组依次容纳
   多页页码和分享者署名。默认署名为低强调斜体 `by` + EZ SVG，EZ 为 `32×24` CSS px，
   保持原始比例和字形；Light 用 `#233A34`，Dark 只换为主题可读墨色，不改变几何。
@@ -257,6 +257,58 @@ data URL，必须在测量前就绪。SnapDOM 的 document-wide font discovery �
 
 该视觉是 current implementation contract，不是可配置模板。比例、字体、品牌或主题体系
 变化属于产品边界变更，需要先更新产品权威。
+
+### Paper Palette And Frozen Provenance
+
+用户于 2026-10-16 确认最后一版“纸灰 + 夜松墨”完整预览，并要求落实到文档和代码。
+深浅主题均保留固定十字折痕与纤维，深色明暗保持松墨色相；后续改变纸面或折痕强度
+需另行确认视觉。颜色只作用于 Share Card，不覆盖 Obsidian 宿主主题。
+
+| 用途 | 纸灰 | 夜松墨 |
+| --- | --- | --- |
+| 纸底生成输入 | `#F1EEE8 → #EAE6DF` | `#152B27 → #203B32` |
+| 正文 | `#302D2A` | `#E8EFE3` |
+| 次要文字、页脚 | `#68615A` | `#B8CCC0` |
+| 引用文字 | `#68615A` | `#D1DED2` |
+| 强调、引用竖线 | `#7C5261` | `#C3B081` |
+| 细分隔线、代码边框 | `#CBC3B9` | `#506B5C` |
+| 代码底色 | `#E7E2DA` | `#29463C` |
+| 卡片边框 | `rgba(48,45,42,.10)` | `rgba(184,204,192,.12)` |
+
+页脚 divider 使用独立细线色、opacity 1。浅色 EZ 保留 `#233A34`；深色 EZ 跟随正文色。
+纸面实际颜色包含折痕明暗和纤维，不要求每个像素等于纸底色值。
+
+以下为用户确认预览的展示副本，包含 PA 字体、Xerox 印迹、角花、品牌和 EZ 署名。
+它们来自独立 Chromium 中的 SnapDOM PNG，不代表 Obsidian 内 Copy/Save 或完整分页验收。
+
+| 浅色：纸灰折痕 | 深色：夜松墨折痕 |
+| --- | --- |
+| ![纸灰完整预览](./images/share-card-paper-folds-light.webp) | ![夜松墨完整预览](./images/share-card-paper-folds-dark.webp) |
+
+纸面来自 `@paper-design/shaders@0.0.81` 的 PaperTexture，沿用已选直线折痕：
+`roughness=.12, roughnessSize=.5, roughnessRows=0, fiber=.15, fiberSize=.55,
+folds=.7, foldSizeX=.75, foldSizeY=.85, foldOffsetX=0, foldOffsetY=0,
+wrinkles=0, crumples=0, drops=0, distortion=0, angle=300, seed=4, scale=1`。
+静止 `speed=0/frame=0`，原生物理／逻辑尺寸均为 `540×720`。
+
+- 浅色：纸灰垂直渐变输入；原配方纸色 `#FFFFFF`、阴影 `#C4B9A5`、背色 `#F8F5EF`，
+  blending 1、fit contain。不是最初导出包原纸色 PNG 的直接复用。
+- 深色：同一 Shader 使用等尺寸中性白输入和白纸／黑影，取得同一折痕明暗场；
+  以灰阶中位数 190 为中性点，将正负明暗分别映射到 `#2B473B` 与 `#10231F`，
+  强度 `.82`，叠合于夜松墨垂直渐变。此离线处理避免 Shader 深色图像模式的泛白。
+- 生产只携带冻结 PNG，不携带 Shader、GPU 调用或调色算法。生成工具的许可与声明
+  作为来源记录保留，见 [第三方资源说明](../../THIRD_PARTY_NOTICES.md#share-card-paper-texture-provenance)。
+
+| 纸面 | 原 PNG 字节数 | SHA-256 |
+| --- | --- | --- |
+| 纸灰 | 680727 | `8cdbf029e1332b3cf451093afda2ea96464d9d0826b42d494de782b9269364d2` |
+| 夜松墨 | 534809 | `2cb2e29ad81cef4ad013d0048d7c69a30ba9fe18e6fd5a454fb3694f4c536a64` |
+
+两张纸面合计约 1.55 MiB 未压缩 Base64 数据，沿用单 `main.js` 安装布局，无需外置
+资源路径、打包规则或新运行时依赖。根背景不属于正文 `<img>` 就绪等待范围，按上文
+owner Document／theme 解码机制显式就绪后才创建最终页。预览、放大、Copy、Save 继续
+共用 renderer 与固定 `1080×1440` 输出。若需回滚纸面，可恢复旧背景与噪声；不改变
+内容、分页、设置或用户笔记。
 
 ## Capture And Export
 

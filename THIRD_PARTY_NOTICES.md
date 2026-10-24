@@ -97,7 +97,7 @@ The two fixed Share Card paper PNGs were generated with
 The dark version maps the same fold field to the PA night-pine palette. The
 plugin does not bundle or execute the Shader library. Exact image identities,
 palette and generation details are in the
-[paper design](docs/development/active/share-card-sharer/paper-folds-design.md).
+[paper palette and frozen provenance](docs/architecture/share-card-architecture.md#paper-palette-and-frozen-provenance).
 The generation package's [Apache-2.0 license](licenses/paper-shaders-Apache-2.0.txt)
 and [NOTICE](licenses/paper-shaders-NOTICE.txt) are retained as source provenance.
 

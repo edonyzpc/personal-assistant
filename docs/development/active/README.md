@@ -14,7 +14,6 @@ Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governa
 | Pagelet Autonomous Discovery | B-175 | [Feature Home](./pagelet-autonomous-discovery/README.md) | [Tracker](./pagelet-autonomous-discovery/tracker.md) |
 | Complete Note Query | B-169 | [Feature Home](./complete-note-query/README.md) | [Tracker](./complete-note-query/tracker.md) |
 | Lean Ghost Publishing | B-163 | [Feature Home](./lean-ghost-publishing/README.md) | [Tracker](./lean-ghost-publishing/tracker.md) |
-| Share Card Sharer | B-124 | [Feature Home](./share-card-sharer/README.md) | [Tracker](./share-card-sharer/tracker.md) |
 
 已完成任务的稳定契约留在 Product/Governance/Architecture，
 独有历史验证及处置见 [Disposition Log](../../archive/disposition-log.md)，

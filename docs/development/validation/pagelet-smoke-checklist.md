@@ -37,6 +37,58 @@ The checks below verify behaviour the test mocks cannot reproduce.
 
 ## Latest Verification Log
 
+### 2026-10-24 · B-124 Sharer Interaction Closeout
+
+Owner 明确授权补齐剩余交互验收、收尾 B-124、整理过时 Tracker 并提交本地 master，
+暂不推送。本次关闭 2026-10-15 起的署名、脚注、独立图表、控制页、纸面与外观修订；
+原始 B-124 的 8 月交付记录仍按当时范围保留。没有新增产品行为或未解决 finding。
+
+输入与复用：
+
+- Runtime baseline 为 `ed82c957`；当前 `test/`、Obsidian 1.14.4、PA 3.0.1。
+  与 `/private/tmp/pa-test-opt-20261024-yX2aid/final-frozen-inputs.json` 核对的源码、
+  tests、工具与配置输入无变化；复用该轮 lint（扩大进程栈）、production build、
+  完整 410 suites / 9895 tests PASS，不在本轮重跑全仓或 coverage。
+- `make deploy-current` 校验当前 build 身份后部署并 reload；本地 runtime style/HTML
+  扫描无匹配（rg exit 1）。验收后只改文档、移动文档图片和更新资源来源注释。
+- 继承 2026-10-16 已完成的 57 项外观、153 项 renderer/paginator、320/390px 中英、
+  字体压力与实际 PNG 证据。此前整篇 330 页、270 个脚注及独立 TABLE 图表证据属于
+  其历史输入，未在本轮重新测试。F-01～F-04 均已 Resolved；F-04 的同 fixture 6 页
+  与代码两行完整性已有修复后证明，不因本轮原生输入补证重复长文或内容矩阵。
+
+本轮只用一个自建无外部资源样例 `B124-closeout-20261024-01a16bfb/interaction.md`。
+主控通过原生窗口工具实际点击、键入及按键；CLI 只准备状态、查询和保存辅助证据。
+
+| 剩余范围 | 实际交互与结果 | Evidence |
+| --- | --- | --- |
+| T-01 / 署名与外观输入 | 从笔记 More options → PA: Share as Card 进入；键入英文、Tab 移动焦点、全选清空恢复默认 EZ；中文通过系统粘贴输入“验收 Ada”。原生外观菜单 Down + Return 选中 Light，页脚署名保留 | 本轮原生工具回执；`desktop-copy.png`、`copied-page-02.png` |
+| T-03 / Copy 与系统剪贴板 | 原生点击 Next 到第 2/6 页，再点击 Copy current page；系统剪贴板实际为 image/png、1080×1440，读取的图片可见 2/6 与“by 验收 Ada” | `copied-page-02.png`；不是仅查询 canCopyImage |
+| T-03 / Save 与 busy | 原生点击 Save 6 images，成功提示实际保存 6 张；目录内连续 page-01…06 均1080×1440。观察记录中翻页、外观、署名及 Copy/Save 经历可用→禁用→恢复；不声称所有输入均 disabled。末页 PNG 含 END-B124、6/6 与同一署名 | 原生成功提示；`desktop-result.json`、`png-metadata.json`、`fixture-artifacts/` |
+| T-01/T-03 / 关闭重开 | Escape 关闭，再由笔记菜单重开；恢复 auto、空署名、默认根目录与第1页，没有沿用临时值 | 原生工具回执；`window-baseline.json` 的 reopen 值 |
+| T-04 / 窄屏原生输入与点击 | 官方 mobile simulator 390×844；原生点击署名并键入 Mobile Ada、Tab 移动焦点、点击 Next 到第2页。字段高44px，Copy/Save底部812<844，操作可达 | `mobile-result.json`、`mobile-interaction.png` |
+
+独立只读检查者复核实际剪贴板 PNG、六张保存图的元数据、busy 记录与移动截图，
+未发现阻断；入口、键盘和重开结论由主控的实际原生工具回执承接，不从终态 JSON 推断。
+这是桌面原生输入加官方移动模拟证据，不是 iPhone 硬件触控、软件键盘或 WKWebView
+证明；沿用 AC-10 已允许的模拟边界，不新增真机门禁。本轮未发送 Chat 请求或修改
+provider 配置，也未重验未变的入口、媒体、分页和失败矩阵。
+
+Cleanup PASS：复制证据后只删除本轮核对的 1 个样例和 6 张 PNG；恢复原桌面/移动
+活动页面、1459×949 窗口、zoom=1、debug=false、mobile=false 和原空剪贴板。
+Modal=0，临时 observer 已断开，fresh dev:errors 无记录；debug 始终关闭，不声称
+完整 console 捕获。原始记录位于 `/private/tmp/pa-b124-closeout-20261024/`，截图与
+选定 PNG 另存本聊天的 `b124/` 可视化目录。
+
+收尾检查：`docs:check` PASS（345 Markdown / 4415 local links），现有文档契约两套
+57 tests PASS，diff check PASS。移动的两张 WebP 与原版本字节相同，纸面源码除来源
+注释外完全不变；不为文档收尾重复构建、应用验收或全仓测试。
+
+Outcome：T-01/T-03/T-04 剩余交互已验收，历史“绕过 Modal Save／窄视口未验证”
+措辞由后续真实证据取代；临时 Now/Next 排期不再作为未完成状态。稳定规则与纸面
+来源已吸收到 DEC-026、Product Spec、Architecture；删除已吸收的活跃过程包，
+不另建完整归档包。没有本范围待开发或需转 Backlog 的阻断项；Git 签名提交与推送
+仍按各自回执判断，本轮授权不含推送或发布。
+
 ### 2026-08-07 · B-124 Share Card closeout
 
 Environment:

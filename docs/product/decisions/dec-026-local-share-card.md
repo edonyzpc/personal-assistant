@@ -2,7 +2,7 @@
 
 Decision ID: DEC-026
 Status: Accepted
-Updated: 2026-10-16
+Updated: 2026-10-24
 Authority: 用户于 2026-08-04 授权审查、设计、开发与测试，于 2026-08-05 明确选择内容/媒体方案 C（完整渲染保真）及 capture runtime 方案 A（SnapDOM 窄例外），于 2026-08-06 修订 Action Ring 入口、来源优先级、品牌、字体、标签、布局与分页字号，并于 2026-08-07 明确以当前 `master` 行为作为最终规则；2026-09-17 确认预览与操作的可见性边界及点击放大查看；2026-09-18 允许可悬停端 Ring 默认只显示图标，悬停时显示文字；2026-10-15 确认分享者署名预览并授权实现默认 by + EZ SVG、自定义名字替换及清空恢复，同日批准脚注在整组卡片末尾完整分页，并明确允许独立完整图表整体等比缩小入页
 Work item: B-124
 
@@ -13,16 +13,16 @@ Work item: B-124
 > 显式切换后按同一准备链更新卡片、分页、预览与导出；保留署名、目录和有效页位置。
 > 更新、翻页渲染及导出期间禁用选择；失败后不混用旧主题导出结果，可重新选择恢复。
 > 该新增要求取代此前只能在打开时采用宿主主题的控制边界；纸面、内容、固定尺寸、
-> 资源与SnapDOM契约不变。具体执行与证据由现有Tracker承接，不包含Git或发布授权。
+> 资源与SnapDOM契约不变。对应验证范围见文末修订验收记录；本条产品决定不授予发布权限。
 
 > [!note] Owner amendment 2026-10-16 — Paper folds
 > 用户要求将本聊天最后的“纸灰 + 夜松墨”完整预览落实到设计文档和代码：深浅主题
 > 均使用纤维纸纹和固定十字折痕，深色折痕按松墨明暗配色。采用冻结的本地 PNG
 > 整张背景和独立正文/强调/细线配色，替代原平铺 noise；保留当前字号、Xerox、
 > 内容、分页、角花、品牌、署名及 SnapDOM 路径，不引入运行时 Shader、调参或依赖。
-> 具体配色、纸面身份与完整预览见 [设计文档](../../development/active/share-card-sharer/paper-folds-design.md)，
-> 本轮先授权文档、实现和必要验证，随后明确要求“代码修改提交master”，追加本轮
-> 本地 master commit 授权；不含 push、发布或 closeout。
+> 具体配色、纸面身份与完整预览见 [纸面配色与冻结来源](../../architecture/share-card-architecture.md#paper-palette-and-frozen-provenance)。
+> 当日先授权文档、实现和必要验证，随后明确要求“代码修改提交master”，追加本轮
+> 本地 master commit 授权；当日授权不含 push、发布或 closeout。
 
 > [!note] Owner amendment 2026-10-16 — Control UI
 > 用户确认控制页预览方案并授权文档、开发和必要测试：署名标签为 `署名` /
@@ -33,7 +33,7 @@ Work item: B-124
 > 单张按钮显示“保存图片”，多张显示“保存 N 张图片”（英文对应 `Save image` /
 > `Save N images`），数量来自实际生成页数。保持现有同屏预览缩放、点击放大、
 > 临时输入、目录建议、导出冻结与资源边界，样式沿用宿主主题；不新增持久设置。
-> 执行、验证证据及后续 Git 授权由现有 Tracker 承接。
+> 对应验证范围见文末修订验收记录，产品决定本身不等于 Git 交付授权。
 
 > [!note] Owner amendment 2026-10-15 — Independent diagrams
 > 用户明确选择“继续：允许独立图表整体等比缩小”，已知本次高 941px 的独立图表
@@ -42,7 +42,7 @@ Work item: B-124
 > 包括其内部嵌套树图：按可用宽高整体等比缩小，scale 不大于 1，保持全部节点与
 > 关系，不裁剪、不混缩外部正文、不拆关系，也不以 overflow hidden 冒充完整适配。
 > 该决定不泛化到所有 HTML，不改变内容投影、资源权限、固定尺寸或 SnapDOM。
-> 这是新的图表适配例外；实现与 whole-file 验收仍由当前 Tracker 承接。
+> 这是图表适配例外；实际整篇与定向 PNG 证据分别由修订验收记录承接。
 
 > [!note] Owner amendment 2026-10-15 — Footnotes
 > 原完整渲染选择未定义脚注应放在每页、每段还是整组末尾；不能把宿主的局部渲染
@@ -51,7 +51,7 @@ Work item: B-124
 > 一份正文，保留全部正文、脚注内容、Markdown 和顺序。仅在本地分享准备阶段投影，
 > 不写原笔记。普通链接/图片引用、代码字面量、显式资源与导出边界继续保持。
 > 无法解析、重复冲突或不支持的结构不得静默删除、覆盖或冒充完整成功。
-> 本条是新增的用户决定；实现及验收状态由当前 Tracker 承接，不代表已实现。
+> 本条记录当日新增的用户决定；对应实现与验证范围见修订验收记录。
 > 兼容设计采用普通可见 `[n]`，不依赖宿主逐段生成的上标与脚注列表；这是实现设计，
 > 不将该字形细节表述为用户逐项指定。
 
@@ -62,8 +62,8 @@ Work item: B-124
 > 名字在当前 Modal 内编辑，不持久化、不增加全局设置。署名与多页页码共同占据
 > 页脚右侧且互不遮挡，preview、Copy、Save 共享当前整批署名；导出期间不可修改。
 > Light 保持 EZ 原色 `#233A34`，Dark 使用同一几何的可读墨色。此修订不改变正文、
-> 来源、字号、分页规则、纸张、装饰、资源或 SnapDOM 边界；执行与证据由
-> [Share Card Sharer Tracker](../../development/active/share-card-sharer/tracker.md) 承接。
+> 来源、字号、分页规则、纸张、装饰、资源或 SnapDOM 边界；对应验证范围见
+> [B-124 修订验收记录](../../development/validation/pagelet-smoke-checklist.md#2026-10-24--b-124-sharer-interaction-closeout)。
 
 > [!note] Owner amendment 2026-10-06
 > 用户要求放大正文并增加移动端笔记右上三点 Share Card 入口。当前正文基准为 24px，
@@ -216,9 +216,10 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
   数据契约，移动端 clipboard 不可用时仍可显式保存。Source Han Serif 随插件本地提供，
   不新增外部字体依赖或网络权限。
 - Work created or removed: B-124 原交付已完成实现、验证与显式 closeout，稳定行为吸收到
-  当前契约与验证清单。2026-10-15 的分享者署名修订复用 B-124，由
-  [当前 Tracker](../../development/active/share-card-sharer/tracker.md) 单独承接执行与验收，
-  不以原交付证据冒充本次修订完成。
+  当前契约与验证清单。2026-10-15 起的署名、脚注、独立图表与后续控制页、纸面、外观
+  修订复用 B-124；稳定产品边界由本决定、Product Spec 和 Architecture 承接，
+  [修订验收记录](../../development/validation/pagelet-smoke-checklist.md#2026-10-24--b-124-sharer-interaction-closeout)
+  单独记录本轮交互、复用证据及收尾范围，不以原交付证据冒充本次修订完成。
 
 ## Revisit Trigger
 
