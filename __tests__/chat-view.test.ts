@@ -967,6 +967,7 @@ function createView(options: {
                 workspaceHandlers.set(eventName, handlers);
                 return { eventName, callback };
             }),
+            trigger: jest.fn(),
         },
         vault: {
             getName: jest.fn(() => 'test'),
@@ -7906,7 +7907,7 @@ describe('LLMView turn lifecycle', () => {
                 el.createDiv({ cls: 'block-language-mermaid' });
             }
         });
-        const { view, containerEl } = createView();
+        const { view, containerEl, app } = createView();
         await view.onOpen();
 
         getTextArea(containerEl).value = 'draw a graph';
@@ -7922,6 +7923,8 @@ describe('LLMView turn lifecycle', () => {
         expect(renderedMarkdown[renderedMarkdown.length - 1]).toContain('```text');
         expect(renderedMarkdown[renderedMarkdown.length - 1]).not.toContain('```mermaid');
         expect(allText(containerEl)).not.toContain('Could not render message');
+        expect(app.saveLocalStorage.mock.calls.filter(([key]) => key === 'mermaid-vault-trust')).toEqual([]);
+        expect(app.workspace.trigger.mock.calls.filter(([eventName]) => eventName === 'post-processor-change')).toEqual([]);
 
         streamCalls[0].onChunk('```mermaid\ngraph TD\nA --> B\n```');
         await flushPromises();
@@ -7936,6 +7939,10 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
 
         expect(renderedMarkdown[renderedMarkdown.length - 1]).toContain('```mermaid');
+        expect(app.saveLocalStorage.mock.calls.filter(([key]) => key === 'mermaid-vault-trust'))
+            .toEqual([['mermaid-vault-trust', true]]);
+        expect(app.workspace.trigger.mock.calls.filter(([eventName]) => eventName === 'post-processor-change'))
+            .toEqual([['post-processor-change']]);
         expect(getElementByClass(containerEl, 'pa-chat-mermaid-shell')).toBeTruthy();
         expect(getElementByClass(containerEl, 'pa-chat-mermaid-viewport')).toBeTruthy();
         const openButtons = getButtonsByClass(containerEl, 'pa-chat-mermaid-open-button');
@@ -7949,6 +7956,10 @@ describe('LLMView turn lifecycle', () => {
         expect(modal.modalEl.getAttribute('aria-labelledby')).toMatch(/^pa-chat-mermaid-modal-title-/);
         expect(getElementByClass(modal.contentEl, 'pa-chat-mermaid-modal-viewport')).toBeTruthy();
         expect(renderedMarkdown[renderedMarkdown.length - 1]).toContain('```mermaid');
+        expect(app.saveLocalStorage.mock.calls.filter(([key]) => key === 'mermaid-vault-trust'))
+            .toEqual([['mermaid-vault-trust', true]]);
+        expect(app.workspace.trigger.mock.calls.filter(([eventName]) => eventName === 'post-processor-change'))
+            .toEqual([['post-processor-change']]);
         expect(view.chatHistory.map(({ hostProvenance: _provenance, runSourceSelection: _selection, inputLineage: _lineage, ...message }) => message)).toEqual([
             { role: 'user', content: 'draw a graph' },
             { role: 'assistant', content: '```mermaid\ngraph TD\nA --> B\n```' },
@@ -12140,7 +12151,12 @@ describe('LLMView turn lifecycle', () => {
         ['Mermaid', '```mermaid\ngraph TD\nA --> B\n```\n'],
         ['lone carriage return', 'First\rSecond\n'],
     ])('preserves original native Markdown input for %s', async (name, suffix) => {
-        const app = { vault: { getConfig: () => false } } as unknown as App;
+        const app = {
+            loadLocalStorage: jest.fn(() => true),
+            saveLocalStorage: jest.fn(),
+            vault: { getConfig: () => false },
+            workspace: { trigger: jest.fn() },
+        } as unknown as App;
         const owner = new Component();
         const target = new MockElement('div') as unknown as HTMLElement;
         const markdown = name === 'short paragraph' || name === 'one long line'

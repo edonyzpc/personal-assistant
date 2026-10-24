@@ -1,4 +1,5 @@
 import { setIcon, Component, Modal, MarkdownRenderer, type App } from 'obsidian';
+import MarkdownIt from 'markdown-it';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 import { toError } from "../error-utils";
 import {
@@ -17,6 +18,9 @@ export type MermaidFenceTransform = {
 };
 
 let mermaidPreviewModalId = 0;
+let mermaidFenceParser: InstanceType<typeof MarkdownIt> | null = null;
+
+const mermaidVaultTrustKey = 'mermaid-vault-trust';
 
 interface ChatRenderHost {
     readonly app: App;
@@ -59,6 +63,26 @@ function prepareLiteralParagraph(app: App, markdown: string): string {
     return `<p>${escaped}</p>`;
 }
 
+function hasMarkdownFenceMarker(markdown: string): boolean {
+    return markdown.includes('```') || markdown.includes('~~~');
+}
+
+function containsNativeMermaidFence(markdown: string): boolean {
+    mermaidFenceParser ??= new MarkdownIt('default', { html: true }).disable('inline');
+    return mermaidFenceParser.parse(markdown, {}).some(token =>
+        token.type === 'fence'
+        && token.info.trim().split(/\s+/)[0]?.toLowerCase() === 'mermaid');
+}
+
+function ensureMermaidEnabledForRender(app: App, markdown: string): void {
+    if (!hasMarkdownFenceMarker(markdown)) return;
+    if (app.loadLocalStorage(mermaidVaultTrustKey) === true) return;
+    if (!containsNativeMermaidFence(markdown)) return;
+
+    app.saveLocalStorage(mermaidVaultTrustKey, true);
+    app.workspace.trigger('post-processor-change');
+}
+
 export function renderMarkdownWithOwner(
     host: ChatRenderHost,
     markdown: string,
@@ -67,6 +91,7 @@ export function renderMarkdownWithOwner(
     sourcePath = '',
 ): Promise<void> {
     try {
+        ensureMermaidEnabledForRender(host.app, markdown);
         return Promise.resolve(MarkdownRenderer.render(
             host.app, prepareLiteralParagraph(host.app, markdown), target, sourcePath, owner,
         ));

@@ -8,6 +8,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-074 | Chat 原生 Mermaid 渲染前自动开启 | Accepted | 当前设备当前 vault 开关；保持原生交互，已开启零写，手动关闭后下次绘图再开启 | [Record](./dec-074-chat-mermaid-auto-enable.md) |
 | DEC-073 | Chat Canvas 生成时预览与原生打开 | Accepted | 可修改默认路径后显式保存；Chat 保留原始 JSON，打开文件最新内容及完整原生交互 | [Record](./dec-073-chat-canvas-preview-native-open.md) |
 | DEC-072 | 从 Pagelet 的发现继续思考 | Accepted | 来源直达、内容线索与继续输入优先；原页查看为辅助，不扩展历史和恢复 | [Record](./dec-072-pagelet-chat-continuation.md) |
 | DEC-071 | PA UI 状态、局部刷新与宿主生命周期 | Accepted | 共享组件、交互优先及本地恢复；两项恢复策略和物理设备证据明确后置 | [Record](./dec-071-pa-ui-state-rendering.md) |

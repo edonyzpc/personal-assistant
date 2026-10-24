@@ -8,6 +8,7 @@ Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governa
 
 | Track | Work item | Feature Home | Tracker |
 | --- | --- | --- | --- |
+| Chat Mermaid Auto Enable | B-188 | [Feature Home](./chat-mermaid-auto-enable/README.md) | [Tracker](./chat-mermaid-auto-enable/tracker.md) |
 | Pagelet Chat Continuation | B-187 | [Feature Home](./pagelet-chat-continuation/README.md) | [Tracker](./pagelet-chat-continuation/tracker.md) |
 | Pagelet Reading Loop | B-176 | [Feature Home](./pagelet-reading-loop/README.md) | [Tracker](./pagelet-reading-loop/tracker.md) |
 | Pagelet Autonomous Discovery | B-175 | [Feature Home](./pagelet-autonomous-discovery/README.md) | [Tracker](./pagelet-autonomous-discovery/tracker.md) |
