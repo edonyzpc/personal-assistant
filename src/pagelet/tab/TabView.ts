@@ -18,6 +18,7 @@
 import { Component } from "obsidian";
 import type { App } from "obsidian";
 import { confirmUserAction } from "../../confirm";
+import type { PageletReadingTarget } from "../../ai-services/pagelet-handoff";
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../../platform-dom";
 import { PAGELET_DEEP_DISCOVER_WEB_CACHE_TTL_MS } from "../agent/types";
 
@@ -180,6 +181,7 @@ export class TabView {
     private readingAction: AbortController | null = null;
     private readingHandoffPending = false;
     private readingValidation: AbortController | null = null;
+    private readingValidationTask: Promise<boolean> | null = null;
     private readingMessage = "";
     private readingUnavailable = false;
     private readingExpiryTimer: PlatformTimeoutHandle | null = null;
@@ -255,6 +257,30 @@ export class TabView {
         this.savedList?.notifyLayout();
         this.readingPosition?.notifyLayout();
         if (this.readingInitialSelectionPending) void this.validateDisplayedReading();
+    }
+
+    hasLivePageletReading(target: PageletReadingTarget): boolean {
+        const candidate = this.findExactReadingCandidate(target);
+        return candidate !== null && candidate.staleStatus !== "boundary-changed";
+    }
+
+    async revealPageletReading(target: PageletReadingTarget): Promise<boolean> {
+        const reading = this.reading;
+        const candidate = this.findExactReadingCandidate(target);
+        if (!reading || !candidate || this.disposed || candidate.staleStatus === "boundary-changed") return false;
+
+        if (this.selectedReading === candidate) {
+            if (this.readingAction) return false;
+            const valid = await this.validateDisplayedReading();
+            if (this.disposed || this.reading !== reading || this.selectedReading !== candidate) return false;
+            if (valid && this.readingInitialSelectionPending) {
+                this.readingInitialSelectionPending = false;
+                reading.onSelect(candidate);
+            }
+            return this.hasLivePageletReading(target);
+        }
+
+        return this.selectReading(candidate);
     }
 
     setDisplayed(visible: boolean): void {
@@ -844,6 +870,7 @@ export class TabView {
         this.readingHandoffPending = false;
         this.readingValidation?.abort();
         this.readingValidation = null;
+        this.readingValidationTask = null;
         this.clearReadingExpiry();
         this.readingControlsEl?.remove();
         this.readingControlsEl = null;
@@ -901,7 +928,8 @@ export class TabView {
         if (this.nativeEntity === `candidate:${candidate.id}` && this.nativeBodies.length) {
             this.nativeBodies[0].update(candidate.body, this.reading.anchorPath);
             updatePageletDiscovery(body, findings, this.locale, { sourcePath: this.reading.anchorPath,
-                onConnectionNodeClick: this.options.onConnectionNodeClick });
+                onConnectionNodeClick: this.options.onConnectionNodeClick,
+                onSourceDisclosureChange: () => this.readingPosition?.capture() });
             this.readingPosition?.notifyLayout();
             return;
         }
@@ -913,6 +941,7 @@ export class TabView {
         renderDiscoveryLayout(body, findings, undefined, this.locale, {
             sourcePath: this.reading.anchorPath,
             onConnectionNodeClick: this.options.onConnectionNodeClick,
+            onSourceDisclosureChange: () => this.readingPosition?.capture(),
             reading: true,
             renderNativeMarkdown: (host, markdown) => this.mountNativeBody(host, markdown, this.reading?.anchorPath ?? ''),
         });
@@ -1065,35 +1094,47 @@ export class TabView {
         sectionSelect.value = currentId;
     }
 
-    private async validateDisplayedReading(): Promise<void> {
+    private async validateDisplayedReading(): Promise<boolean> {
         const reading = this.reading;
         const candidate = this.selectedReading;
-        if (!reading || !candidate) return;
+        if (!reading || !candidate) return false;
+        if (this.readingValidation && this.readingValidationTask
+            && !this.readingValidation.signal.aborted
+            && this.reading === reading
+            && this.selectedReading === candidate) return this.readingValidationTask;
         this.readingValidation?.abort();
         const controller = new AbortController();
         this.readingValidation = controller;
-        let valid = false;
-        try { valid = await reading.validate(candidate, controller.signal); } catch { /* Source validation is unavailable. */ }
-        if (controller.signal.aborted || this.reading !== reading || this.selectedReading !== candidate) return;
-        this.readingValidation = null;
-        if (valid) {
-            candidate.staleStatus = "fresh";
-            if (this.readingInitialSelectionPending) {
-                if (this.options.isViewDisplayed?.() ?? true) {
-                    this.readingInitialSelectionPending = false;
-                    reading.onSelect(candidate);
+        const validation = (async () => {
+            let valid = false;
+            try {
+                valid = await reading.validate(candidate, controller.signal);
+            } catch { /* Source validation is unavailable. */ }
+            if (controller.signal.aborted || this.reading !== reading || this.selectedReading !== candidate) return false;
+            this.readingValidation = null;
+            this.readingValidationTask = null;
+            if (valid) {
+                candidate.staleStatus = "fresh";
+                if (this.readingInitialSelectionPending) {
+                    if (this.options.isViewDisplayed?.() ?? true) {
+                        this.readingInitialSelectionPending = false;
+                        reading.onSelect(candidate);
+                    }
                 }
+                if (this.readingUnavailable) {
+                    this.readingUnavailable = false;
+                    this.readingMessage = "";
+                    this.refreshReadingActions();
+                    this.refreshReadingControls();
+                }
+                this.scheduleReadingExpiry(candidate);
+                return true;
             }
-            if (this.readingUnavailable) {
-                this.readingUnavailable = false;
-                this.readingMessage = "";
-                this.refreshReadingActions();
-                this.refreshReadingControls();
-            }
-            this.scheduleReadingExpiry(candidate);
-            return;
-        }
-        this.markDisplayedReadingStale();
+            this.markDisplayedReadingStale();
+            return false;
+        })();
+        this.readingValidationTask = validation;
+        return validation;
     }
 
     private readingActions(candidate: PageletAgentDeliveryCandidate): NonNullable<PanelFinding["actions"]> {
@@ -1148,12 +1189,22 @@ export class TabView {
         }, remaining);
     }
 
+    private findExactReadingCandidate(target: PageletReadingTarget): PageletAgentDeliveryCandidate | null {
+        return this.reading?.candidates.find(candidate => (
+            this.reading!.anchorPath === target.anchorPath
+            && candidate.id === target.candidateId
+            && candidate.pageletAgent.handoff.id === target.candidateId
+            && candidate.pageletAgent.handoff.anchor.path === target.anchorPath
+            && candidate.pageletAgent.handoff.bodyHash === target.bodyHash
+        )) ?? null;
+    }
+
     private async selectReading(
         candidate: PageletAgentDeliveryCandidate,
         candidates?: readonly PageletAgentDeliveryCandidate[],
-    ): Promise<void> {
+    ): Promise<boolean> {
         const reading = this.reading;
-        if (!reading || this.disposed) return;
+        if (!reading || this.disposed) return false;
         this.readingInitialSelectionPending = false;
         this.readingAction?.abort();
         this.readingHandoffPending = false;
@@ -1161,12 +1212,12 @@ export class TabView {
         this.readingAction = controller;
         let valid = false;
         try { valid = await reading.validate(candidate, controller.signal); } catch { /* Keep the current reading on validation failure. */ }
-        if (controller.signal.aborted || this.reading !== reading) return;
+        if (controller.signal.aborted || this.reading !== reading) return false;
         this.readingAction = null;
         if (!valid && (candidate.staleStatus === "boundary-changed" || candidates)) {
             this.readingMessage = pageletT("pagelet.deepDiscover.stale", this.locale);
             this.refreshReadingControls();
-            return;
+            return false;
         }
         this.rememberReadingPosition();
         this.readingValidation?.abort();
@@ -1183,6 +1234,7 @@ export class TabView {
         this.refreshReadingControls();
         if (valid) this.scheduleReadingExpiry(candidate);
         else this.clearReadingExpiry();
+        return candidate.staleStatus !== "boundary-changed";
     }
 
     private async discussReading(candidate: PageletAgentDeliveryCandidate): Promise<void> {

@@ -34,7 +34,7 @@ import { OPERATIONS_BLOCKED_MESSAGE, OPERATIONS_STAGED_MESSAGE } from '../src/ai
 import { OperationsService } from '../src/ai-services/operations/operations-service';
 import { createAiServiceHost } from '../src/tests/factories/host-factory';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
-import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
+import type { PageletChatHandoffContext, PageletReadingTarget } from '../src/ai-services/pagelet-handoff';
 import type { ComposerDraft, ComposerImageTextSource } from '../src/chat/composer-draft';
 import type { ConversationPersistence } from '../src/chat/ConversationPersistence';
 import type { MessageImage } from '../src/chat/image-types';
@@ -769,6 +769,7 @@ function createPageletHandoffContext(body = `# Verified insight\n\n${"Complete e
         triggerReason: 'explicit',
         preparedAt: 1_700_000_000_000,
         pipelineVersion: 'pagelet-deep-discover-v1',
+        bodyHash: 'a'.repeat(64),
     };
 }
 
@@ -6124,12 +6125,17 @@ describe('LLMView turn lifecycle', () => {
 
         const attachment = getElementByClass(containerEl, 'pa-chat-pagelet-attachment');
         expect(attachment.hidden).toBe(false);
+        expect(allText(attachment)).toContain('Verified insight');
+        expect(getElementByClass(attachment, 'pa-chat-pagelet-attachment__full').open).toBe(false);
+        expect(getElementByClass(attachment, 'pa-chat-pagelet-attachment__sources').open).toBe(false);
         expect(allText(attachment)).toContain(context.body);
+        expect(allText(attachment)).toContain('View sources (4)');
         expect(allText(attachment)).toContain('Source A — research/a.md');
         expect(allText(attachment)).toContain('Source B — research/b.md');
         expect(allText(attachment)).toContain('https://example.com/a');
         expect(allText(attachment)).toContain('https://example.com/b');
         expect(getTextArea(containerEl).value).toBe('Discuss this Pagelet insight and help me decide the next step.');
+        expect(allText(containerEl)).not.toContain('Summarize current note');
         expect(streamCalls).toHaveLength(0);
 
         void getButtonByText(containerEl, 'Ask').click();
@@ -6151,10 +6157,12 @@ describe('LLMView turn lifecycle', () => {
 
         expect(attachment.hidden).toBe(true);
         expect(allText(getElementByClass(containerEl, 'pa-chat-pagelet-saved'))).toContain(context.body);
+        expect(allText(getElementByClass(containerEl, 'pa-chat-pagelet-saved'))).toContain('From Pagelet: Verified insight');
         const restored = createView({ chatHistoryManager: manager });
         await restored.view.onOpen();
         for (let i = 0; i < 5; i++) await flushPromises();
         expect(allText(getElementByClass(restored.containerEl, 'pa-chat-pagelet-saved'))).toContain(context.body);
+        expect(allText(getElementByClass(restored.containerEl, 'pa-chat-pagelet-saved'))).toContain('From Pagelet: Verified insight');
         await restored.view.onClose();
         getTextArea(containerEl).value = 'A follow-up question';
         void getButtonByText(containerEl, 'Ask').click();
@@ -6163,6 +6171,163 @@ describe('LLMView turn lifecycle', () => {
         expect((streamCalls[1].chatHistory as ChatMessage[]).find(message => message.pageletAttachment)?.pageletAttachment).toEqual(savedAttachment);
         streamCalls[1].resolve();
         await flushPromises();
+    });
+
+    it.each([
+        {
+            caseName: 'AI ready',
+            createOptions: {},
+            expected: 'Summarize current note',
+        },
+        {
+            caseName: 'AI config missing',
+            createOptions: { setupIssue: 'token_missing', inlineSetup: true },
+            expected: 'Add your API token to get started.',
+        },
+    ] as const)('restores the applicable empty state after Remove Pagelet context (%s)', async ({
+        caseName: _caseName,
+        createOptions,
+        expected,
+    }) => {
+        const { view, containerEl } = createView(createOptions);
+        await view.onOpen();
+        expect(allText(containerEl)).toContain(expected);
+        await expect(view.preparePageletHandoff(createPageletHandoffContext())).resolves.toEqual({
+            status: 'prepared',
+        });
+
+        if (expected === 'Summarize current note') {
+            expect(allText(containerEl)).not.toContain(expected);
+        } else {
+            expect(allText(containerEl)).toContain(expected);
+            expect(allText(containerEl)).not.toContain('Summarize current note');
+        }
+        getTextArea(containerEl).value = 'Keep my in-progress question';
+
+        getButtonByClass(containerEl, 'pa-chat-pagelet-attachment__remove').click();
+        await flushPromises();
+
+        expect(getElementByClass(containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(true);
+        expect(allText(containerEl)).toContain(expected);
+        expect(getTextArea(containerEl).value).toBe('Keep my in-progress question');
+        expect(streamCalls).toEqual([]);
+    });
+
+    it('opens deduplicated Pagelet sources through exact current files without disturbing Chat', async () => {
+        const { view, containerEl, app, markdownLeaf } = createView();
+        const sourceAFile = new TFile();
+        const sourceBFile = new TFile();
+        Object.assign(sourceAFile, { path: 'research/a.md' });
+        Object.assign(sourceBFile, { path: 'research/b.md' });
+        const tabLeaf = { openFile: jest.fn(async (_file: TFile) => undefined) };
+        const revealOrder: string[] = [];
+        const workspace = Object.assign(app.workspace, {
+            getLeaf: jest.fn((_kind: 'tab') => tabLeaf),
+            getLeavesOfType: jest.fn((_type: 'markdown') => [markdownLeaf]),
+            revealLeaf: jest.fn(async (_leaf: unknown) => {
+                revealOrder.push('reveal');
+            }),
+            setActiveLeaf: jest.fn((_leaf: unknown, _params: { focus: boolean }) => {
+                revealOrder.push('focus');
+            }),
+        });
+        Object.assign(app.vault, {
+            getAbstractFileByPath: jest.fn((path: string) => {
+            if (path === 'research/a.md') return sourceAFile;
+            if (path === 'research/b.md') return sourceBFile;
+            return null;
+            }),
+        });
+        markdownLeaf.view.file = sourceAFile;
+        await view.onOpen();
+
+        const context: PageletChatHandoffContext = {
+            ...createPageletHandoffContext(),
+            sources: [
+                { path: 'research/a.md', mtime: 11, size: 101, contentHash: 'a-hash' },
+                { path: 'research/a.md', mtime: 11, size: 101, contentHash: 'a-hash' },
+                { path: 'research/b.md', mtime: 12, size: 102, contentHash: 'b-hash' },
+            ],
+            sourceRefs: [
+                { path: 'research/a.md', title: 'Source A' },
+                { path: 'research/a.md', title: 'Source A duplicate' },
+                { path: 'research/b.md', title: 'Source B' },
+            ],
+            webUrls: [
+                'https://example.com/page#one',
+                'https://example.com/page#one',
+                'https://example.com/page#two',
+                'https://example.com/other',
+            ],
+        };
+        await expect(view.preparePageletHandoff(context)).resolves.toEqual({ status: 'prepared' });
+
+        const attachment = getElementByClass(containerEl, 'pa-chat-pagelet-attachment');
+        expect(allText(attachment)).toContain('View sources (5)');
+        expect(getElementsByClass(attachment, 'pa-chat-pagelet-attachment__source-note')).toHaveLength(2);
+        const webLinks = getElementsByClass(attachment, 'pa-chat-pagelet-attachment__source-web');
+        expect(webLinks.map(link => link.getAttribute('href'))).toEqual([
+            'https://example.com/page#one',
+            'https://example.com/page#two',
+            'https://example.com/other',
+        ]);
+        getTextArea(containerEl).value = 'Do not replace this draft';
+
+        getButtonByClass(attachment, 'pa-chat-pagelet-attachment__anchor-note').click();
+        await flushPromises();
+        expect(allText(getElementByClass(attachment, 'pa-chat-pagelet-attachment__source-status')))
+            .toContain("This note can't be opened right now");
+        expect(workspace.getLeaf).not.toHaveBeenCalled();
+        expect(app.workspace.openLinkText).not.toHaveBeenCalled();
+
+        getElementsByClass(attachment, 'pa-chat-pagelet-attachment__source-note')[0]!.click();
+        await flushPromises();
+        expect(revealOrder).toEqual(['reveal', 'focus']);
+        expect(workspace.setActiveLeaf).toHaveBeenCalledWith(markdownLeaf, { focus: true });
+        expect(tabLeaf.openFile).not.toHaveBeenCalled();
+
+        getElementsByClass(attachment, 'pa-chat-pagelet-attachment__source-note')[1]!.click();
+        await flushPromises();
+        expect(workspace.getLeaf).toHaveBeenCalledWith('tab');
+        expect(tabLeaf.openFile).toHaveBeenCalledWith(sourceBFile);
+        expect(getTextArea(containerEl).value).toBe('Do not replace this draft');
+        expect(streamCalls).toEqual([]);
+    });
+
+    it('falls back to the retained Pagelet body when live reading reveal fails', async () => {
+        const { view, containerEl, plugin } = createView();
+        const hasLivePageletReading = jest.fn((_target: PageletReadingTarget) => true);
+        const revealPageletReading = jest.fn(async (_target: PageletReadingTarget) => false);
+        Object.assign(plugin, { hasLivePageletReading, revealPageletReading });
+        await view.onOpen();
+        const bodyHash = 'b'.repeat(64);
+        const context: PageletChatHandoffContext = {
+            ...createPageletHandoffContext(),
+            bodyHash,
+        };
+        await expect(view.preparePageletHandoff(context)).resolves.toEqual({ status: 'prepared' });
+
+        const attachment = getElementByClass(containerEl, 'pa-chat-pagelet-attachment');
+        const full = getElementByClass(attachment, 'pa-chat-pagelet-attachment__full');
+        expect(full.open).toBe(false);
+        getTextArea(containerEl).value = 'Keep this draft while returning';
+        getButtonByClass(attachment, 'pa-chat-pagelet-attachment__reveal').click();
+        await flushPromises();
+
+        expect(hasLivePageletReading).toHaveBeenCalledWith({
+            anchorPath: context.anchor.path,
+            candidateId: context.id,
+            bodyHash,
+        });
+        expect(revealPageletReading).toHaveBeenCalledWith({
+            anchorPath: context.anchor.path,
+            candidateId: context.id,
+            bodyHash,
+        });
+        expect(full.open).toBe(true);
+        expect(allText(attachment)).toContain('The original finding is no longer available.');
+        expect(getTextArea(containerEl).value).toBe('Keep this draft while returning');
+        expect(streamCalls).toEqual([]);
     });
 
     it('refuses stale Pagelet preparation without changing the current conversation or draft', async () => {
@@ -6257,6 +6422,7 @@ describe('LLMView turn lifecycle', () => {
 
         expect(getElementByClass(containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(true);
         expect(getTextArea(containerEl).value).toBe('');
+        expect(allText(containerEl)).toContain('Summarize current note');
     });
 
     it('keeps the current conversation intact when chat history is unavailable', async () => {

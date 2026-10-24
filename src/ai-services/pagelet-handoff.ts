@@ -56,6 +56,13 @@ export interface PageletChatHandoffContext {
     readonly inputEvidence?: PageletInputEvidence;
 }
 
+/** A one-shot navigation identity for an already-live Pagelet reading. */
+export interface PageletReadingTarget {
+    readonly anchorPath: string;
+    readonly candidateId: string;
+    readonly bodyHash: string;
+}
+
 /** A successful Chat intake retained with its owning user turn, not user-authored authority. */
 export interface PageletChatAttachment {
     readonly schemaVersion: 1;

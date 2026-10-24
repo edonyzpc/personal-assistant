@@ -49,6 +49,8 @@ export interface ChatHostActions {
     readAgentDebugTrace?: ChatHost["readAgentDebugTrace"];
     readAgentDebugContents?: ChatHost["readAgentDebugContents"];
     subscribeAgentDebug?: ChatHost["subscribeAgentDebug"];
+    hasLivePageletReading?: ChatHost["hasLivePageletReading"];
+    revealPageletReading?: ChatHost["revealPageletReading"];
     isOperationsAgentEnabled(): boolean;
     log(message: string, ...args: unknown[]): void;
     getAISetupIssue(): string | null;
@@ -393,6 +395,8 @@ export class ChatPluginIntegration {
             readAgentDebugTrace: actions.readAgentDebugTrace,
             readAgentDebugContents: actions.readAgentDebugContents,
             subscribeAgentDebug: actions.subscribeAgentDebug,
+            hasLivePageletReading: target => actions.hasLivePageletReading?.(target) ?? false,
+            revealPageletReading: target => actions.revealPageletReading?.(target) ?? Promise.resolve(false),
             settings: this.dependencies.getSettings(),
             get isOperationsAgentEnabled() {
                 return actions.isOperationsAgentEnabled();

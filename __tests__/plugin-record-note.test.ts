@@ -428,6 +428,7 @@ import type {
     PageletDetailPayload,
     PageletDetailReadingPayload,
 } from '../src/pagelet/tab/types';
+import type { PageletReadingTarget } from '../src/ai-services/pagelet-handoff';
 import { createProviderRequestScope } from '../src/ai-services/obsidian-fetch';
 import type {
     ConfirmedMemoryRecord,
@@ -10462,6 +10463,57 @@ describe('Pagelet detail workspace leaf', () => {
             reading,
         };
     }
+
+    function makeExactReadingTarget(): PageletReadingTarget {
+        return {
+            anchorPath: 'notes/a.md',
+            candidateId: 'candidate-a',
+            bodyHash: 'a'.repeat(64),
+        };
+    }
+
+    it('reveals only an exact live Detail reading after the leaf remains current', async () => {
+        const target = makeExactReadingTarget();
+        const detailView = Object.create(PageletDetailView.prototype) as PageletDetailView;
+        detailView.getNoteAnchorPath = jest.fn(() => target.anchorPath);
+        detailView.isRestoredPlaceholder = jest.fn(() => false);
+        detailView.hasLivePageletReading = jest.fn((candidate: PageletReadingTarget) => (
+            candidate.bodyHash === target.bodyHash
+        ));
+        detailView.revealPageletReading = jest.fn(async () => true);
+        detailView.notifyDisplayed = jest.fn();
+        const leaf = {
+            view: detailView,
+            loadIfDeferred: jest.fn(async () => undefined),
+        };
+        let leaves = [leaf];
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        installPluginShellOwners(plugin);
+        plugin.app = {
+            workspace: {
+                getLeavesOfType: jest.fn(() => leaves),
+                revealLeaf: jest.fn(async () => undefined),
+                setActiveLeaf: jest.fn((_candidate: unknown, _params: { focus: boolean }) => undefined),
+            },
+        };
+
+        expect(plugin.hasLivePageletReading(target)).toBe(true);
+        expect(plugin.hasLivePageletReading({ ...target, bodyHash: 'b'.repeat(64) })).toBe(false);
+        await expect(plugin.revealPageletReading(target)).resolves.toBe(true);
+        expect(leaf.loadIfDeferred).toHaveBeenCalled();
+        expect(detailView.revealPageletReading).toHaveBeenCalledWith(target);
+        expect(plugin.app.workspace.revealLeaf).toHaveBeenCalledWith(leaf);
+        expect(plugin.app.workspace.setActiveLeaf).toHaveBeenCalledWith(leaf, { focus: true });
+        expect(detailView.notifyDisplayed).toHaveBeenCalled();
+
+        detailView.revealPageletReading = jest.fn(async () => {
+            leaves = [];
+            return true;
+        });
+        leaves = [leaf];
+        await expect(plugin.revealPageletReading(target)).resolves.toBe(false);
+        expect(plugin.app.workspace.revealLeaf).toHaveBeenCalledTimes(1);
+    });
 
     it('sends a first-open note reading payload to the newly created Detail leaf', async () => {
         const detailView = Object.create(PageletDetailView.prototype) as PageletDetailView;

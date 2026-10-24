@@ -397,7 +397,7 @@ import {
 } from "../src/pagelet/tab/PageletDetailView";
 
 describe("Pagelet panel and tab view regressions", () => {
-    function readingCandidate(id: string): PageletAgentDeliveryCandidate {
+    function readingCandidate(id: string, bodyHash = `hash-${id}`): PageletAgentDeliveryCandidate {
         return {
             id,
             title: `Reading ${id}`,
@@ -405,7 +405,7 @@ describe("Pagelet panel and tab view regressions", () => {
             body: `## Full ${id}\n\nFirst paragraph.\n\n### Last section\nThe complete ending for ${id}.`,
             sourceRefs: [{ path: "notes/anchor.md", title: "Anchor" }],
             pageletAgent: {
-                handoff: { anchor: { path: "notes/anchor.md" } },
+                handoff: { id, anchor: { path: "notes/anchor.md" }, bodyHash },
             },
         } as PageletAgentDeliveryCandidate;
     }
@@ -854,6 +854,111 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(content.querySelector('.pa-pagelet-tab-body')?.textContent).toContain(candidate.body);
         expect(reading.onSelect).toHaveBeenCalledWith(candidate);
         await view.onClose();
+    });
+
+    it("reveals only the exact live reading and reuses an already selected candidate", async () => {
+        const first = readingCandidate("first");
+        const second = readingCandidate("second");
+        const validate = jest.fn<PageletDetailReadingPayload["validate"]>(async candidate => (
+            candidate.staleStatus !== "boundary-changed"
+        ));
+        const reading = readingPayload({
+            candidates: [first, second],
+            selectedId: second.id,
+            positions: {
+                first: { scrollTop: 91, sourcesExpanded: [false] },
+                second: { scrollTop: 371, sourcesExpanded: [true] },
+            },
+            validate,
+        });
+        const view = new PageletDetailView({} as never, () => "en");
+        const content = view.contentEl as unknown as FakeElement;
+        content.isConnected = true;
+        view.setPayload({ title: "Pagelet", content: [], locale: "en", reading });
+        await view.onOpen();
+        await Promise.resolve();
+        await Promise.resolve();
+        const initialSelectCount = (reading.onSelect as jest.Mock).mock.calls.length;
+        const selectedBody = content.querySelector(".pa-pagelet-panel-timeline-insight");
+
+        expect(view.hasLivePageletReading({
+            anchorPath: "notes/anchor.md", candidateId: second.id, bodyHash: "hash-second",
+        })).toBe(true);
+        await expect(view.revealPageletReading({
+            anchorPath: "notes/anchor.md", candidateId: second.id, bodyHash: "hash-second",
+        })).resolves.toBe(true);
+        expect(content.querySelector(".pa-pagelet-panel-timeline-insight")).toBe(selectedBody);
+        expect(reading.onSelect).toHaveBeenCalledTimes(initialSelectCount);
+
+        await expect(view.revealPageletReading({
+            anchorPath: "notes/anchor.md", candidateId: first.id, bodyHash: "hash-first",
+        })).resolves.toBe(true);
+        expect(reading.onSelect).toHaveBeenCalledWith(first);
+        expect(content.querySelector(".pa-pagelet-tab-body")?.scrollTop).toBe(91);
+
+        await expect(view.revealPageletReading({
+            anchorPath: "notes/anchor.md", candidateId: first.id, bodyHash: "wrong-hash",
+        })).resolves.toBe(false);
+        first.staleStatus = "boundary-changed";
+        expect(view.hasLivePageletReading({
+            anchorPath: "notes/anchor.md", candidateId: first.id, bodyHash: "hash-first",
+        })).toBe(false);
+        await expect(view.revealPageletReading({
+            anchorPath: "notes/anchor.md", candidateId: first.id, bodyHash: "hash-first",
+        })).resolves.toBe(false);
+        expect(reading.onSelect).toHaveBeenCalledTimes(initialSelectCount + 1);
+        await view.onClose();
+    });
+
+    it("captures reading source disclosure changes before a hidden zero-layout hide and restore", async () => {
+        const candidate = readingCandidate("source-disclosure");
+        const reading = readingPayload({
+            candidates: [candidate],
+            selectedId: candidate.id,
+            positions: { [candidate.id]: { scrollTop: 123, sourcesExpanded: [false] } },
+        });
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const tab = new TabView("en");
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Pagelet — Detail View", [], { reading });
+        const body = container.querySelector(".pa-pagelet-tab-body")!;
+        const portRect = body.getBoundingClientRect();
+        let hidden = false;
+        body.getBoundingClientRect = () => hidden
+            ? { ...portRect, width: 0, height: 0, bottom: 0 } as DOMRect
+            : portRect;
+        const toggle = container.querySelector(".pa-pagelet-panel-source-toggle")!;
+        const chips = () => container.querySelector(".pa-pagelet-panel-source-chips")!;
+
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await toggle.click();
+        expect(toggle.getAttribute("aria-expanded")).toBe("true");
+        expect(chips().getAttribute("hidden")).toBeNull();
+
+        hidden = true;
+        tab.setDisplayed(false);
+        hidden = false;
+        tab.setDisplayed(true);
+        expect(body.scrollTop).toBe(123);
+        expect(toggle.getAttribute("aria-expanded")).toBe("true");
+        expect(chips().getAttribute("hidden")).toBeNull();
+
+        await toggle.click();
+        expect(toggle.getAttribute("aria-expanded")).toBe("false");
+        expect(chips().getAttribute("hidden")).toBe("");
+
+        hidden = true;
+        tab.setDisplayed(false);
+        hidden = false;
+        tab.setDisplayed(true);
+        expect(body.scrollTop).toBe(123);
+        expect(toggle.getAttribute("aria-expanded")).toBe("false");
+        expect(chips().getAttribute("hidden")).toBe("");
+        tab.destroy();
     });
 
     it("updates Detail activity without rebuilding reading, and disposes its subscription", async () => {

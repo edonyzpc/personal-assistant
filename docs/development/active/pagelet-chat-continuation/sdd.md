@@ -1,15 +1,15 @@
 # B-187 Pagelet Chat Continuation SDD
 
-Document status: Draft
-Updated: 2026-10-23
+Document status: Approved
+Updated: 2026-10-24
 Work item: B-187
-Authority: 基于当前源码的实施设计；拟新增接口不是现有能力，文档交付不代表产品实施授权。
+Authority: Owner 于 2026-10-23 明确要求“按照b-187方案设计完成所有的开发测试”，据此批准本 SDD 的范围内实施与必要验证；拟新增接口不代表基线已有能力。
 Product spec: [从 Pagelet 的发现继续思考](../../../product/specs/pagelet-chat-continuation-product-spec.md)
 Tracker: [Development Tracker](./tracker.md)
 
 ## Current Source Baseline
 
-2026-10-23 核对于 `43050df2`（v3.0.1）。以下为源码事实；本轮没有运行产品测试或应用验收。
+2026-10-23 设计轮核对于 `43050df2`（v3.0.1）。以下保留实施前源码事实；本轮开发与应用验收证据由 Tracker 承接。
 此前 v3.0.0 测试库观察和本对话 HTML 原型仅提供界面参考，不作为该基线的通过证据。
 
 | 现有入口/契约 | 已有行为与本次缺口 |
@@ -42,7 +42,7 @@ Tracker: [Development Tracker](./tracker.md)
 5. 新控件沿现有 DOM 构建和局部 `pa-` 样式；复用主题、限高/滚动、可换行与键盘操作。
    中文文案以 Spec 为准，英文放现有 locale 命名空间。原型审阅标记不进入产品。
 
-**笔记导航（Proposed：ChatView 局部 helper，名称可按现有风格确定）**：
+**笔记导航（已实施：ChatView 的 `openPageletAttachmentNote`）**：
 按真实 vault 路径查到现存文件后，寻找已打开该文件的 Markdown leaf 并唤回；否则用原生新 tab
 的 `openFile`。文件不存在则在附件处给出 Spec 的提示，不走会创建同名笔记的链接解析路径。
 不调用交接方法、不重设当前对话、不修改 ComposerDraft；也不复用任意其他 Markdown leaf。
@@ -51,7 +51,7 @@ Tracker: [Development Tracker](./tracker.md)
 
 ### 辅助：只定位存活的同一发现
 
-辅助项在核心之后接入。下列类型/方法均为 **Proposed**，是局部实施建议，不是新增持久协议：
+辅助项已在核心之后窄接线实施。下列类型/方法均为当前局部接口，不是新增持久协议：
 
 ```ts
 type PageletReadingTarget = {
@@ -111,6 +111,11 @@ flowchart LR
 事件随现有附件节点/视图释放；异步返回沿当前视图、候选与取消检查，不新增监听器或后台任务。
 核心无需改变 Detail；辅助项也只增加窄包装与选择结果接线，不向 PageletHost 复制 ChatHost 接口。
 
+实机验收补充：Detail 来源是普通 disclosure，既有 toggle 只更新 DOM；若隐藏通知到达时布局已为零，
+阅读控制器无法补采这一变化。为满足同一发现的展开连续性，在该既有 click handler 完成 DOM 更新后，
+经窄可选回调通知 TabView 的现有 `readingPosition.capture()`；仍由 `onSnapshot` 维护原
+`lastPosition/onPositionChange`。不新增监听器、store、定时器，不改变零尺寸布局拒绝采样的边界。
+
 ## Data, Compatibility And Rollback
 
 不修改 handoff schema、聊天保存条件、设置、来源权限、provider 或依赖，无迁移。
@@ -141,6 +146,6 @@ flowchart LR
 没有已确认的阻塞性设计问题。源码支持辅助导航窄接线；若实际需要新增恢复、存储或发现调用，
 按已批准范围后置该辅助项并在 Tracker 记明原因，不扩大核心。
 
-产品范围由 Owner 2026-10-23 的收敛指令与 DEC-072 承接；本 SDD 是本轮新完成的技术草案，
-不伪记为已获实施批准。后续明确授权按 B-187 实现时，兼容性实施细节可正常收敛并将 SDD 更新为 Approved；
-不重复询问已有产品选择，超出已确认边界的偏离仍需单独决定。
+产品范围由 Owner 2026-10-23 的收敛指令与 DEC-072 承接；同日 Owner 明确要求按 B-187
+方案完成所有开发测试，实施授权自该指令生效，不回写此前文档阶段的授权。兼容性实施细节
+可在本边界内收敛；超出已确认边界的实质偏离仍需单独决定。

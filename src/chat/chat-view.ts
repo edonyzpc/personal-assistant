@@ -41,6 +41,7 @@ import {
 } from './execution-summary';
 import { confirmChatAction, pickChatConversation } from './modals';
 import type { ChatHost } from './ChatHost';
+import { extractPageletInsightTitle } from '../pagelet/agent/delivery-adapter';
 import { matchCanvasCodeElements, parseCanvasBlocks } from './canvas/canvas-blocks';
 import { mountCanvasPreview } from './canvas/mountCanvasPreview';
 import type { ChatHistoryManager } from './chat-history-manager';
@@ -315,24 +316,44 @@ function isInterruptedAssistant(message: ChatMessage): boolean {
             || warning.type === 'user_abort' || warning.type === 'agent_interrupted') ?? false);
 }
 
-function uniquePageletVaultSources(context: PageletChatHandoffContext): string[] {
-    const titleByPath = new Map(
-        context.sourceRefs.map((source) => [source.path, source.title] as const),
-    );
-    const paths = [
-        context.anchor.path,
-        ...context.sources.map((source) => source.path),
-        ...context.sourceRefs.map((source) => source.path),
-    ];
-    const seen = new Set<string>();
-    const result: string[] = [];
-    for (const path of paths) {
-        if (seen.has(path)) continue;
-        seen.add(path);
-        const title = titleByPath.get(path);
-        result.push(title && title !== path ? `${title} — ${path}` : path);
+type PageletNoteSource = { path: string; title: string };
+type PageletAttachmentSources = {
+    anchor: PageletNoteSource;
+    notes: PageletNoteSource[];
+    webUrls: string[];
+};
+
+function pageletSourceTitle(path: string, title: string | undefined): string {
+    return title && title !== path ? title : path.split('/').pop() ?? path;
+}
+
+function pageletAttachmentSources(context: PageletChatHandoffContext): PageletAttachmentSources {
+    const titleByPath = new Map<string, string | undefined>();
+    for (const source of context.sourceRefs) {
+        if (!titleByPath.has(source.path)) titleByPath.set(source.path, source.title);
     }
-    return result;
+    const anchorPath = context.anchor.path;
+    const anchor: PageletNoteSource = {
+        path: anchorPath,
+        title: pageletSourceTitle(anchorPath, titleByPath.get(anchorPath)),
+    };
+    const notes: PageletNoteSource[] = [];
+    const seenNotes = new Set<string>();
+    for (const path of [...context.sources.map(source => source.path),
+        ...context.sourceRefs.map(source => source.path)]) {
+        if (path === anchorPath || seenNotes.has(path)) continue;
+        seenNotes.add(path);
+        notes.push({ path, title: pageletSourceTitle(path, titleByPath.get(path)) });
+    }
+
+    const webUrls: string[] = [];
+    const seenWebUrls = new Set<string>();
+    for (const url of context.webUrls) {
+        if (!url || seenWebUrls.has(url)) continue;
+        seenWebUrls.add(url);
+        webUrls.push(url);
+    }
+    return { anchor, notes, webUrls };
 }
 
 type MarkdownRenderOptions = {
@@ -656,11 +677,134 @@ export class LLMView extends ItemView {
             },
         });
         pageletAttachment.hidden = true;
+        let renderEmptyStateForPagelet: (() => void) | null = null;
+        this.registerViewTeardown(() => { renderEmptyStateForPagelet = null; });
+        const renderPageletReadingDetails = (parent: HTMLElement, context: PageletChatHandoffContext) => {
+            const sources = pageletAttachmentSources(context);
+            const sourceStatus = parent.createDiv({
+                cls: 'pa-chat-pagelet-attachment__source-status',
+                attr: { role: 'status' },
+            });
+            sourceStatus.hidden = true;
+            const openNoteSource = async (source: PageletNoteSource) => {
+                const opened = await this.openPageletAttachmentNote(source.path);
+                if (!this.containerEl.isConnected || !this.containerEl.contains(sourceStatus)) return;
+                sourceStatus.hidden = opened;
+                sourceStatus.textContent = opened
+                    ? ''
+                    : t('plugin.chat.pageletAttachment.noteUnavailable');
+            };
+
+            const anchorButton = parent.createEl('button', {
+                cls: 'pa-chat-pagelet-attachment__anchor-note',
+                text: t('plugin.chat.pageletAttachment.originalNote', { note: sources.anchor.title }),
+                attr: { type: 'button' },
+            });
+            anchorButton.onclick = () => { void openNoteSource(sources.anchor); };
+
+            const sourceCount = sources.notes.length + sources.webUrls.length;
+            if (sourceCount > 0) {
+                const sourceDetails = parent.createEl('details', {
+                    cls: 'pa-chat-pagelet-attachment__sources',
+                });
+                sourceDetails.createEl('summary', {
+                    text: t('plugin.chat.pageletAttachment.sourceCount', { count: sourceCount }),
+                });
+                const sourceBody = sourceDetails.createDiv({
+                    cls: 'pa-chat-pagelet-attachment__disclosure-body',
+                });
+                const noteList = sourceBody.createEl('ul');
+                for (const source of sources.notes) {
+                    const item = noteList.createEl('li');
+                    const sourceButton = item.createEl('button', {
+                        cls: 'pa-chat-pagelet-attachment__source-note',
+                        text: source.title === source.path ? source.path : `${source.title} — ${source.path}`,
+                        attr: { type: 'button' },
+                    });
+                    sourceButton.onclick = () => { void openNoteSource(source); };
+                }
+                if (sources.webUrls.length > 0) {
+                    const webList = sourceBody.createEl('ul');
+                    for (const url of sources.webUrls) {
+                        webList.createEl('li').createEl('a', {
+                            cls: 'pa-chat-pagelet-attachment__source-web',
+                            text: url,
+                            attr: {
+                                href: url,
+                                target: '_blank',
+                                rel: 'noopener noreferrer',
+                            },
+                        });
+                    }
+                }
+                sourceBody.createDiv({
+                    cls: 'pa-chat-pagelet-attachment__source-hint',
+                    text: t('plugin.chat.pageletAttachment.sourceHint'),
+                });
+            }
+
+            const fullDetails = parent.createEl('details', {
+                cls: 'pa-chat-pagelet-attachment__full',
+            });
+            fullDetails.createEl('summary', {
+                text: t('plugin.chat.pageletAttachment.fullDiscovery'),
+            });
+            const fullBody = fullDetails.createDiv({
+                cls: 'pa-chat-pagelet-attachment__disclosure-body',
+            });
+            fullBody.createDiv({
+                cls: 'pa-chat-pagelet-attachment__body',
+                text: context.body,
+            });
+            if (context.whyNow.length > 0) {
+                const whyNow = fullBody.createDiv({ cls: 'pa-chat-pagelet-attachment__section' });
+                whyNow.createDiv({
+                    cls: 'pa-chat-pagelet-attachment__label',
+                    text: t('plugin.chat.pageletAttachment.whyNow'),
+                });
+                const list = whyNow.createEl('ul');
+                for (const reason of context.whyNow) list.createEl('li', { text: reason });
+            }
+
+            if (context.bodyHash && this.host.hasLivePageletReading?.({
+                anchorPath: context.anchor.path,
+                candidateId: context.id,
+                bodyHash: context.bodyHash,
+            }) === true) {
+                const revealStatus = fullBody.createDiv({
+                    cls: 'pa-chat-pagelet-attachment__reveal-status',
+                    attr: { role: 'status' },
+                });
+                revealStatus.hidden = true;
+                const revealButton = fullBody.createEl('button', {
+                    cls: 'pa-chat-pagelet-attachment__reveal',
+                    text: t('plugin.chat.pageletAttachment.viewInPagelet'),
+                    attr: { type: 'button' },
+                });
+                const target = {
+                    anchorPath: context.anchor.path,
+                    candidateId: context.id,
+                    bodyHash: context.bodyHash,
+                };
+                revealButton.onclick = () => {
+                    void Promise.resolve(this.host.revealPageletReading?.(target) ?? Promise.resolve(false))
+                        .catch(() => false)
+                        .then(revealed => {
+                            if (!this.containerEl.isConnected || !this.containerEl.contains(fullDetails) || revealed) return;
+                            fullDetails.open = true;
+                            revealStatus.hidden = false;
+                            revealStatus.textContent = t('plugin.chat.pageletAttachment.revealUnavailable');
+                        });
+                };
+            }
+        };
+
         const renderPageletHandoff = () => {
             pageletAttachment.empty();
             const context = this.pendingPageletHandoff;
             const needsReselection = composerDraft.snapshot('').pageletReselectionRequired === true;
             pageletAttachment.hidden = context === null && !needsReselection;
+            renderEmptyStateForPagelet?.();
             if (!context && !needsReselection) return;
 
             const header = pageletAttachment.createDiv({ cls: 'pa-chat-pagelet-attachment__header' });
@@ -696,47 +840,18 @@ export class LLMView extends ItemView {
             }
 
             pageletAttachment.createDiv({
-                cls: 'pa-chat-pagelet-attachment__body',
-                text: context.body,
+                cls: 'pa-chat-pagelet-attachment__content-clue',
+                text: extractPageletInsightTitle(context.body),
             });
-
-            if (context.whyNow.length > 0) {
-                const whyNow = pageletAttachment.createDiv({ cls: 'pa-chat-pagelet-attachment__section' });
-                whyNow.createDiv({
-                    cls: 'pa-chat-pagelet-attachment__label',
-                    text: t("plugin.chat.pageletAttachment.whyNow"),
-                });
-                const list = whyNow.createEl('ul');
-                for (const reason of context.whyNow) list.createEl('li', { text: reason });
-            }
-
-            const vaultSources = uniquePageletVaultSources(context);
-            const sources = pageletAttachment.createDiv({ cls: 'pa-chat-pagelet-attachment__section' });
-            sources.createDiv({
-                cls: 'pa-chat-pagelet-attachment__label',
-                text: t("plugin.chat.pageletAttachment.sources"),
-            });
-            const sourceList = sources.createEl('ul');
-            for (const source of vaultSources) sourceList.createEl('li', { text: source });
-
-            if (context.webUrls.length > 0) {
-                const webSources = pageletAttachment.createDiv({ cls: 'pa-chat-pagelet-attachment__section' });
-                webSources.createDiv({
-                    cls: 'pa-chat-pagelet-attachment__label',
-                    text: t("plugin.chat.pageletAttachment.webSources"),
-                });
-                const webList = webSources.createEl('ul');
-                for (const url of context.webUrls) webList.createEl('li', { text: url });
-            }
-
             pageletAttachment.createDiv({
                 cls: 'pa-chat-pagelet-attachment__verified-at',
-                text: t("plugin.chat.pageletAttachment.verifiedAt", {
+                text: t("plugin.chat.pageletAttachment.preparedAt", {
                     time: new Date(context.preparedAt).toLocaleString(
                         getPluginUiLanguage() === 'zh' ? 'zh-CN' : 'en-US',
                     ),
                 }),
             });
+            renderPageletReadingDetails(pageletAttachment, context);
         };
         this.renderPageletHandoffForOpenView = renderPageletHandoff;
         renderPageletHandoff();
@@ -3068,6 +3183,8 @@ export class LLMView extends ItemView {
                 return;
             }
 
+            if (this.pendingPageletHandoff !== null) return;
+
             const hasNote = isMarkdownNoteAvailable();
             emptyStateEl = this.responseDiv.createDiv({ cls: 'pa-chat-empty-state' });
             emptyStateEl.createDiv({ cls: 'pa-chat-empty-title', text: t("plugin.chat.empty.askTitle") });
@@ -3096,6 +3213,7 @@ export class LLMView extends ItemView {
                 emptyStateEl.createDiv({ cls: 'pa-chat-empty-hint', text: t("plugin.chat.hint.openNoteToUse") });
             }
         };
+        renderEmptyStateForPagelet = renderEmptyState;
         const refreshEmptyStateForWorkspace = () => {
             if (!isCurrentSession() || !emptyStateEl) return;
             renderEmptyState();
@@ -3822,11 +3940,20 @@ export class LLMView extends ItemView {
         };
         const renderSavedPageletAttachment = (messageDiv: HTMLElement, attachment: PageletChatAttachment) => {
             const details = messageDiv.createEl('details', { cls: 'pa-chat-pagelet-attachment pa-chat-pagelet-saved' });
-            details.createEl('summary', { text: t('plugin.chat.pageletAttachment.title') });
-            details.createDiv({ cls: 'pa-chat-pagelet-attachment__body', text: attachment.handoff.body });
-            const sources = details.createEl('ul');
-            for (const source of uniquePageletVaultSources(attachment.handoff)) sources.createEl('li', { text: source });
-            for (const url of attachment.handoff.webUrls) sources.createEl('li', { text: url });
+            details.createEl('summary', {
+                text: t('plugin.chat.pageletAttachment.historyTitle', {
+                    title: extractPageletInsightTitle(attachment.handoff.body),
+                }),
+            });
+            details.createDiv({
+                cls: 'pa-chat-pagelet-attachment__verified-at',
+                text: t('plugin.chat.pageletAttachment.preparedAt', {
+                    time: new Date(attachment.handoff.preparedAt).toLocaleString(
+                        getPluginUiLanguage() === 'zh' ? 'zh-CN' : 'en-US',
+                    ),
+                }),
+            });
+            renderPageletReadingDetails(details, attachment.handoff);
         };
         const createMessageElement = (
             message: ChatMessage,
@@ -9390,6 +9517,24 @@ export class LLMView extends ItemView {
         if (activeFile?.path) return activeFile.path;
         const markdownLeaf = this.getMarkdownTargetLeaf();
         return markdownLeaf?.view instanceof MarkdownView ? markdownLeaf.view.file?.path ?? "" : "";
+    }
+
+    private async openPageletAttachmentNote(path: string): Promise<boolean> {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) return false;
+        try {
+            const existingLeaf = this.app.workspace.getLeavesOfType('markdown')
+                .find(leaf => leaf.view instanceof MarkdownView && leaf.view.file?.path === file.path);
+            if (existingLeaf) {
+                await this.app.workspace.revealLeaf(existingLeaf);
+                this.app.workspace.setActiveLeaf(existingLeaf, { focus: true });
+                return true;
+            }
+            await this.app.workspace.getLeaf('tab').openFile(file);
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     private async openChatInternalLink(noteHref: string, openInNewLeaf: boolean) {

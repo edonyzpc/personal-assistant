@@ -48,6 +48,7 @@ export interface PanelLayoutRenderOptions {
     collapsibleConnectionGraph?: boolean;
     onMarkdownRendered?: () => void;
     renderNativeMarkdown?: (host: HTMLElement, markdown: string) => HTMLElement;
+    onSourceDisclosureChange?: () => void;
 }
 
 export function capturePageletReadingPosition(body: HTMLElement): PageletReadingPosition {
@@ -337,7 +338,13 @@ export function updatePageletDiscovery(
     const wrapper = sources?.parentElement ?? container.querySelector('.pa-pagelet-panel-timeline');
     sources?.remove();
     if (paths.length && wrapper) {
-        const next = renderCollapsibleSourceSection(paths, locale, options.sourcePath, options.onConnectionNodeClick);
+        const next = renderCollapsibleSourceSection(
+            paths,
+            locale,
+            options.sourcePath,
+            options.onConnectionNodeClick,
+            options.onSourceDisclosureChange,
+        );
         if (expanded) {
             next.querySelector('.pa-pagelet-panel-source-toggle')?.setAttribute('aria-expanded', 'true');
             next.querySelector('.pa-pagelet-panel-source-chips')?.removeAttribute('hidden');
@@ -431,7 +438,13 @@ export function renderDiscoveryLayout(
             if (finding.insightText) wrapper.appendChild(renderTimelineItem(finding, locale, options, true));
         }
         if (sourcePaths.length > 0) {
-            wrapper.appendChild(renderCollapsibleSourceSection(sourcePaths, locale, options.sourcePath, options.onConnectionNodeClick));
+            wrapper.appendChild(renderCollapsibleSourceSection(
+                sourcePaths,
+                locale,
+                options.sourcePath,
+                options.onConnectionNodeClick,
+                options.onSourceDisclosureChange,
+            ));
         }
         container.appendChild(wrapper);
         return;
@@ -467,6 +480,7 @@ export function renderDiscoveryLayout(
             locale,
             options.sourcePath,
             options.onConnectionNodeClick,
+            options.onSourceDisclosureChange,
         ));
     }
 
@@ -549,6 +563,7 @@ function renderCollapsibleSourceSection(
     locale: PageletLocale,
     sourcePath?: string,
     onSourceClick?: (noteName: string, sourcePath?: string) => void,
+    onDisclosureChange?: () => void,
 ): HTMLElement {
     const section = el("div", "pa-pagelet-panel-source-section");
 
@@ -599,6 +614,7 @@ function renderCollapsibleSourceSection(
         } else {
             chipContainer.removeAttribute("hidden");
         }
+        onDisclosureChange?.();
     });
 
     return section;

@@ -37,7 +37,7 @@ export function pageletAgentInsightToDeliveryCandidate(
     insight: PageletAgentVerifiedInsight,
     locale: PageletLocale,
 ): PageletAgentDeliveryCandidate {
-    const title = extractInsightTitle(insight.body);
+    const title = extractPageletInsightTitle(insight.body);
     const whyNow = [localizedWhyNow(insight.triggerReason, locale)];
     const validationIdentity = freezeValidationIdentity(insight);
     const handoff = createPageletChatHandoffContext({
@@ -140,7 +140,7 @@ function localizedWhyNow(
     }
 }
 
-function extractInsightTitle(body: string): string {
+export function extractPageletInsightTitle(body: string): string {
     for (const line of body.split(/\r?\n/)) {
         const heading = line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/);
         if (heading?.[1]?.trim()) return truncateTitle(heading[1].trim());

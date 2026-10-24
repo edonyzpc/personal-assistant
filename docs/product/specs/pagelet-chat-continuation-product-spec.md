@@ -4,7 +4,7 @@ Document status: Approved
 Updated: 2026-10-23
 Work item: B-187
 Decision: [DEC-072](../decisions/dec-072-pagelet-chat-continuation.md)
-Authority: Owner 已确认的来源直达、阅读与继续输入体验；本轮仅设计文档，实施状态由 Tracker 承接。
+Authority: Owner 已确认的来源直达、阅读与继续输入体验；2026-10-23 追加按 B-187 方案完成开发测试的授权，实施状态由 Tracker 承接。
 
 ## Problem And Product Outcome
 
@@ -94,4 +94,4 @@ handoff 正文、身份、接受校验、入模与历史保存边界沿用
 
 - [Feature Home](../../development/active/pagelet-chat-continuation/README.md) · [Tracker](../../development/active/pagelet-chat-continuation/tracker.md) · [SDD](../../development/active/pagelet-chat-continuation/sdd.md)
 - [UI 状态契约](../../architecture/pa-ui-state-rendering.md) · [Command Architecture Contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)
-- 产品实现、Git 交付与发布均未由本轮文档请求授权；本规格不改写既有源码或历史验收事实。
+- 2026-10-23 设计轮仅授权文档，随后 Owner 明确授权按方案完成开发测试；Git 交付与发布仍需单独授权，不改写历史验收事实。

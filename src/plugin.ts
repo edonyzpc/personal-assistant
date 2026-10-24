@@ -167,6 +167,7 @@ import {
     type PageletDeepDiscoverControllerResult,
     type PageletDeepDiscoverSmokeSnapshot,
 } from './pagelet/agent';
+import type { PageletReadingTarget } from './ai-services/pagelet-handoff';
 import {
     PageletProviderCallAdmission,
     PageletProviderCallControlError,
@@ -1179,6 +1180,8 @@ export class PluginManager extends Plugin {
                 readAgentDebugTrace: (captureId, query = {}) => this.getAgentDebugIntegration().viewHost().getTracePage(captureId, query),
                 readAgentDebugContents: (captureId, nodeId) => this.getAgentDebugIntegration().viewHost().getContents(captureId, nodeId),
                 subscribeAgentDebug: listener => this.getAgentDebugIntegration().viewHost().subscribe(listener),
+                hasLivePageletReading: target => this.hasLivePageletReading(target),
+                revealPageletReading: target => this.revealPageletReading(target),
             isOperationsAgentEnabled: () => this.isOperationsAgentEnabled,
             log: (message, ...args) => this.log(message, ...args),
             getAISetupIssue: () => this.getAISetupIssue(),
@@ -8446,6 +8449,41 @@ export class PluginManager extends Plugin {
 
     getPageletDetailLeafAnchorPath(leaf: WorkspaceLeaf): string | null {
         return this.getPageletDetailLeafAnchorPathFromSavedState(leaf);
+    }
+
+    private findLivePageletReadingLeaf(target: PageletReadingTarget): WorkspaceLeaf | undefined {
+        const targetPath = normalizePath(target.anchorPath).replace(/^\.\//, "");
+        return this.app.workspace.getLeavesOfType(PAGELET_DETAIL_VIEW_TYPE).find(leaf => {
+            if (!(leaf.view instanceof PageletDetailView) || leaf.view.isRestoredPlaceholder()) return false;
+            const viewPath = leaf.view.getNoteAnchorPath();
+            return Boolean(viewPath
+                && normalizePath(viewPath).replace(/^\.\//, "") === targetPath
+                && leaf.view.hasLivePageletReading(target));
+        });
+    }
+
+    hasLivePageletReading(target: PageletReadingTarget): boolean {
+        return this.findLivePageletReadingLeaf(target) !== undefined;
+    }
+
+    async revealPageletReading(target: PageletReadingTarget): Promise<boolean> {
+        const leaf = this.findLivePageletReadingLeaf(target);
+        const view = leaf?.view;
+        if (!(leaf && view instanceof PageletDetailView)) return false;
+
+        try {
+            await leaf.loadIfDeferred?.();
+            if (this.findLivePageletReadingLeaf(target) !== leaf || leaf.view !== view) return false;
+            if (!await view.revealPageletReading(target)) return false;
+            if (this.findLivePageletReadingLeaf(target) !== leaf || leaf.view !== view) return false;
+
+            await this.app.workspace.revealLeaf(leaf);
+            this.app.workspace.setActiveLeaf(leaf, { focus: true });
+            view.notifyDisplayed();
+        } catch {
+            return false;
+        }
+        return this.findLivePageletReadingLeaf(target) === leaf && leaf.view === view;
     }
 
     async revealPageletDetailViewForPath(path: string): Promise<boolean> {

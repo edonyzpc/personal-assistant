@@ -5,6 +5,7 @@ import type {
     APITokenCacheState,
 } from "../ai-services/ai-utils";
 import type { ChatService } from "../ai-services/chat-service";
+import type { PageletReadingTarget } from "../ai-services/pagelet-handoff";
 import type { MemoryStatusPort } from "../memory/MemoryStatusPort";
 import type { ChatHistoryManager } from "./chat-history-manager";
 import type { ImageAssetService } from "./image-assets";
@@ -57,6 +58,8 @@ export interface ChatHost {
     readAgentDebugTrace?(captureId: string, query?: DebugTraceQuery): Promise<DebugTracePage>;
     readAgentDebugContents?(captureId: string, nodeId: string): Promise<DebugContent[]>;
     subscribeAgentDebug?(listener: (change?: { invalidated?: boolean }) => void): () => void;
+    hasLivePageletReading?(target: PageletReadingTarget): boolean;
+    revealPageletReading?(target: PageletReadingTarget): Promise<boolean>;
     readonly app: App;
     readonly settings: {
         debug: boolean;

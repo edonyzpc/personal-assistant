@@ -11,6 +11,7 @@ import {
 import { getPageletUiLanguage, pageletT, type PageletLocale } from "../../locales/pagelet";
 import { isRecord } from "../../pa/helpers";
 import { getPlatformCrypto } from "../../platform-dom";
+import type { PageletReadingTarget } from "../../ai-services/pagelet-handoff";
 import { quietRecallGovernedClaimId } from "../../pa";
 import type { GeneratedReviewNote, WriteResult } from "../output/types";
 import { resolveRelatedMarkdownNote } from "../related-note";
@@ -595,6 +596,14 @@ export class PageletDetailView extends ItemView {
         this.renderer?.setDisplayed(this.isViewDisplayed());
         this.displayLifecycle?.refresh();
         this.renderer?.notifyDisplayed();
+    }
+
+    hasLivePageletReading(target: PageletReadingTarget): boolean {
+        return this.renderer?.hasLivePageletReading(target) ?? false;
+    }
+
+    revealPageletReading(target: PageletReadingTarget): Promise<boolean> {
+        return this.renderer?.revealPageletReading(target) ?? Promise.resolve(false);
     }
 
     private refreshNativeHeader(): void {
