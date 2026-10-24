@@ -706,7 +706,7 @@ and [Write Action Framework](./write-action-framework-sdd.md).
 
 ### B-140 note, Memory, and insight capabilities
 
-The main Agent receives the approved read tools at the first turn, subject to the live Host and policy. Under [DEC-059](../product/decisions/dec-059-complete-note-query-results.md), `query_notes` uses the public Vault file list and MetadataCache to evaluate the complete permitted scope and return all matching notes by default; date field and timezone are explicit, with the Agent explaining its contextual choice when the user leaves them open. `search_vault_metadata` likewise returns the complete lightweight metadata match list. `search_vault_snippets` performs literal saved-text matching locally and returns each matching note once with a first-match location, without body excerpts. These three list queries do not require model-driven pagination or directory splitting; an explicit top-N limit applies after complete matching. `read_note` retains public Vault/Editor reads with a versioned, bounded range and continuation for on-demand body access. `inspect_obsidian_note` uses public cached metadata first and reads/parses Markdown only for missing or requested details. These tools share target admission and coverage facts; accepted read snapshots follow DEC-055 across generation and retries. None creates a second persistent vault index. Implementation and validation status belong to the [B-169 Tracker](../development/active/complete-note-query/tracker.md).
+The main Agent receives the approved read tools at the first turn, subject to the live Host and policy. Under [DEC-059](../product/decisions/dec-059-complete-note-query-results.md), `query_notes` uses the public Vault file list and MetadataCache to evaluate the complete permitted scope and return all matching notes by default; date field and timezone are explicit, with the Agent explaining its contextual choice when the user leaves them open. `search_vault_metadata` likewise returns the complete lightweight metadata match list. `search_vault_snippets` performs literal saved-text matching locally and returns each matching note once with a first-match location, without body excerpts. These three list queries do not require model-driven pagination or directory splitting; an explicit top-N limit applies after complete matching. `read_note` retains public Vault/Editor reads with a versioned, bounded range and continuation for on-demand body access. `inspect_obsidian_note` uses public cached metadata first and reads/parses Markdown only for missing or requested details. These tools share target admission and coverage facts; accepted read snapshots follow DEC-055 across generation and retries. None creates a second persistent vault index. Historical validation and its limits are recorded in the [B-169 validation](../archive/2026/b169-complete-note-query-validation.md).
 
 `get_memory_status`, `query_memories`, and `get_memory_usage` project existing Control Center, governance, and usage records. `manage_memory` binds an explicit current-user request to the existing admission and governance coordinator; pending, review, cancellation, and committed effects stay distinct. The new `get_vault_insights` and `query_saved_insights` only read the existing Type-C snapshot and Saved Insight ledger, preserving generation time, coverage, source strength, status, and weak-only effect. Current factual claims still require the note read tools. `manage_saved_insight` applies an explicit save, Later, archive, or restore through the existing ledger or Review queue with request/source/target version checks; it never promotes a saved item to Memory or edits a note. Pagelet's ordinary discovery remains a separate read-only run bound to its frozen anchor and existing Review delivery flow.
 
@@ -1008,11 +1008,11 @@ search.
 
 2026-10-16 successor contract:
 [DEC-065](../product/decisions/dec-065-pagelet-autonomous-discovery.md) /
-[B-175 SDD](../development/active/pagelet-autonomous-discovery/sdd.md) remove
+[B-175 Product Spec](../product/specs/pagelet-autonomous-discovery-product-spec.md) remove
 Pagelet's semantic first/second and 0–2 constraints, make complete-text staging
 optional independently of retrieval recovery, and retain source/permission,
-identity and lifecycle checks. The [Tracker](../development/active/pagelet-autonomous-discovery/tracker.md)
-owns implementation and validation evidence. The shared Command Architecture Contract
+identity and lifecycle checks. The [historical validation](../archive/2026/b175-pagelet-autonomous-discovery-validation.md)
+records delivered evidence and its limits. The shared Command Architecture Contract
 and non-Pagelet retrieval behavior remain unchanged.
 
 Pagelet has a separate run-scoped coordinator and never consumes Chat's token.
@@ -1047,6 +1047,23 @@ Activity updates and later results preserve the selected body, scroll and source
 expansion; only the originating request may fill its empty waiting reader.
 Panel-to-Detail transfer binds to the target's independent lifetime.
 
+Pure reads travel through `PageletHost` / plugin to existing scheduler/controller
+cache reads; they neither initialize AI nor queue, coalesce, cancel or charge for
+discovery. Activity comes from actual scheduler/runtime facts, independently of
+cached content. The orchestrator owns session-only recent reading, selected
+identity, seen state and opening intent; source owners retain admission authority.
+Background source revalidation has a separate cancellation domain from user
+selection. A valid in-flight cache read may finish after transfer to Detail,
+without reopening Panel or overwriting a newly accepted result collection.
+
+Reading revalidates complete authoring ancestry, not merely displayed citations.
+Ordinary source changes or existing web expiry preserve the session's body and
+position with a stale indication and disabled handoff; permission revocation hides
+the affected material. Each text receives only the web sources actually present
+when it was authored, not sources read later in the run. Source events and existing
+expiry timing drive revalidation without a new polling loop. Closing, switching or
+unloading releases the corresponding subscriptions and invalidates late UI intent.
+
 Chat handoff carries the selected full body and its actual authoring ancestry.
 Preparation and first acceptance verify the original anchor, current source
 owners, evidence epoch, independent web permission and existing web lifetime.
@@ -1057,8 +1074,24 @@ request only after owner checks; dependencies, epoch and stored history stay int
 Missing proof remains unavailable. Actual accepted projection owns request
 lineage, Writing input records and successful attachment consumption; after
 acceptance DEC-055 snapshot semantics apply. Attachment material grants no
-tool, network or write authority. The [B-176 Tracker](../development/active/pagelet-reading-loop/tracker.md)
-owns implementation and validation evidence.
+tool, network or write authority.
+
+Successfully accepted material is saved on the corresponding Chat user message
+through existing vault-scoped local chat storage and deletion. History projects an
+attachment reference; `read_pagelet_attachment` returns the complete context-only
+text on demand for that chat. Acceptance/session/run/body identity and current
+source permission are checked before reading; ordinary subsequent source edits
+do not revoke an already accepted snapshot. For aggregate observations without
+individual paths, the original permitted path domain is retained locally for
+permission checks, never projected to the model or rebuilt by rereading all notes.
+Old attachment tool output becomes a reread reference rather than repeated full
+body injection. This does not create a separate Pagelet history store or sync path.
+
+Pipeline v4 rejects predecessor caches; Writing generation-input v2 carries the
+identified full-body SHA-256 and source snapshot, while v1 remains none/unknown.
+Missing historical proof is not reconstructed from citations or silently upgraded.
+Rollback preserves notes and saved chat data. [B-176 historical validation](../archive/2026/b176-pagelet-reading-loop-validation.md)
+records the initial delivery, follow-up fixes and their separate app/test limits.
 
 ## Persistence And Compatibility
 

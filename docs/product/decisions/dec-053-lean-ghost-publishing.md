@@ -2,8 +2,8 @@
 
 Decision ID: DEC-053
 Status: Accepted
-Updated: 2026-10-19
-Authority: Owner 在本次 blog2ghost 讨论中确认 note 唯一内容源、同 ID 草稿覆盖、人工上线、tab URL 预览及取消恢复等范围；在明确 Ghost 编辑器深链与 API 写入的区别后，接受“新文/草稿在 Ghost Publish，已发布文章在 PA 确认更新”，并要求完整整理方案。2026-10-06 后续提出关联字段精简为一个 ID，在说明配置站点、按 ID 查询及独立预览资源边界后，要求“更新方案设计”，明确将字段命名为 GHOST_ID，并明确不要旧字段兼容。最初授权为方案与文档；同日后续要求按 SDD 设计、开发和测试，并明确 GLM 周限额后由 GPT 完成开发验证。Git、closeout 与 release 未授权；实际执行状态由 B-163 Tracker 维护。
+Updated: 2026-10-24
+Authority: Owner 在本次 blog2ghost 讨论中确认 note 唯一内容源、同 ID 草稿覆盖、人工上线、tab URL 预览及取消恢复等范围；在明确 Ghost 编辑器深链与 API 写入的区别后，接受“新文/草稿在 Ghost Publish，已发布文章在 PA 确认更新”，并要求完整整理方案。2026-10-06 后续提出关联字段精简为一个 ID，在说明配置站点、按 ID 查询及独立预览资源边界后，要求“更新方案设计”，明确将字段命名为 GHOST_ID，并明确不要旧字段兼容。最初授权为方案与文档；同日后续要求按 SDD 设计、开发和测试，并明确 GLM 周限额后由 GPT 完成开发验证。2026-10-19 caption 修订另获本地 master 提交授权；2026-10-24 获授权清理已完成记录并收尾归档。本次整理不包含新的 Git 或 release 操作。
 Work item: B-163
 
 2026-10-07 补充授权：Owner 要求为 PA 生成的封面添加带 PA 项目链接的署名；说明旧题图
@@ -38,7 +38,7 @@ Owner 在 anthelion 使用时遇到来源失效、结果未确认和 Check previ
 | 明确关联收敛 | 只识别与写入 GHOST_ID，不兼容旧字段；站点来自配置，状态和链接按 ID 查询；临时预览 ID 留在 PA 内部，不替换正式 ID |
 | 已核实事实 | Ghost 6.65 的 published 正文修改暂存在编辑器；普通 Admin API PUT published 更新线上内容，PUT draft 取消发布；后台深链只定位文章，不填入另一份候选 |
 | 工程收敛 | 复用既有转换、图片、渲染依赖及 Ghost API；临时草稿仅隔离新版并提供真实预览 URL，移除其历史/恢复职责 |
-| 证据边界 | 原始 Chat 第一次来源失效的具体事件未确定；全局时效检查的源码机制不等于该次事件的完整因果证据；新方案验收与限制以 B-163 Tracker 为准 |
+| 证据边界 | 原始 Chat 第一次来源失效的具体事件未确定；全局时效检查的源码机制不等于该次事件的完整因果证据；实际验收与限制见文末 B-163 最终验证 |
 
 ## Options Considered
 
@@ -100,7 +100,7 @@ Owner 在 anthelion 使用时遇到来源失效、结果未确认和 Check previ
   精确原 ID 不存在后新建成功，才允许替换失效 ID；失败不清空关联，不批量删除旧历史存储。
 - 单字段以当前配置站点为边界，切站需明确重新关联；ID 不足以自动辨认旧站点，不为此
   另建多站点或隐藏的笔记历史映射。标题、标签、摘要等内容字段不在本次元数据精简范围。
-- 后续实施需独立授权。若实现不满足验收，可回退该次实现变更并保留外部文章/关联；
+- 后续范围变更需独立授权。若实现不满足验收，可回退该次实现变更并保留外部文章/关联；
   不通过删除文章或把旧流程重新写成当前产品要求来“回滚”。
 
 ## Revisit Trigger
@@ -112,5 +112,5 @@ Ghost 提供稳定的同 ID 隔离待发布接口；用户重新要求在 Ghost 
 
 - [Product Spec](../specs/pa-ghost-blog-publishing-product-spec.md)
 - [完整精简方案与实施边界](../../development/ghost-blog-publishing-design.md)
-- [B-163 Tracker](../../development/active/lean-ghost-publishing/tracker.md)
+- [B-163 最终验证](../../archive/2026/b163-lean-ghost-publishing-validation.md)
 - [B-153 历史验收](../../archive/2026/b153-ghost-blog-publishing-validation.md)

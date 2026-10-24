@@ -9,17 +9,18 @@
 > Purpose: Provide all product, UX, and architectural constraints needed to implement Pagelet as an Obsidian plugin feature inside PA.
 > Source of truth: `pagelet-product-design.md` + `pagelet-prototype.html`
 
-> 2026-10-16 design scope: 第一轮自主发现闭环按
+> 第一轮自主发现闭环的已交付范围按
 > [DEC-065](../../product/decisions/dec-065-pagelet-autonomous-discovery.md)、
-> [Product Spec](../../product/specs/pagelet-autonomous-discovery-product-spec.md) 和
-> [B-175 SDD](../active/pagelet-autonomous-discovery/sdd.md) 实施。
-> 开发与必要风险验证见其 [Tracker](../active/pagelet-autonomous-discovery/tracker.md)。
+> [Product Spec](../../product/specs/pagelet-autonomous-discovery-product-spec.md) 与
+> [当前架构](../../architecture/pa-agent-architecture-plan.md#pagelet-deep-insight-recovery) 承接。
+> 开发与必要风险验证范围见 [历史验收](../../archive/2026/b175-pagelet-autonomous-discovery-validation.md)。
 > 本页历史阶段/交互表不产生额外本轮任务或测试门，也不能把旧内容规则重新写进提示词。
-> 后续入口、上下文和修改流程单独讨论；设计授权不等于实施授权或验证完成。
+> 后续入口与阅读交接由第二轮接续；更宽上下文和修改流程另行决定。
 
 > 第二轮入口/阅读/交接现由 [DEC-066](../../product/decisions/dec-066-pagelet-reading-loop.md)、
 > [B-176 Spec](../../product/specs/pagelet-reading-loop-product-spec.md) 与
-> [开发及必要测试 SDD](../active/pagelet-reading-loop/sdd.md)独立承接。
+> [当前架构](../../architecture/pa-agent-architecture-plan.md#pagelet-deep-insight-recovery)独立承接，
+> 验证输入和限制见 [历史验收](../../archive/2026/b176-pagelet-reading-loop-validation.md)。
 > 本页旧短点 Ring、单一 click 等交互不覆盖 B-176 目标；第一轮范围和测试不变。
 > 更宽上下文、保存历史及专用修改流程仍未进入两轮交付；设计记录不授予实施权限。
 

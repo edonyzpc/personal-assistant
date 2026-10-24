@@ -10,13 +10,13 @@
 > 与 [B-175 Product Spec](./specs/pagelet-autonomous-discovery-product-spec.md) 定义第一轮自主发现闭环。
 > Agent 决定方向、深度、继续与结果，保留可选完整文本暂存、来源和权限；移除旧数量、阶段
 > 与价值门，也不能通过提示词重新引入。本文下方对应 0–2/首次发现描述仍是前序实现，
-> 由新决定局部接续；[Tracker](../development/active/pagelet-autonomous-discovery/tracker.md)
-> 独占实施状态。短点看相关内容、长按快捷操作由下述第二轮合同接续。
+> 由新决定局部接续；实现已交付，[历史验收](../archive/2026/b175-pagelet-autonomous-discovery-validation.md)
+> 保留验证范围与限制。短点看相关内容、长按快捷操作由下述第二轮合同接续。
 
 > 第二轮已独立记录为 [DEC-066](./decisions/dec-066-pagelet-reading-loop.md) /
 > [B-176 Product Spec](./specs/pagelet-reading-loop-product-spec.md)：短点内容、已看复访、稳定阅读与完整 PA Agent 交接。
-> [开发与测试 SDD](../development/active/pagelet-reading-loop/sdd.md)接续本文旧短点 Ring 目标，
-> 不新增洞察语义规则、永久历史或修改框架；不扩大第一轮。实现和验收状态由第二轮 Tracker 独占。
+> 该契约接续本文旧短点 Ring 目标，不新增洞察语义规则、永久历史或修改框架；不扩大
+> 第一轮。实现已交付，验证输入及后续竞态修复的证据边界见 [历史验收](../archive/2026/b176-pagelet-reading-loop-validation.md)。
 
 > [!note] Current authority is this design together with the
 > [PA Product North Star](./pa-product-north-star.md), [DEC-017](./decisions/dec-017-default-background-recap-preparation.md)

@@ -2,7 +2,7 @@
 
 Decision ID: DEC-059
 Status: Accepted
-Updated: 2026-10-10
+Updated: 2026-10-24
 Authority: 用户于 2026-10-10 明确要求修正相关查询工具，复用 Obsidian 官方 API，一次返回完整匹配笔记列表，正文按需读取，不让模型拆目录或分页补查，不做过度设计。
 Work item: B-169
 
@@ -30,4 +30,4 @@ Work item: B-169
 ## Traceability
 
 - [Product Spec](../specs/pa-complete-note-query-product-spec.md)
-- [Feature Home](../../development/active/complete-note-query/README.md)
+- [B-169 最终验证](../../archive/2026/b169-complete-note-query-validation.md)

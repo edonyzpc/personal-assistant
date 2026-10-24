@@ -1,10 +1,10 @@
 # Ghost Blog Publishing Product Spec
 
 Document status: Approved
-Updated: 2026-10-19
+Updated: 2026-10-24
 Work item: B-163
 Decision: [DEC-053](../decisions/dec-053-lean-ghost-publishing.md)
-Authority: Owner 已接受的精简目标、行为和验收标准。接续 B-153 规格；批准不代表交付证明，执行状态和实际证据由 B-163 Tracker 维护。
+Authority: Owner 已接受的精简目标、行为和验收标准。接续 B-153 规格；本文件维护当前行为契约，历史交付证据见文末。
 
 ## Problem And Product Outcome
 
@@ -161,9 +161,9 @@ Ghost 已确认保存的封闭状态回执不因本次保存引起的笔记观�
 核心产品选择已确认。具体实现复用现有组件，任何新增数据/权限/媒体边界或恢复能力须
 重新讨论；不把工程偏好或旧测试要求当作本轮新增产品限制。
 
-## Delivery Handoff
+## Design And Delivery Evidence
 
-- [完整方案、职责、实施顺序与验证映射](../../development/ghost-blog-publishing-design.md)
-- [B-163 Tracker](../../development/active/lean-ghost-publishing/tracker.md)：当前实施、验证与证据限制。
+- [完整设计与职责边界](../../development/ghost-blog-publishing-design.md)
+- [B-163 最终验证](../../archive/2026/b163-lean-ghost-publishing-validation.md)：2026-10-24 获授权收尾；保留真实 UI、本机合成 Ghost、caption 修订及外部服务证据限制。
 - [Command Architecture Contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)
 - [B-153 历史验收](../../archive/2026/b153-ghost-blog-publishing-validation.md)：不得作为本修订已实现证据。

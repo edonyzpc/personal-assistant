@@ -1,5 +1,7 @@
 # B-149 PA Agent Runtime Evolution 验证记录
 
+2026-10-24 资料位置整理：原 `test/B149-runtime-eval/` 的 27 份开发验证输出已校验后移入本机 `local-archive/2026-10-24/test-vault-development-artifacts.tar.gz`，保留原 `test/` 路径和逐文件 SHA-256；清单见同目录 `manifest.json`。下文原路径保留为历史记录，`/private/tmp/` 中的证据未在此次清理中处理，不新增验收结论。
+
 本页保留 B-149 完成后的逐例验证事实与人工判读，不作为当前运行或发布状态权威；稳定行为见 [Product Spec](../../product/specs/pa-agent-runtime-evolution-product-spec.md) 和 [PA Agent Architecture](../../architecture/pa-agent-architecture-plan.md)。13/13 AC 的本地验收记录可从 Git 中的原 Tracker 恢复。测试只使用虚构材料、repo `test` vault 和已配置的 `qwen/deepseek-v4-pro`。模型参数为 `temperature=0.8`、stream；固定 Web 响应用于可重复任务比较，另有一次真实 Web MCP 连接检查。真实模型物理请求累计 **99/180**，其中 G0 基线 23 次，后续 76 次。180 是本次测试总授权（50 + 30 + 100），与 PA 平时每 run 的辅助摘要 30 次/60 分钟上限无关。
 
 最终 `3503e50d…` bundle 经 `make deploy` 的 lint/build/328 suites/8325 tests 自然通过，部署到 test vault 后完成桌面及 CLI mobile simulator 的相关交互验证；最终包 E-05 和自动后台 Pagelet/Chat 并行亦有同包证据。模拟器不证明 iOS 真机键盘或真机 BRAT 安装。开发验收、Git 集成和 beta 发布分别核验。

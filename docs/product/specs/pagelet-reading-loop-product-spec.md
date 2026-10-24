@@ -1,10 +1,10 @@
 # Pagelet 入口与阅读闭环 Product Spec
 
 Document status: Approved
-Updated: 2026-10-16
+Updated: 2026-10-24
 Work item: B-176
 Decision: [DEC-066](../decisions/dec-066-pagelet-reading-loop.md)
-Authority: 用户认可的第二轮入口、复访、阅读连续性及 PA Agent 交接行为；设计批准不代表实施或验证完成。
+Authority: 用户认可的第二轮入口、复访、阅读连续性及 PA Agent 交接行为；历史验证范围见下方记录。
 
 ## Problem And Product Outcome
 
@@ -97,12 +97,13 @@ Pagelet 成果复访及交接前沿用 current-evidence 校验。材料进入 Ch
 
 ## Open Decisions
 
-没有未决产品选择。用户于 2026-10-16 在评审后明确选择 Chat 材料保存与陈旧阅读保留，授权修复及必要回归、暂不提交。
-执行状态见 Tracker；超出上述材料保存例外的新存储、来源范围或权限仍需用户决定。
+没有未决产品选择。用户于 2026-10-16 在评审后明确选择 Chat 材料保存与陈旧阅读保留，相关修复已验收。
+超出上述材料保存例外的新存储、来源范围或权限仍需用户决定。
 
-## Delivery Handoff
+## Implementation And Validation
 
-- [开发设计、顺序与必要测试矩阵](../../development/active/pagelet-reading-loop/sdd.md)
-- [Active Tracker](../../development/active/pagelet-reading-loop/tracker.md)：唯一执行状态和验收事实，不新建第二份执行台账。
+- B-176 实现及评审修订已于 2026-10-16～17 验收，2026-10-24 按用户授权收尾；B-141 的 Detail 交接缺口由本轮完成。
+- [现行架构](../../architecture/pa-agent-architecture-plan.md#pagelet-deep-insight-recovery)承载纯读、阅读生命周期、完整来源交接与聊天材料保存。
+- [历史验收](../../archive/2026/b176-pagelet-reading-loop-validation.md)区分自动化、实际模型、桌面和移动模拟器证据；R-06/07 无新部署证明，不冒充真机或发布通过。
 - [第一轮 B-175](./pagelet-autonomous-discovery-product-spec.md)：独立前置成果契约，范围与验证不扩张。
 - [Command Architecture Contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)

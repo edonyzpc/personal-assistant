@@ -2,7 +2,7 @@
 
 Decision ID: DEC-072
 Status: Accepted
-Updated: 2026-10-23
+Updated: 2026-10-24
 Authority: Owner 于 2026-10-23 明确要求按审查意见收敛 B-187，保留来源直达和继续思考、弱化返回发现、删除无依据兼容要求；随后要求按项目 SDD 规范完成开发设计计划。同日追加“按照b-187方案设计完成所有的开发测试”，实施授权自追加指令生效。
 Work item: B-187
 
@@ -52,5 +52,7 @@ PA 已支持 Pagelet 阅读、来源、Discuss in Chat、完整材料交接及�
 ## Traceability
 
 - [Product Spec](../specs/pagelet-chat-continuation-product-spec.md)
-- [Feature Home](../../development/active/pagelet-chat-continuation/README.md) · [SDD](../../development/active/pagelet-chat-continuation/sdd.md)
-- 2026-10-23 Discovery 的结论、源码事实和可视化口径已吸收入上述文档，过程稿删除；没有新增产品实现或验证结论。
+- [最终验证与收尾记录](../../archive/2026/b187-pagelet-chat-continuation-validation.md)
+- 核心与辅助精确导航均已完成本轮实现与验收，无后置开发项。2026-10-24 用户授权清理
+  已完成记录；稳定接线责任吸收到 Product Spec，独有验证与限制保留为上述历史证据。
+  Discovery、Feature Home、SDD、Tracker 完成吸收后删除；不改变 2026-10-23 的原批准日期。

@@ -1,22 +1,15 @@
 # Active Development Registry
 
 Document status: Current
-Updated: 2026-10-23
+Updated: 2026-10-24
 Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governance/tooling track 索引。
 
 新 track 只登记 Work item、Feature Home 与 Tracker。执行状态唯一权威是 Tracker，本索引不复制状态、目标、日期或 task 明细。
 
-| Track | Work item | Feature Home | Tracker |
-| --- | --- | --- | --- |
-| Chat Mermaid Auto Enable | B-188 | [Feature Home](./chat-mermaid-auto-enable/README.md) | [Tracker](./chat-mermaid-auto-enable/tracker.md) |
-| Pagelet Chat Continuation | B-187 | [Feature Home](./pagelet-chat-continuation/README.md) | [Tracker](./pagelet-chat-continuation/tracker.md) |
-| Pagelet Reading Loop | B-176 | [Feature Home](./pagelet-reading-loop/README.md) | [Tracker](./pagelet-reading-loop/tracker.md) |
-| Pagelet Autonomous Discovery | B-175 | [Feature Home](./pagelet-autonomous-discovery/README.md) | [Tracker](./pagelet-autonomous-discovery/tracker.md) |
-| Complete Note Query | B-169 | [Feature Home](./complete-note-query/README.md) | [Tracker](./complete-note-query/tracker.md) |
-| Lean Ghost Publishing | B-163 | [Feature Home](./lean-ghost-publishing/README.md) | [Tracker](./lean-ghost-publishing/tracker.md) |
+当前没有未完成的 Active Package。新增 track 时按 Work item、Feature Home、Tracker 登记。
 
 已完成任务的稳定契约留在 Product/Governance/Architecture，
 独有历史验证及处置见 [Disposition Log](../../archive/disposition-log.md)，
 未完成或延期事项见 [Backlog](../../backlog.md)。
 
-完成或取消后，从本表删除。过程 artifact 在结论吸收后默认删除；只有独有证据才按需归档。
+完成或取消后，从本索引移除。过程 artifact 在结论吸收后默认删除；只有独有证据才按需归档。

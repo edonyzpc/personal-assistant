@@ -1,10 +1,10 @@
 # 从 Pagelet 的发现继续思考 Product Spec
 
 Document status: Approved
-Updated: 2026-10-23
+Updated: 2026-10-24
 Work item: B-187
 Decision: [DEC-072](../decisions/dec-072-pagelet-chat-continuation.md)
-Authority: Owner 已确认的来源直达、阅读与继续输入体验；2026-10-23 追加按 B-187 方案完成开发测试的授权，实施状态由 Tracker 承接。
+Authority: Owner 已确认的来源直达、阅读与继续输入体验；2026-10-23 追加按 B-187 方案完成开发测试的授权。本文持有稳定产品与接线边界，历史验证由文末记录承接。
 
 ## Problem And Product Outcome
 
@@ -22,7 +22,7 @@ Authority: Owner 已确认的来源直达、阅读与继续输入体验；2026-1
   使用已有材料，不生成引用证明或新增上下文。仅有原笔记时不显示空的来源展开项。
 - **B-187/REQ-04 — 准确的辅助导航**：全文展开区底部可提供低强调的「在拾页中查看」，只定位存活实例内
   同一条、同一内容的发现，复用仍在的阅读状态。已知不可用时省略；点击后才失效则展开附件全文并说明事实。
-  该项为次级便利：若接线成本扩大，可在 Tracker 明确后置，不阻塞核心。
+  该项为次级便利；本轮已完成窄接线与验收，无后置范围，不改变核心优先的产品顺序。
 - **B-187/REQ-05 — 阅读不扰动讨论**：展开和导航不清空或覆盖草稿、不发送消息，
   阅读/导航自身不主动发起或依赖重新发现及模型调用；已有后台发现仍按用户设置和现有策略运行，
   不新增抑制机制。保留来源/材料准入、会话生命周期及删除行为，用户下一步任务仍由既有 Agent 处理。
@@ -88,10 +88,36 @@ handoff 正文、身份、接受校验、入模与历史保存边界沿用
 - **B-187/AC-05**：已接受材料随历史显示时，来源、原笔记与全文的阅读动作含义一致，
   不误改消息、不再次发送；导航不改变来源权限、材料验证和既有接受/保存条件。
 
-## Delivery Handoff
+## Implementation Contract
 
-没有待定的核心产品选择。核心优先，辅助项的纳入或后置按已批准的成本边界在 Tracker 记实。
+ChatView 持有待发送／历史附件的呈现、局部展开和提示，草稿继续由 ComposerDraft 管理。
+内容线索只提取已有标题、首句或短段，不新增持久 title 或摘要；原文保持现有文本呈现。
+空态先保留配置反馈，再按真实 pending handoff 决定通用问题；移除后的刷新必须发生在
+无 context 的早退之前。来源按钮在窄宽自然换行，附件沿用限高和内部滚动。
 
-- [Feature Home](../../development/active/pagelet-chat-continuation/README.md) · [Tracker](../../development/active/pagelet-chat-continuation/tracker.md) · [SDD](../../development/active/pagelet-chat-continuation/sdd.md)
+笔记导航按附件的真实路径查现存文件，复用已打开目标时先原生 reveal 再 focus，否则新开
+Markdown tab；缺失不创建文件，不用活动笔记反推目标，不触发新的 handoff。网页按完整 URL
+去重并保留 fragment，由用户点击现有外链打开，不读取、预取或保存网页。
+
+辅助目标是当前调用内的 `anchorPath + candidateId + bodyHash`，经 ChatHost／plugin／Detail
+委托 TabView。只查询 live、非恢复占位且身份匹配的实例；不取最新候选、不调用 setPayload
+或重建关闭的 Detail。不同候选复用 `selectReading` 的校验、选择和位置恢复；同一候选复用
+当前正文并等待既有阅读验证。来源过期仍可读保留正文，但不能重新 handoff；撤权等既有
+不可读边界保持。异步验证后重新检查候选、reading、leaf 和归属，成功才 reveal；失败在仍
+属于当前 Chat／附件时展开全文并给事实提示，不更新已销毁或替换节点。
+
+阅读位置与来源展开仍由 TabView 的既有 reading position 管理。Detail 的来源 disclosure
+完成 DOM 更新后通知现有 `readingPosition.capture()`，避免隐藏后零布局无法补采；保留
+零尺寸拒绝采样的边界，不新增监听器、定时器、store 或恢复记录。材料接受、保存、入模与
+后续推理继续归既有 handoff／Agent；schema、设置、权限和 provider 协议均不变，无迁移。
+回滚附件呈现或辅助接线无需删除或改写已存聊天；辅助项可独立撤回而保留来源和全文。
+
+## Delivery And Evidence
+
+全部五组 REQ/AC 的核心与辅助范围均已完成必要验证，无未解决 finding 或后置开发项。
+2026-10-24 清理已完成记录的授权承接收尾；本轮没有新增产品决定、Git 提交、推送或发布。
+
+- [最终验证与证据限制](../../archive/2026/b187-pagelet-chat-continuation-validation.md)
 - [UI 状态契约](../../architecture/pa-ui-state-rendering.md) · [Command Architecture Contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)
-- 2026-10-23 设计轮仅授权文档，随后 Owner 明确授权按方案完成开发测试；Git 交付与发布仍需单独授权，不改写历史验收事实。
+- 2026-10-23 设计轮仅授权文档，随后 Owner 明确授权按方案完成开发测试；本地实现提交
+  `9aadf76d` 与本次文档收尾属于不同交付事实，不改写原阶段或设备／模型验证边界。

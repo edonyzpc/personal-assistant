@@ -21,7 +21,7 @@ T-01～T-15 与 B-140/AC-01～14 已按计划逐项验收，源码、测试和�
 
 ## Deferred And Retained Items
 
-T13-UX1（P3）转 [B-141](../../backlog.md#已延期的产品与工程工作)：临时 Pagelet Detail tab 中旧结果的 Discuss in Chat 按钮未完成交接。live Panel 同入口、来源交接与 Keep 已实测通过；Detail tab 不据此声称通过。后续只需针对该入口复现并验证同一候选/来源进入 Chat，不重开 B-140 的其它能力。
+T13-UX1（P3）当时转 B-141：临时 Pagelet Detail tab 中旧结果的 Discuss in Chat 按钮未完成交接。live Panel 同入口、来源交接与 Keep 已实测通过；Detail tab 不据此声称通过。后续该入口由 B-176 验收完成，见 [B-141 终态路由](./b141-pagelet-detail-chat-closeout.md)；保留本次未完成的历史截点，不重开 B-140 的其它能力。
 
 测试后已移除本任务 3 条 Saved Insights、1 条 Review 项、3 篇合成笔记与空目录；Vault Insights 临时开关恢复 false，重载后相关领域 store 与持久化读回均为 0，活动笔记恢复 `0.unsorted/Dog.md`，Chat 切为空白会话。9 个本轮合成 Chat 历史因不可逆删除被自动审批拒绝而保留，未绕过；精确 ID 与只读核对见提交 `2cab57af` 的 Tracker。原始 source/gate/App 日志留在本机任务目录供追溯，不作为当前执行权威。
 

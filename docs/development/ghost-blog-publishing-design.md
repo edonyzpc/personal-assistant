@@ -1,9 +1,9 @@
 # blog2ghost 精简优化方案
 
 Document status: Approved
-Updated: 2026-10-06
+Updated: 2026-10-24
 Work item: B-163
-Authority: [DEC-053](../product/decisions/dec-053-lean-ghost-publishing.md) 与 [Product Spec](../product/specs/pa-ghost-blog-publishing-product-spec.md) 下的完整目标方案。本文复用原设计路径，描述下一次改造；不宣称当前代码已经实现，也不授予实施或 Git/release 权限。
+Authority: [DEC-053](../product/decisions/dec-053-lean-ghost-publishing.md) 与 [Product Spec](../product/specs/pa-ghost-blog-publishing-product-spec.md) 下的当前完整设计与职责边界。字段规则由 Product Spec 维护；历史实现和验收范围见 [B-163 最终验证](../archive/2026/b163-lean-ghost-publishing-validation.md)。本文不授予新的实施或 Git/release 权限。
 
 ## 1. 目标与已确认边界
 
@@ -89,8 +89,9 @@ flowchart TD
 
 - 正文、标题、发布标签、封面、摘要和 SEO 描述由本次 note 与本次合法生成结果完整决定。
   可选受管字段缺失时主动发送空值/空数组清除，不以省略参数保留远端旧内容。
-- 自动字段范围固定：缺失的摘要、SEO 描述；新文章缺失的 slug。人工值优先；明确清空
-  阻止自动补齐。每次重新同步可重新生成缺失字段，不再需要“重新生成摘要”独立流程。
+- 缺失的摘要、SEO 描述、新文章 slug 与默认发布标签沿用 Product Spec 的当前自动字段
+  规则；人工值优先，明确清空阻止自动补齐。每次重新同步可重新准备缺失字段，
+  不再需要“重新生成摘要”独立流程。
 - 已有 slug/URL 不随标题修改而改变。现有草稿要改 URL，直接在 Ghost 后台完成；
   后续查询接受平台实际 URL，不把它误判为文章身份冲突。
 - 作者、访问范围、发布时间、主题模板和非 PA 注入保持；临时稿按必要运营字段保持
@@ -163,6 +164,23 @@ ID 只定位文章，不编码发布状态和链接。单字段方案限当前�
 遵循 [Command Architecture Contract](../architecture/pa-agent-architecture-plan.md#command-architecture-contract)。
 Ghost 来源时效修正只影响其真实调用边界；不得因此关闭其他领域的撤销、来源或效果保护。
 
+### 实现职责与会话边界
+
+- `createGhostActionContext` 固定来源 `TFile` 身份，`noteKey` 是当前会话来源路径；
+  并发还受配置站点与 post ID 约束，不建立持久 note UID。`prepare` 构建一次完整候选，
+  `validate` 使用当前权限、连接、取消和真实文件身份；确认逐 Markdown 依赖复查
+  当前内容权限（如 `#no-ai`），不因普通正文修改重导出或替换已准备候选。
+- `GhostPublishingService.prepare/confirm` 拥有查询、转换、写入、版本碰撞和精确清理；
+  exporter 决定选中封面的固定 caption，资源准备验证可读性/字节身份，snapshot 固定
+  受管字段与 payload。哈希用于资源身份、上传复用及候选一致性，不是 caption 的生成来源门禁。
+- `GhostLocalOperation` 只在会话中保存 operationId/revision、candidate、target 与 verified
+  事实，状态为 preparing、prepared、draft_saved、updated、failed 或 outcome_unknown。
+  已建立操作后的失败保留其 ID 和 executionState；回写/清理失败是已知成功的附加事实。
+  Session 关闭只撤销当前确认权，不改写已保存事实；重启不恢复候选或旧确认。
+- 唯一 Ghost 专用持久数据是站点、原 post ID 与 preview ID 的资源指针。
+  旧操作文件不读、不迁移、不删除；新触发不扫描认领未知草稿。Chat 通过现有结果事实
+  通道呈现已发生效果，工具仅 prepare，不能用参数代替 UI 确认。
+
 ## 6. UI 与 URL
 
 | 场景 | 主文案 | 主要操作 |
@@ -176,8 +194,8 @@ Ghost 来源时效修正只影响其真实调用边界；不得因此关闭其�
   “草稿保存失败”；没有自动检查通过标识，不隐式打开另一套后台探针。
 - Ghost 后台直接使用配置站点对应的 `/ghost/#/editor/post/{id}`；新文/草稿打开自身 ID，
   published 的后台入口打开正式 ID。预览稿不以“发布这篇文章”的入口引导。
-- 公开文章使用查询返回的 `url`；草稿预览复用现有 URL helper，以返回的 `uuid` 生成
-  `/p/{uuid}/`。post ID、uuid 与 slug 不混用；这些链接不作为 note 的持久关联属性。
+- 公开文章与草稿预览采用各自文章响应返回的 `url`；不在后台域名重新拼接预览地址。
+  post ID、uuid 与 slug 不混用；这些链接不作为 note 的持久关联属性。
 - 不要求用户向 PA 证明已浏览预览，不以浏览器可见性和历史按钮点击作确认条件。
 - 保留既有卡片可访问性、键盘、忙碌反馈与作用域样式；减少动作不靠隐藏有效错误。
 - 移除 Continue、Restore、Replace all、Check preview、Check published、独立摘要再生成
@@ -204,8 +222,8 @@ Ghost 来源时效修正只影响其真实调用边界；不得因此关闭其�
 
 ## 8. 改造范围与原实现的差异
 
-以下以 2026-10-06 改造前的源码为对照，描述本次范围；实际完成状态和证据由
-[B-163 Tracker](./active/lean-ghost-publishing/tracker.md) 维护。
+以下以 2026-10-06 改造前的源码为对照，说明保留的模块职责和已退役机制；历史验证
+及限制见 [B-163 最终验证](../archive/2026/b163-lean-ghost-publishing-validation.md)。
 
 | 模块 | 改造内容 |
 | --- | --- |
@@ -238,32 +256,13 @@ Ghost 来源时效修正只影响其真实调用边界；不得因此关闭其�
 - 本轮依据官方版本源码与当前 PA 调用链；未向生产 Ghost 写入，后台截图不证明存在
   集成 API 的同 ID 待发布版本。未来接口变化再按 DEC-053 重评。
 
-## 9. 实施顺序与验收
+## 9. 验收证据
 
-Owner 于 2026-10-06 授权开发验证，当前实施与证据见
-[B-163 Tracker](./active/lean-ghost-publishing/tracker.md)。沿用
-[GPT-6 / GLM delivery](./workflows/gpt6-glm-delivery-workflow.md)，GLM 周限额由 GPT 接管；
-实际运行验收以 Tracker 为准。
-
-1. **内容与身份主路径**：固定受管 payload、去掉基线合并、单 ID 关联与按需查询、同 ID
-   覆盖和精确不存在后换 ID。
-2. **准备与确认**：保留独立预览资源，缩为当前会话候选，移除持久恢复/Undo/跨桌面规则；
-   同时修正来源时效和远端结果投影，避免新旧门禁交叉。
-3. **UI 与旧流程收束**：直接 tab/后台 URL、精简卡片、只识别 GHOST_ID、旧确认不续接；删除无生产
-   消费者的专用代码/测试。复用既有内容转换，避免顺带重写整个发布模块。
-4. **集中验证**：针对冻结输入运行适用检查并部署测试 vault；不使用用户生产文章作夹具。
-
-| REQ / AC | 改变与具体风险 | 最低充分证据 |
-| --- | --- | --- |
-| B-163/REQ-01、B-163/REQ-02、B-163/REQ-08、B-163/REQ-12；B-163/AC-01、B-163/AC-09 | 仍读取旧关联、失败时 ID 丢失、预览 ID 替换正式 ID、查询错误被当不存在 | 定向契约测试：仅 GHOST_ID 有效、仅有旧字段按新文章且不迁移、非法 ID/失败不改属性、无 ID/精确不存在、鉴权/网络失败、draft 覆盖；核对只写正式 ID 且不要求 completed record |
-| B-163/REQ-04、B-163/REQ-05；B-163/AC-02、B-163/AC-08 | 少发清空字段或缩窄转换/媒体/链接 | 字段输入→实际 payload 回归；无 completed record 时普通双链按已发布状态转 URL，查询失败保留文字；复用一篇已有综合内容夹具人工检查 Ghost 页与可编辑性 |
-| B-163/REQ-03、B-163/REQ-06、B-163/REQ-11；B-163/AC-03、B-163/AC-04 | 提前上线、预览稿误发布、ID/uuid/URL 混用、按钮仍受探针限制 | 定向写入/URL 断言 + 部署后真实草稿/已发布两条路径、tab 与后台入口交互；仅 ID 属性即可定位正确入口 |
-| B-163/REQ-07；B-163/AC-05、B-163/AC-06 | 全局变化误作废、真实撤销失效、旧候选改发新版 | 无关 note/PA 回写/权限撤销/取消/目标状态改变/版本碰撞的行为回归；观察实际入口 |
-| B-163/REQ-08、B-163/REQ-09、B-163/REQ-10；B-163/AC-07、B-163/AC-09 | 成功被报未知、重复写、旧恢复仍在运行 | 已发送/未发送/已确认结果夹具，回写/清理失败，未知写入不自动重发，旧 Chat 不恢复执行 |
-
-实现属于跨模块行为改造，按 AGENTS 完成 lint、生产 build、full test 与 diff/社区 DOM 检查，
-适用 app 验收使用已部署测试 vault；同一输入的有效证据复用。本文这次 docs-only 整理仅运行
-docs:check、diff check 及受影响文档契约测试，不把文档检查当作功能验收。
+验收标准由 [Product Spec](../product/specs/pa-ghost-blog-publishing-product-spec.md#acceptance-criteria)
+维护；实现、独立审查、实际按钮交互与 2026-10-19 caption 修订的历史结果见
+[B-163 最终验证](../archive/2026/b163-lean-ghost-publishing-validation.md)。真实已部署 UI、
+本机合成 Ghost、真实 AI/线上服务和设备证据分别记录，不能互相替代。后续变更按实际
+输入和具体风险选择验证并复用有效结果，不重建已完成的实施计划。
 
 ## 10. 字段切换、回退与历史证据
 
@@ -274,11 +273,11 @@ docs:check、diff check 及受影响文档契约测试，不把文档检查当�
   不存在且新建成功后替换；非法 `GHOST_ID` 明确报错，不当作未关联处理。
 - 停止生成/依赖旧历史数据，不在此次功能改造中批量删除它们或远端未知旧稿。
 - 不做跨版本混用、跨设备协调或重启自动恢复承诺；仍不得把旧 Chat 当新写入授权。
-- 当前旧版 reader 不识别 `GHOST_ID`；不承诺新旧版本关联互通，不为降级保留旧字段双写。
+- 改造前旧版 reader 不识别 `GHOST_ID`；不承诺新旧版本关联互通，不为降级保留旧字段双写。
   回退实现不自动改写 note 或重建 Ghost 文章。
 - 出现实际验收失败，保留外部文章/资源和真实回执，修复或回退实现变更；不删除用户文章，
   不自动退化为直接上线、不扩大成正文 HTML blob。
 - [B-153 最终验证](../archive/2026/b153-ghost-blog-publishing-validation.md) 是旧实现历史证据。
   原始来源问题未完整复现的限制仍保留；真实双桌面补验不再是本方案验收项。
-- 当前实施由 [B-163 Tracker](./active/lean-ghost-publishing/tracker.md) 承接；DEC-053、Product Spec 和本文
-  的目标定义不能被当成代码已交付或已在 anthelion 验证。
+- [B-163 最终验证](../archive/2026/b163-lean-ghost-publishing-validation.md) 保留精简实现的实际
+  证据和限制；当前契约定义不能被当成已在 anthelion 或线上 Ghost 验证。

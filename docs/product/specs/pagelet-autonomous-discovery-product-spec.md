@@ -1,10 +1,10 @@
 # Pagelet 自主发现闭环 Product Spec
 
 Document status: Approved
-Updated: 2026-10-16
+Updated: 2026-10-24
 Work item: B-175
 Decision: [DEC-065](../decisions/dec-065-pagelet-autonomous-discovery.md)
-Authority: 第一轮自主发现闭环的用户行为、范围及验收；获批目标不等于当前运行实现。
+Authority: 第一轮自主发现闭环的用户行为、范围及验收；历史验证范围见下方记录。
 
 ## Problem And Product Outcome
 
@@ -87,9 +87,9 @@ Host 核验实际到达模型的内容和来源版本；调用了某个读工具
 
 第一轮没有阻止设计的未决产品选择。后续轮次只是方向，不能据此派生本轮任务或测试门。
 
-## Delivery Handoff
+## Implementation And Validation
 
-- [Feature Home](../../development/active/pagelet-autonomous-discovery/README.md)
-- [SDD](../../development/active/pagelet-autonomous-discovery/sdd.md)
+- B-175 已于 2026-10-16 完成范围内实现与验收，2026-10-24 按用户授权收尾；无新增产品选择。
+- [现行架构](../../architecture/pa-agent-architecture-plan.md#pagelet-deep-insight-recovery)承载职责、暂存、恢复、来源和终态机制。
+- [历史验收](../../archive/2026/b175-pagelet-autonomous-discovery-validation.md)保留真实模型、app、自动化复用与 O-01 原因未知的边界，不表示 CI、真机或发布通过。
 - [Command Architecture Contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)
-- 实施、测试、部署及 Git/release 以实际授权和 [Tracker](../../development/active/pagelet-autonomous-discovery/tracker.md) 为准。

@@ -2,8 +2,8 @@
 
 Decision ID: DEC-065
 Status: Accepted
-Updated: 2026-10-16
-Authority: 用户于 2026-10-16 在 Pagelet 连续产品讨论中认可第一轮细化方案，并明确要求按项目规范形成设计、开发和测试文档；本次仅授权文档，不授权运行代码修改、提交或推送。
+Updated: 2026-10-24
+Authority: 用户于 2026-10-16 认可第一轮方案并要求文档化，随后另行授权开发、测试及本地 master 提交；2026-10-24 明确授权已完成记录收尾和归档。历史授权不授予新的 Git/release 操作。
 Work item: B-175
 
 ## Context
@@ -12,7 +12,7 @@ Pagelet 的价值是让有用内容在需要时自然浮现；主动性和深入
 发现可以是旧笔记之间的新联系，也可以是当前笔记的错字、表述问题、矛盾或更高阶的改进建议。
 这些是可能的价值，不能变成分类配额、指定优化方向或 Host 的价值评分标准。
 
-当前实现通过 exact-ID lead、首条/第二条阶段、双来源、单条输出、浅层关键词和相似度等
+决定前实现通过 exact-ID lead、首条/第二条阶段、双来源、单条输出、浅层关键词和相似度等
 规则替 Agent 判断探索与交付；部分规则同时存在于代码、提示词和工具回执。
 用户选择由 Agent 自主判断方向、深度、何时继续及是否值得呈现，PA 提供事实上下文、工具和可靠交付。
 
@@ -56,8 +56,7 @@ Host novelty/value 门，以及 Pagelet 旧 SDD/产品设计中的对应语义�
 自动运行额度与既有副作用授权。DEC-025 的完整入口/已看内容交互后续单独收敛，
 DEC-035/DEC-052 的兼容命令及 `Open Pagelet` 零调用查看边界继续有效。
 
-该接续是已批准的目标，不是代码已完成的声明。当前实现仍以源码为准，执行和验证只由
-[B-175 Tracker](../../development/active/pagelet-autonomous-discovery/tracker.md) 记录；B-123/B-125 历史证据不重写、不复开。
+该接续已完成范围内实施与验收；[历史验收记录](../../archive/2026/b175-pagelet-autonomous-discovery-validation.md)保留实际证据和限制，当前机制见 [Architecture](../../architecture/pa-agent-architecture-plan.md#pagelet-deep-insight-recovery)。B-123/B-125 历史证据不重写、不复开。
 
 ## Consequences
 
@@ -75,7 +74,8 @@ DEC-035/DEC-052 的兼容命令及 `Open Pagelet` 零调用查看边界继续有
 ## Traceability
 
 - [Product Spec](../specs/pagelet-autonomous-discovery-product-spec.md)
-- [SDD](../../development/active/pagelet-autonomous-discovery/sdd.md)
+- [Architecture](../../architecture/pa-agent-architecture-plan.md#pagelet-deep-insight-recovery)
+- [历史验收](../../archive/2026/b175-pagelet-autonomous-discovery-validation.md)
 - [Command Architecture Contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)
 - Scoped predecessor: [DEC-027](./dec-027-bounded-retrieval-recovery.md)
 - 来源：User request / approval 2026-10-16，本对话中职责边界、第一轮细化方案与文档化授权。

@@ -206,8 +206,8 @@ Implementation must update every runtime chokepoint when adding a tool:
 v1A tools must satisfy all of these metadata constraints. The current narrow
 exception for complete note-list queries is defined by
 [DEC-059](../product/decisions/dec-059-complete-note-query-results.md);
-its implementation status belongs to the
-[B-169 Tracker](../development/active/complete-note-query/tracker.md).
+its delivered behavior and historical validation are recorded in the
+[B-169 validation](../archive/2026/b169-complete-note-query-validation.md).
 
 - `permission = "read-only"`
 - `cost = "free"` unless a future SPEC explicitly introduces AI-cost tools

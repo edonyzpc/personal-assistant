@@ -1,9 +1,11 @@
 # Pi Codemode 在 PA 中的复用：分析与 MacBook Pro 验证交接
 
 Document status: Archived
-Updated: 2026-10-11
+Updated: 2026-10-24
 Work item: B-170
 Authority: 本主题跨设备研究事实和方案演进的历史证据，不作为当前实现或执行状态权威；当前范围见 DEC-061/Product Spec，本轮独立工具验收见最终验证记录。
+
+2026-10-24 资料位置整理：原 `tmp/b170-*` 的七个证据包及其校验文件，共 15 个文件，已逐文件校验 SHA-256 后移入本机 `local-archive/2026-10-24/b170-evidence/`。文件名与内容不变；下文及 verification JSON 中的旧路径保留为当时记录。当前映射与校验值见本机 `local-archive/2026-10-24/manifest.json`，归档不进入 Git；不新增测试或改写历史结论。
 
 当前范围见 [DEC-061](../../product/decisions/dec-061-independent-agent-computation.md) 与 [Product Spec](../../product/specs/pa-independent-computation-product-spec.md)，本轮开发测试与设备、模型结果见[最终验证](./b170-independent-computation-validation.md)。[§20](#20-通用计算最小方案草案2026-10-11) 保留设计来源。**用户已确认新增独立通用计算工具：脚本不调用其他 PA 工具，由 Agent 自主选择和组合各项工具；不为某个任务预设流程。** 保留 Pi/QuickJS 技术路线，移除原候选的笔记桥接实施与专项测试。§1–20 原样保留历次研究和设计截点，不作为当前交付状态；其中§1–19的桥接范围及强制移入R10建议已由§20取代，§20的稳定约束已吸收进Product Spec。历史失败不改写为本轮通过，Android仍未验证。
 
@@ -44,7 +46,7 @@ Authority: 本主题跨设备研究事实和方案演进的历史证据，不作
 
 `ded0b2a10a116efcb9d1899ce3fdbb0a04ebf856` — `fix(agent): return complete matching note lists`
 
-稳定行为见 [Complete Note Query Product Spec](../../product/specs/pa-complete-note-query-product-spec.md)，原实现与验证见 [B-169 Tracker](../active/complete-note-query/tracker.md)。B-169 Tracker 中的“未部署 anthelion”是该次源码交付的截止快照；用户随后另行授权部署与复测，下表记录后续观察，不能把两个时间点混为一谈。本次不重开已经完成的查询修正，也不修改该任务状态。
+稳定行为见 [Complete Note Query Product Spec](../../product/specs/pa-complete-note-query-product-spec.md)，原实现与验证已吸收至 [B-169 历史验证](./b169-complete-note-query-validation.md)。原 B-169 Tracker 中的“未部署 anthelion”是该次源码交付的截止快照；用户随后另行授权部署与复测，下表记录后续观察，不能把两个时间点混为一谈。本次不重开已经完成的查询修正，也不修改该次验收结论。
 
 ### 2.2 本机 anthelion 的前后单次样本
 

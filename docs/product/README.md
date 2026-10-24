@@ -13,7 +13,7 @@
 
 ## Capture、Recall 与 Context
 
-- [Chat Mermaid 自动开启](./specs/pa-chat-mermaid-auto-enable-product-spec.md) — B-188：在原生绘图前开启宿主本 vault 设置，保留交互；[实施与验证](../development/active/chat-mermaid-auto-enable/tracker.md)。
+- [Chat Mermaid 自动开启](./specs/pa-chat-mermaid-auto-enable-product-spec.md) — B-188：在原生绘图前开启宿主本 vault 设置，保留交互；[历史验收](../archive/2026/b188-chat-mermaid-auto-enable-validation.md)。
 
 - [Chat Canvas 预览与原生打开](./specs/pa-chat-canvas-preview-product-spec.md) — B-184：生成时 JSON 快照、可修改保存路径与原生 Canvas 文件/tab 复用；[当前架构](../architecture/chat-canvas-preview.md)。
 - [PA UI 状态与局部刷新](./specs/pa-ui-state-rendering-product-spec.md) — B-181：交互连续性、设备本地恢复和共享双端组件；[实现契约](../architecture/pa-ui-state-rendering.md)、[最终验证与后置边界](../archive/2026/b181-ui-state-rendering-validation.md)。
@@ -26,7 +26,7 @@
 - [工具混合披露](./specs/pa-agent-tool-disclosure-product-spec.md) — B-172：基础直供、完整短目录与批量加载；[验证与边界](../archive/2026/b172-agent-tool-disclosure-validation.md)。
 - [独立通用计算](./specs/pa-independent-computation-product-spec.md) — B-170：日期、数值与结构化数据计算，由 Agent 自主选择和组合工具；[验证与边界](../archive/2026/b170-independent-computation-validation.md)。
 - [Prompt 精简与渐进披露](./specs/pa-agent-prompt-disclosure-product-spec.md) — B-171：常驻必要规则与能力，方法按需，Agent 自主选择；[验证与延期证据](../archive/2026/b171-agent-prompt-disclosure-validation.md)。
-- [完整笔记查询](./specs/pa-complete-note-query-product-spec.md) — B-169：一次条件查询返回完整轻量列表，正文按需；[执行记录](../development/active/complete-note-query/tracker.md)。
+- [完整笔记查询](./specs/pa-complete-note-query-product-spec.md) — B-169：一次条件查询返回完整轻量列表，正文按需；[历史验收](../archive/2026/b169-complete-note-query-validation.md)。
 
 - [Chat THINKING 可解释执行过程](./specs/pa-chat-thinking-process-product-spec.md) — B-168：原位细轨道、整轮耗时、当前 reasoning 与轻量历史；[当前接线](../architecture/pa-agent-debug-view.md#chat-thinking-投影与持久化)及[最终验证](../archive/2026/b168-chat-thinking-process-validation.md)。
 - [Agent Debug 完整轨迹与双端查看](./specs/pa-agent-debug-explorer-product-spec.md) — B-167：聚焦展开、节点定位搜索、桌面右侧详情与移动独立详情页；[当前机制](../architecture/pa-agent-debug-view.md)与[最终验证](../archive/2026/b167-agent-debug-explorer-validation.md)。
@@ -72,9 +72,9 @@
 
 ## Pagelet Delivery
 
-- [从 Pagelet 的发现继续思考](./specs/pagelet-chat-continuation-product-spec.md) — B-187：Chat 附件来源直达与继续输入；[开发设计入口](../development/active/pagelet-chat-continuation/README.md)。
+- [从 Pagelet 的发现继续思考](./specs/pagelet-chat-continuation-product-spec.md) — B-187：Chat 附件来源直达与继续输入；[历史验收](../archive/2026/b187-pagelet-chat-continuation-validation.md)。
 - [按笔记独立 Detail 与阅读布局](./specs/pagelet-note-detail-tabs-product-spec.md) — B-177：Pet 直达所属笔记 Detail、提示归属、顶部导航及宽窄布局；全部 view 与 Discovery graph 保留，[历史验证](../archive/2026/b177-pagelet-note-detail-tabs-validation.md)。
-- [入口与阅读闭环](./specs/pagelet-reading-loop-product-spec.md) — B-176：独立第二轮的短点内容、已看复访、稳定阅读与完整 Agent 交接；[开发与测试设计](../development/active/pagelet-reading-loop/sdd.md)，不扩大 B-175。
+- [入口与阅读闭环](./specs/pagelet-reading-loop-product-spec.md) — B-176：独立第二轮的短点内容、已看复访、稳定阅读与完整 Agent 交接；[历史验收](../archive/2026/b176-pagelet-reading-loop-validation.md)，不扩大 B-175。
 - [Autonomous Discovery](./specs/pagelet-autonomous-discovery-product-spec.md) — B-175：第一轮自主探索、可选完整暂存、事实边界与可靠交付；实施状态见其 Tracker。
 - [Attention-Aware Delivery and Action Ring](./specs/pagelet-attention-aware-delivery-product-spec.md)
 - [Bubble Readiness and Recall](./specs/pagelet-bubble-readiness-and-recall-product-spec.md)

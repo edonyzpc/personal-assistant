@@ -36,3 +36,6 @@ test/*
 
 # spike / scratch files
 tmp/
+
+# Local development evidence archives (not source or release assets)
+/local-archive/

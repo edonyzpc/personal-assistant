@@ -2,8 +2,8 @@
 
 Decision ID: DEC-066
 Status: Accepted
-Updated: 2026-10-16
-Authority: 用户在第二轮连续讨论中认可短点阅读、长按快捷操作、已看复访、稳定阅读与完整 Agent 交接，并于 2026-10-16 要求独立方案与 SDD；随后明确授权按 B-176 完成全部开发测试。执行结果由 Tracker 承接，Git 交付另行授权。
+Updated: 2026-10-24
+Authority: 用户认可第二轮行为并于 2026-10-16 要求独立方案与 SDD，随后授权开发测试、评审修复及本地 master 提交；2026-10-24 明确授权已完成记录收尾和归档。历史授权不授予新的 Git/release 操作。
 Work item: B-176
 
 ## Context
@@ -15,7 +15,7 @@ Work item: B-176
 源码基线 ecddc088：未看提醒选择器会推进候选并过滤已看内容；缓存按笔记保存最新集合；
 普通后台接纳已经不会直接替换打开的正文，但界面刷新和显式运行晚到仍有阅读连续性缺口。
 Panel 展开后的 Chat 回调仍依赖原 Panel 打开状态。正常 Chat 来源选择还会使 Pagelet 正文
-在运行时投影前被排除，附件可见不能证明实际入模。具体证据见第二轮 SDD。
+在运行时投影前被排除，附件可见不能证明实际入模。修复和验证见[历史验收](../../archive/2026/b176-pagelet-reading-loop-validation.md)。
 
 ## Options Considered
 
@@ -63,7 +63,7 @@ Panel 展开后的 Chat 回调仍依赖原 Panel 打开状态。正常 Chat 来�
 
 本决定局部接续 [DEC-025](./dec-025-consumption-aware-pagelet-delivery.md) 的“空态已解释后短点转 Ring”目标；
 保留设备本地 seen、主动提示去重，以及四项快捷操作的能力和布局。DEC-035/DEC-052 的兼容命令、
-Open Pagelet 零调用边界及共享来源权限保持。本决定是待实施目标，不改写历史验证或当前代码事实。
+Open Pagelet 零调用边界及共享来源权限保持。本决定已完成范围内实施与验收，不改写历史证据边界。
 
 B-175 的任务、测试与状态不变：第二轮接收终态校验后的完整集合，不展示 run-local 暂存半成品，
 不改变自主探索、检索恢复或第一轮提示词。交接来源补齐归 B-176，不反向追加 B-175 验收。
@@ -74,8 +74,8 @@ B-175 的任务、测试与状态不变：第二轮接收终态校验后的完�
 - 沿用现有缓存、渲染、调度及来源准入；新增状态只服务实际阅读与交接，不建立通用结果总线或历史中心。
 - Pagelet 交接前保持其 current-evidence 校验；Chat 接纳后的生成、重试及下一 loop 遵循
   [DEC-055](./dec-055-agent-snapshot-execution-and-debug-history.md)，不新增在途文件变化撤销规则。
-- B-141 的 Detail 交接缺口由本轮范围承接，完成后再依真实证据处置；B-002 仅有局部重合，不整体重开或关闭。
-- 设计时 B-175 占用唯一 Next；其后 B-175 已验证并本地提交，本轮取得实施授权，原 SDD 已迁入 Active，执行状态唯一见 [Tracker](../../development/active/pagelet-reading-loop/tracker.md)。
+- B-141 的 Detail 交接缺口已由本轮 D-02/D-03 实际完整来源交接验收完成；B-002 仅有局部重合，不整体重开或关闭。
+- 已完成过程文档在 2026-10-24 收尾时吸收到现行架构及[历史验收](../../archive/2026/b176-pagelet-reading-loop-validation.md)，不维持第二份执行台账。
 
 ## Revisit Trigger
 
@@ -85,7 +85,8 @@ B-175 的任务、测试与状态不变：第二轮接收终态校验后的完�
 ## Traceability
 
 - [Product Spec](../specs/pagelet-reading-loop-product-spec.md)
-- [开发与测试 SDD](../../development/active/pagelet-reading-loop/sdd.md)
-- [Backlog B-176 / B-141](../../backlog.md#已延期的产品与工程工作)
+- [Architecture](../../architecture/pa-agent-architecture-plan.md#pagelet-deep-insight-recovery)
+- [历史验收（含 B-141）](../../archive/2026/b176-pagelet-reading-loop-validation.md)
+- [B-141 终态路由](../../archive/2026/b141-pagelet-detail-chat-closeout.md)
 - [Command Architecture Contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)
 - 来源：User request / approval 2026-10-16，本对话第二轮方案认可与独立文档化授权。

@@ -1,10 +1,10 @@
 # Complete Note Query Product Spec
 
 Document status: Approved
-Updated: 2026-10-10
+Updated: 2026-10-24
 Work item: B-169
 Decision: [DEC-059](../decisions/dec-059-complete-note-query-results.md)
-Authority: 用户 2026-10-10 的明确查询工具修正授权；执行状态见 Tracker。
+Authority: 用户 2026-10-10 的明确查询工具修正授权；本文件维护当前行为契约，历史交付证据见文末。
 
 ## Requirements
 
@@ -23,3 +23,15 @@ Authority: 用户 2026-10-10 的明确查询工具修正授权；执行状态见
 ## Non-goals And Compatibility
 
 不改变 `read_note` 的正文范围读取、不合并工具或增加搜索 DSL、不修改 Memory、模型思考设置、当前日期提示或渲染实现。保留最低 Obsidian 版本及移动端共用官方 API 路径。不部署到 anthelion，不包含 Git 或 release 交付。
+
+## Implementation Responsibilities
+
+沿用 [Command Architecture Contract](../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)：
+
+- Agent 选择查询语义、日期口径和按需正文读取；仅在用户明确要求前 N 篇时传入数量限制。工具遍历完整许可范围、执行条件、稳定排序并提供真实清单；内部协作让出不产生模型分页步骤。
+- 保留三个查询工具及既有 factory/helper/guard/evidence 分工。元数据关键词沿用匹配算法，不返回任意属性值预览；正文关键词本地字面匹配、按笔记去重，只返回首个命中定位与必要来源版本。`read_note` 提供正文。
+- Host 负责来源权限、取消、身份和版本事实。输出准入、V1A snippet、vault observation parser 与重校验接受完整新列表，保留结构、路径、hash 和来源证明；旧记录安全读取，不迁移持久数据。近期结果沿用现有 Context 保护，真实上下文溢出沿现有机制报告。
+
+## Delivery Evidence
+
+B-169 于 2026-10-24 获授权收尾。独有的旧版/新版 601 篇夹具对照、全量首轮失败及定向复验、真实 Chat 样本和环境恢复记录见 [最终验证](../../archive/2026/b169-complete-note-query-validation.md)。它记录历史证据，不承诺 anthelion 性能或当前所有环境均已验证。
