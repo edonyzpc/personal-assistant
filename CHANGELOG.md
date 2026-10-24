@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [3.0.2](https://github.com/edonyzpc/personal-assistant/compare/3.0.1...3.0.2) (2026-10-24)
+
+### Features
+- chat: preview Canvas and open native files
+- pagelet: continue findings in Chat
+
+### Fix
+- dependencies: upgrade vulnerable parser and tooling dependencies
+- chat: enable native Mermaid rendering automatically
+
+### Docs
+- pagelet: define B-187 chat continuation design
+- share-card: close B-124 interaction acceptance
+- archive completed development records and clean artifacts
+
+### Tests
+- chat: count actual cooperative streaming slices
+- strengthen boundary coverage and simplify fixtures
+
 ## [3.0.1](https://github.com/edonyzpc/personal-assistant/compare/3.0.0...3.0.1) (2026-10-20)
 
 ### Features

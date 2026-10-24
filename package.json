@@ -1,6 +1,6 @@
 {
   "name": "personal-assistant",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "An plugin which help you to automatically manage Obsidian.",
   "main": "main.js",
   "engines": {
