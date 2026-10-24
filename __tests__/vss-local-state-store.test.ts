@@ -87,21 +87,53 @@ describe("VSS local state store", () => {
         await expect(store.getMarker()).resolves.toBeNull();
     });
 
-    it("atomically replaces marker, dirty journal, and rebuild guard in one IndexedDB transaction", async () => {
+    it("atomically replaces marker, dirty journal, and rebuild guard in one IndexedDB transaction per transition", async () => {
         const fakeIndexedDb = new FakeIndexedDbFactory();
         const store = new IndexedDbVSSIndexStateStore("vss-atomic-db", fakeIndexedDb as unknown as IDBFactory);
-        const guard: VSSRebuildGuard = {
+        const oldGuard: VSSRebuildGuard = {
             version: 1,
-            reason: "settings-changed",
-            startedAt: "2026-08-12T00:00:00.000Z",
+            reason: "local-memory-missing",
+            startedAt: "2026-08-11T00:00:00.000Z",
         };
         await store.initialize();
         const transactions = jest.spyOn(fakeIndexedDb.db, "transaction");
 
         await store.replaceRebuildState({
-            marker: createMarker({ indexId: "prepared-index" }),
+            marker: createMarker({ indexId: "old-index" }),
+            dirtyJournal: new Map([["old.md", { first: 4, last: 5, epoch: 6 }]]),
+            guard: oldGuard,
+        });
+
+        // Inspect before the reads below open their own readonly transactions.
+        expect(transactions).toHaveBeenCalledTimes(1);
+        expect(transactions).toHaveBeenCalledWith("state", "readwrite");
+        await expect(store.getMarker()).resolves.toMatchObject({ indexId: "old-index" });
+        await expect(store.getDirtyJournal()).resolves.toEqual(new Map([
+            ["old.md", { first: 4, last: 5, epoch: 6 }],
+        ]));
+        await expect(store.getRebuildGuard()).resolves.toEqual(oldGuard);
+
+        transactions.mockClear();
+        await store.replaceRebuildState({
+            marker: null,
             dirtyJournal: new Map([["retry.md", { first: 1, last: 2, epoch: 3 }]]),
-            guard,
+            guard: oldGuard,
+        });
+
+        // Inspect before the reads below open their own readonly transactions.
+        expect(transactions).toHaveBeenCalledTimes(1);
+        expect(transactions).toHaveBeenCalledWith("state", "readwrite");
+        await expect(store.getMarker()).resolves.toBeNull();
+        await expect(store.getDirtyJournal()).resolves.toEqual(new Map([
+            ["retry.md", { first: 1, last: 2, epoch: 3 }],
+        ]));
+        await expect(store.getRebuildGuard()).resolves.toEqual(oldGuard);
+
+        transactions.mockClear();
+        await store.replaceRebuildState({
+            marker: createMarker({ indexId: "prepared-index" }),
+            dirtyJournal: new Map([["prepared.md", { first: 7, last: 8, epoch: 9 }]]),
+            guard: null,
         });
 
         // Inspect before the reads below open their own readonly transactions.
@@ -109,9 +141,9 @@ describe("VSS local state store", () => {
         expect(transactions).toHaveBeenCalledWith("state", "readwrite");
         await expect(store.getMarker()).resolves.toMatchObject({ indexId: "prepared-index" });
         await expect(store.getDirtyJournal()).resolves.toEqual(new Map([
-            ["retry.md", { first: 1, last: 2, epoch: 3 }],
+            ["prepared.md", { first: 7, last: 8, epoch: 9 }],
         ]));
-        await expect(store.getRebuildGuard()).resolves.toEqual(guard);
+        await expect(store.getRebuildGuard()).resolves.toBeNull();
     });
 
     it("keeps all prior rebuild state when the IndexedDB replacement transaction aborts", async () => {
@@ -178,14 +210,10 @@ describe("VSS local state store", () => {
         }
     });
 
-    it("rejects IndexedDB open failures and blocked upgrades", async () => {
+    it("rejects IndexedDB open failures", async () => {
         await expect(
             new IndexedDbVSSIndexStateStore("vss-test-db", new FakeIndexedDbFactory({ failOpen: true }) as unknown as IDBFactory).initialize(),
         ).rejects.toThrow("open failed");
-
-        await expect(
-            new IndexedDbVSSIndexStateStore("vss-test-db", new FakeIndexedDbFactory({ blockedOpen: true }) as unknown as IDBFactory).initialize(),
-        ).rejects.toThrow("upgrade was blocked");
     });
 
     it("allows IndexedDB initialization to retry after a blocked open", async () => {
@@ -216,7 +244,6 @@ describe("VSS local state store", () => {
 type FakeIndexedDbOptions = {
     hasStore?: boolean;
     failOpen?: boolean;
-    blockedOpen?: boolean;
     blockedOpenCount?: number;
 };
 
@@ -235,10 +262,6 @@ class FakeIndexedDbFactory {
             if (this.options.failOpen) {
                 (request as unknown as FakeRequest<FakeIdbDatabase>).error = new DOMException("open failed");
                 request.onerror?.({} as Event);
-                return;
-            }
-            if (this.options.blockedOpen) {
-                request.onblocked?.call(request, {} as IDBVersionChangeEvent);
                 return;
             }
             if (this.options.blockedOpenCount && this.options.blockedOpenCount > 0) {

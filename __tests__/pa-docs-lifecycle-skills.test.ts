@@ -48,9 +48,9 @@ describe("PA lifecycle skill forward contracts", () => {
         expect(docsSkill).toContain("Enforce `1 Now + 1 Next`");
         expect(normalize(docsSkill)).toContain("When a Tracker reaches `Validated`, continue closeout if already authorized; otherwise ask one compact closeout question");
         expect(normalize(sddSkill)).toContain("At `Validated`, continue already-authorized closeout; ask once only if closeout authority is missing");
-        expect(docsSkill).toContain("Do not create\n  standalone `handoff*.md` or `closeout.md`");
+        expect(normalize(docsSkill)).toContain("Do not create standalone `handoff*.md` or `closeout.md`");
         expect(sddSkill).toContain("Enforce `1 Now + 1 Next`");
-        expect(sddSkill).toContain("Never create\n  standalone `handoff*.md` or `closeout.md`");
+        expect(normalize(sddSkill)).toContain("Never create standalone `handoff*.md` or `closeout.md`");
     });
 
     it("deletes absorbed process artifacts instead of archiving complete packages", () => {
@@ -63,7 +63,7 @@ describe("PA lifecycle skill forward contracts", () => {
         expect(normalize(sddSkill)).toContain("Choose the mode covering the full authorized request");
         expect(docsSkill).toContain("implement-approved-spec");
         expect(docsSkill).toContain("Only explicit full-lifecycle or closeout language");
-        expect(sddSkill).toContain("never implies closeout,\narchive, or commit");
+        expect(normalize(sddSkill)).toContain("never implies closeout, archive, or commit");
         expect(sddSkill).toContain("Do not stage, commit, push, tag, publish, or release without explicit authority");
     });
 

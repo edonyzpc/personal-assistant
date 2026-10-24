@@ -1,8 +1,14 @@
-import { describe, expect, it } from "@jest/globals";
+import { afterEach, describe, expect, it } from "@jest/globals";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+const temporaryRoots: string[] = [];
+
+afterEach(() => {
+    for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 describe("scripts/changelog.mjs", () => {
     it("uses the previous stable tag when generating the first beta changelog", () => {
@@ -68,7 +74,7 @@ describe("scripts/changelog.mjs", () => {
 });
 
 function createGitRepo(): string {
-    const repo = mkdtempSync(join(tmpdir(), "pa-changelog-"));
+    const repo = createTempDir("pa-changelog-");
     git(repo, ["init", "-b", "master"]);
     git(repo, ["config", "user.email", "test@example.com"]);
     git(repo, ["config", "user.name", "Test User"]);
@@ -86,4 +92,10 @@ function commit(repo: string, message: string): void {
 
 function git(repo: string, args: string[]): string {
     return execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+}
+
+function createTempDir(prefix: string): string {
+    const root = mkdtempSync(join(tmpdir(), prefix));
+    temporaryRoots.push(root);
+    return root;
 }

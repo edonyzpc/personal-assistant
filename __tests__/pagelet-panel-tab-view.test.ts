@@ -895,10 +895,26 @@ describe("Pagelet panel and tab view regressions", () => {
         })).resolves.toBe(true);
         expect(reading.onSelect).toHaveBeenCalledWith(first);
         expect(content.querySelector(".pa-pagelet-tab-body")?.scrollTop).toBe(91);
+        const selectCountAfterFirst = (reading.onSelect as jest.Mock).mock.calls.length;
+        const displayedBody = content.querySelector(".pa-pagelet-panel-timeline-insight");
+        const displayedBodyText = displayedBody?.textContent ?? "";
+        const tabBody = content.querySelector(".pa-pagelet-tab-body");
+        const displayedScrollTop = tabBody?.scrollTop ?? 0;
 
         await expect(view.revealPageletReading({
             anchorPath: "notes/anchor.md", candidateId: first.id, bodyHash: "wrong-hash",
         })).resolves.toBe(false);
+        await expect(view.revealPageletReading({
+            anchorPath: "notes/anchor.md", candidateId: "missing-candidate", bodyHash: "hash-first",
+        })).resolves.toBe(false);
+        await expect(view.revealPageletReading({
+            anchorPath: "notes/wrong-anchor.md", candidateId: first.id, bodyHash: "hash-first",
+        })).resolves.toBe(false);
+        expect(reading.onSelect).toHaveBeenCalledTimes(selectCountAfterFirst);
+        expect(content.querySelector(".pa-pagelet-panel-timeline-insight")).toBe(displayedBody);
+        expect(content.querySelector(".pa-pagelet-tab-body")).toBe(tabBody);
+        expect(displayedBody?.textContent).toBe(displayedBodyText);
+        expect(tabBody?.scrollTop).toBe(displayedScrollTop);
         first.staleStatus = "boundary-changed";
         expect(view.hasLivePageletReading({
             anchorPath: "notes/anchor.md", candidateId: first.id, bodyHash: "hash-first",

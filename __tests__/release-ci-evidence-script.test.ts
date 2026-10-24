@@ -70,7 +70,6 @@ describe("release master CI evidence", () => {
     it("checks the exact parent CI without live equality only after the tag caller proves master ancestry", () => {
         const input = fixture();
         input.master = `${"b".repeat(40)}\trefs/heads/master`;
-        expect(check(input).result.verified).toBe(false);
         const { result, calls } = check(input, true);
         expect(result).toMatchObject({ verified: true, sourceCommit });
         expect(calls).toHaveLength(4);

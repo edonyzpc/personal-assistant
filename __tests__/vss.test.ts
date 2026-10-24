@@ -5719,9 +5719,8 @@ describe('fuseRRF', () => {
 
     it('ranks overlap above single-source rank-1 when both sources agree on rank-1', () => {
         const result = fuseRRF([[10, 20], [10, 30]], 10);
-        const entries = [...result.entries()].sort(([, a], [, b]) => b - a);
-        expect(entries[0][0]).toBe(10);
-        expect(entries[0][1]).toBeCloseTo(2 / (RRF_K + 1), 10);
+        expect([...result.keys()][0]).toBe(10);
+        expect(result.get(10)).toBeCloseTo(2 / (RRF_K + 1), 10);
     });
 
     it('returns empty map for empty sources', () => {
@@ -5741,12 +5740,15 @@ describe('fuseRRF', () => {
         expect(result.has(4)).toBe(false);
     });
 
-    it('preserves order by score in map iteration', () => {
-        const result = fuseRRF([[10, 20], [20, 10]], 10);
-        const ids = [...result.keys()];
-        expect(ids[0]).toBe(10);
-        expect(ids[1]).toBe(20);
-        expect(result.get(10)).toBe(result.get(20));
+    it('orders by descending score ahead of id and insertion order', () => {
+        const result = fuseRRF([[10, 20], [20, 30]], 10);
+        expect([...result.keys()]).toEqual([20, 10, 30]);
+        expect(result.get(20)).toBeCloseTo(1 / (RRF_K + 2) + 1 / (RRF_K + 1), 10);
+        expect(result.get(10)).toBeCloseTo(1 / (RRF_K + 1), 10);
+        expect(result.get(30)).toBeCloseTo(1 / (RRF_K + 2), 10);
+
+        const topOnly = fuseRRF([[10, 20], [20, 30]], 1);
+        expect([...topOnly.keys()]).toEqual([20]);
     });
 
     it('handles single-source fallback (FTS returns nothing)', () => {

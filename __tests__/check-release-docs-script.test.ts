@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@jest/globals";
+import { afterEach, describe, expect, it } from "@jest/globals";
 import { execFileSync } from "node:child_process";
 import {
     appendFileSync,
@@ -21,6 +21,11 @@ const requiredFiles = [
     "docs/operations/release-process.md",
     "docs/operations/brat-beta-testing.md",
 ];
+const temporaryRoots: string[] = [];
+
+afterEach(() => {
+    for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 describe("scripts/check-release-docs.mjs", () => {
     it("accepts the baseline release documentation set", () => {
@@ -130,7 +135,7 @@ describe("scripts/check-release-docs.mjs", () => {
 });
 
 function createFixture(): string {
-    const repo = mkdtempSync(join(tmpdir(), "pa-release-docs-"));
+    const repo = createTempDir("pa-release-docs-");
     for (const file of requiredFiles) write(repo, file, `# ${file}\n`);
     return repo;
 }
@@ -171,4 +176,10 @@ function expectCheckFailure(repo: string): string {
         ].join("\n");
     }
     throw new Error("Expected release documentation check to fail.");
+}
+
+function createTempDir(prefix: string): string {
+    const root = mkdtempSync(join(tmpdir(), prefix));
+    temporaryRoots.push(root);
+    return root;
 }

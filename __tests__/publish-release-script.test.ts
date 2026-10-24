@@ -1,8 +1,14 @@
-import { describe, expect, it } from "@jest/globals";
+import { afterEach, describe, expect, it } from "@jest/globals";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+const temporaryRoots: string[] = [];
+
+afterEach(() => {
+    for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 describe("scripts/publish-release.mjs", () => {
     it("requires prerelease publishes to run from the matching beta branch", () => {
@@ -80,7 +86,7 @@ describe("scripts/publish-release.mjs", () => {
     it("allows prerelease publish when the tagged release commit is directly above master", () => {
         const repo = createPublishRepo("2.8.4");
         const remote = createBareRemote();
-        const tools = mkdtempSync(join(tmpdir(), "pa-publish-tools-"));
+        const tools = createTempDir("pa-publish-tools-");
         const pushLog = join(tools, "git-push.jsonl");
         writeExecutable(join(tools, "git"), `
 const fs = require("node:fs");
@@ -230,14 +236,14 @@ process.exit(result.status ?? 1);
 });
 
 function createBareRemote(): string {
-    const remote = mkdtempSync(join(tmpdir(), "pa-publish-remote-"));
+    const remote = createTempDir("pa-publish-remote-");
     git(remote, ["init", "--bare"]);
     git(remote, ["symbolic-ref", "HEAD", "refs/heads/master"]);
     return remote;
 }
 
 function createPublishRepo(version: string): string {
-    const repo = mkdtempSync(join(tmpdir(), "pa-publish-"));
+    const repo = createTempDir("pa-publish-");
     git(repo, ["init", "-b", "master"]);
     git(repo, ["config", "user.email", "test@example.com"]);
     git(repo, ["config", "user.name", "Test User"]);
@@ -255,7 +261,7 @@ function createPublishRepo(version: string): string {
 }
 
 function advanceRemoteMaster(remote: string): void {
-    const clone = mkdtempSync(join(tmpdir(), "pa-publish-remote-clone-"));
+    const clone = createTempDir("pa-publish-remote-clone-");
     git(clone, ["clone", remote, "."]);
     git(clone, ["config", "user.email", "test@example.com"]);
     git(clone, ["config", "user.name", "Test User"]);
@@ -333,4 +339,10 @@ function git(repo: string, args: string[]): string {
 function writeExecutable(path: string, source: string): void {
     writeFileSync(path, `#!${process.execPath}\n${source}`);
     chmodSync(path, 0o755);
+}
+
+function createTempDir(prefix: string): string {
+    const root = mkdtempSync(join(tmpdir(), prefix));
+    temporaryRoots.push(root);
+    return root;
 }

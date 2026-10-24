@@ -37,6 +37,7 @@ describe('parameterized RRF', () => {
             sourceWeights: [1, 1],
         });
 
+        expect(vectorFirst.get(10)).toBe(vectorFirst.get(20));
         expect([...vectorFirst.entries()]).toEqual([...lexicalFirst.entries()]);
         expect([...vectorFirst.keys()]).toEqual([10, 20]);
     });

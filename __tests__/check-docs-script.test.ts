@@ -1,11 +1,16 @@
-import { describe, expect, it } from "@jest/globals";
+import { afterEach, describe, expect, it } from "@jest/globals";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 const checker = join(process.cwd(), "scripts/check-docs.mjs");
+const temporaryRoots: string[] = [];
+
+afterEach(() => {
+    for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 describe("scripts/check-docs.mjs", () => {
     it("accepts the minimal Feature Home plus Tracker package", () => {
@@ -384,7 +389,7 @@ function createFixture(options: {
     unlinkedGovernedDoc?: boolean;
     unlinkedProcessDraft?: boolean;
 } = {}): string {
-    const repo = mkdtempSync(join(tmpdir(), "pa-docs-check-"));
+    const repo = createTempDir("pa-docs-check-");
     const packageAuthority = options.governance
         ? "Governance contract: [GOV-001](../../governance/gov-001.md)"
         : "Decision: [DEC-001](../../../product/decisions/dec-001.md)\nProduct spec: [Sample Spec](../../../product/specs/sample.md)";
@@ -668,4 +673,10 @@ function expectCheckFailure(repo: string, extraEnv: NodeJS.ProcessEnv = {}): str
 
 function git(repo: string, args: string[]): string {
     return execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+}
+
+function createTempDir(prefix: string): string {
+    const root = mkdtempSync(join(tmpdir(), prefix));
+    temporaryRoots.push(root);
+    return root;
 }
