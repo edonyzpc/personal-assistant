@@ -33,10 +33,6 @@ import {
 } from "./ai-services/memory-search-tool";
 import {
     OperationsService,
-    type OperationsExecutionResult,
-    type OperationsIntent,
-    type OperationsSession,
-    type UndoResult,
     type OperationsVault,
     type OperationsVaultFile,
 } from "./ai-services/operations";
@@ -150,7 +146,6 @@ import {
 import { ScopeRecapPluginIntegration } from './pagelet/plugin-scope-recap';
 import { DeepDiscoverPluginIntegration } from './pagelet/plugin-deep-discover';
 import { RetainedReviewPluginIntegration } from './pagelet/plugin-review-actions';
-import { PageletOperationsPluginIntegration } from './pagelet/plugin-operations-integration';
 import { PageletActionPluginIntegration } from './pagelet/plugin-pagelet-actions';
 import { PageletFeatureIntegration } from './pagelet/plugin-integration';
 import { ChatPluginIntegration } from './chat/plugin-integration';
@@ -179,7 +174,6 @@ import {
     PAGELET_DETAIL_VIEW_TYPE,
     PageletDetailView,
     clearPageletDetailSessionCache,
-    clearScopeRecapPageletDetailSessionCache,
     registerPageletDetailIcon,
     type PageletDetailPayload,
 } from './pagelet/tab';
@@ -1084,7 +1078,6 @@ export class PluginManager extends Plugin {
         invalidateRetainedReviewLimiter: () => this.retainedReviewIntegration.invalidateLimiter(),
         disposeScopeRecap: () => this.scopeRecapIntegration.dispose(),
         disposeQuietRecall: () => this.quietRecallIntegration.dispose(),
-        retireOperations: () => this.pageletOperationsIntegration.disposeFeature(),
         createRuntime: () => {
             if (!this.settings.pagelet?.enabled) return null;
             if (!this.pageletIntegration.currentOrchestrator) return null;
@@ -1342,14 +1335,6 @@ export class PluginManager extends Plugin {
             "foreground-review",
             vaultStorageScope,
         ),
-        log: (message, detail) => this.log(message, detail),
-    });
-    private readonly pageletOperationsIntegration = new PageletOperationsPluginIntegration({
-        vault: this.app.vault,
-        isOperationsAgentEnabled: () => this.isOperationsAgentEnabled,
-        isPathAllowed: (path) => this.isPageletProviderPathAllowed(path),
-        createSession: (options) => this.getOperationsService().createSession(options),
-        now: () => Date.now(),
         log: (message, detail) => this.log(message, detail),
     });
     private readonly pageletActionIntegration = new PageletActionPluginIntegration({
@@ -2156,7 +2141,6 @@ export class PluginManager extends Plugin {
                     (record) => this.forgetConfirmedMemory(record),
                     (candidate) => this.saveQuietRecallAsInsight(candidate),
                     (candidate) => this.linkQuietRecallCandidateFromActiveNote(candidate),
-                    () => { openSettings(this.app); openSettingsTab(this.app, 'personal-assistant'); },
                     {
                         onCorrect: (record, summary) => this.runPageletGovernedMemoryAction(
                             "correct",
@@ -2846,15 +2830,9 @@ export class PluginManager extends Plugin {
         };
         return {
             onOpenPanel: () => dispatch((callbacks) => callbacks.onOpenPanel()),
-            onOpenPreparedReview: () => dispatch((callbacks) => callbacks.onOpenPreparedReview()),
-            onReviewCurrent: () => dispatch((callbacks) => callbacks.onReviewCurrent()),
-            onQuickReview: () => dispatch((callbacks) => callbacks.onQuickReview()),
             onDiscoverConnections: () => dispatch((callbacks) => callbacks.onDiscoverConnections()),
             onMaintenanceReview: () => dispatch((callbacks) => callbacks.onMaintenanceReview()),
-            onQuietRecall: () => dispatch((callbacks) => callbacks.onQuietRecall()),
             onGraphDiscovery: () => dispatch((callbacks) => callbacks.onGraphDiscovery()),
-            onScopeRecap: () => dispatch((callbacks) => callbacks.onScopeRecap()),
-            onClearScopeRecapCache: () => dispatch((callbacks) => callbacks.onClearScopeRecapCache()),
             onToggleProactiveHints: () => dispatch((callbacks) => callbacks.onToggleProactiveHints()),
             onShowBackgroundPreparationStatus: () => dispatch((callbacks) => callbacks.onShowBackgroundPreparationStatus()),
             onMovePetCorner: () => dispatch((callbacks) => callbacks.onMovePetCorner()),
@@ -2963,22 +2941,6 @@ export class PluginManager extends Plugin {
             validateDeepDiscoverInsight: async (identity, signal) => {
                 return await this.deepDiscoverIntegration.validateInsight(identity, signal);
             },
-            isOperationsAvailable: () => this.isOperationsAgentEnabled,
-            stagePageletInsightLink: (input, signal) => (
-                this.stagePageletInsightLink(input, signal)
-            ),
-            confirmPageletOperationsIntent: (intentId) => (
-                this.confirmPageletOperationsIntent(intentId)
-            ),
-            cancelPageletOperationsIntent: (intentId) => {
-                this.cancelPageletOperationsIntent(intentId);
-            },
-            undoPageletOperationsReceipts: (receiptIds) => (
-                this.undoPageletOperationsReceipts(receiptIds)
-            ),
-            consumePageletOperationsSelfWrite: (path) => (
-                this.consumePageletOperationsSelfWrite(path)
-            ),
             openPageletChatHandoff: async (context, signal) => {
                 if (signal?.aborted) return { status: "unavailable" };
                 const view = await this.activeChatView();
@@ -3012,7 +2974,6 @@ export class PluginManager extends Plugin {
             markPageletDetailNewResults: (path: string, hasNewResults: boolean) => (
                 this.markPageletDetailNewResults(path, hasNewResults)
             ),
-            clearScopeRecapDetailSessionCache: () => clearScopeRecapPageletDetailSessionCache(),
             findRelatedNotes: (primarySourcePath, noteContents, sourcePaths) =>
                 this.findPageletRelatedNotes(
                     primarySourcePath,
@@ -5606,42 +5567,6 @@ export class PluginManager extends Plugin {
             }),
         });
         return this.operationsService;
-    }
-
-    private getPageletOperationsSession(): OperationsSession {
-        return this.pageletOperationsIntegration.getSession();
-    }
-
-    private retirePageletOperationsSession(): void {
-        this.pageletOperationsIntegration.retireCurrentSession();
-    }
-
-    private async stagePageletInsightLink(input: {
-        candidateId: string;
-        anchorPath: string;
-        sourcePath: string;
-    }, signal?: AbortSignal): Promise<OperationsIntent> {
-        return this.pageletOperationsIntegration.stageInsightLink(input, signal);
-    }
-
-    private async confirmPageletOperationsIntent(
-        intentId: string,
-    ): Promise<OperationsExecutionResult> {
-        return this.pageletOperationsIntegration.confirmIntent(intentId);
-    }
-
-    private cancelPageletOperationsIntent(intentId: string): void {
-        this.pageletOperationsIntegration.cancelIntent(intentId);
-    }
-
-    private async undoPageletOperationsReceipts(
-        receiptIds: readonly string[],
-    ): Promise<UndoResult[]> {
-        return this.pageletOperationsIntegration.undoReceipts(receiptIds);
-    }
-
-    private consumePageletOperationsSelfWrite(path: string): boolean {
-        return this.pageletOperationsIntegration.consumeSelfWrite(path);
     }
 
     createChatService(): ChatService {
@@ -8636,10 +8561,7 @@ export class PluginManager extends Plugin {
         return leaf?.view instanceof LLMView ? leaf.view : null;
     }
 
-    /**
-     * Effective Operations host availability. The persisted legacy field remains
-     * private compatibility data and no longer gates action admission.
-     */
+    /** Effective host availability; individual operations retain their own admission checks. */
     get isOperationsAgentEnabled(): boolean {
         return !this.unloading;
     }

@@ -393,7 +393,6 @@ import {
     PAGELET_DETAIL_VIEW_TYPE,
     PageletDetailView,
     clearPageletDetailSessionCache,
-    clearScopeRecapPageletDetailSessionCache,
 } from "../src/pagelet/tab/PageletDetailView";
 
 describe("Pagelet panel and tab view regressions", () => {
@@ -1356,7 +1355,6 @@ describe("Pagelet panel and tab view regressions", () => {
             undefined,
             undefined,
             undefined,
-            undefined,
             {},
             closedView => {
                 closed.push(closedView.getNoteAnchorPath() ?? "none");
@@ -1968,7 +1966,6 @@ describe("Pagelet panel and tab view regressions", () => {
             undefined,
             undefined,
             undefined,
-            undefined,
             callbacks,
         );
         const first = createView();
@@ -2071,7 +2068,6 @@ describe("Pagelet panel and tab view regressions", () => {
             undefined,
             undefined,
             undefined,
-            undefined,
             { resolveContextualMemory, onOpenMemorySettings: jest.fn() },
         );
         await view.onOpen();
@@ -2142,7 +2138,7 @@ describe("Pagelet panel and tab view regressions", () => {
         else delete state.payload.contextualMemory;
 
         const restored = new PageletDetailView({} as never, () => "en", undefined, undefined,
-            undefined, undefined, undefined, undefined, undefined, undefined, undefined, {
+            undefined, undefined, undefined, undefined, undefined, undefined, {
                 resolveContextualMemory: () => ({
                     governanceMode: "effect_based",
                     records: [record],
@@ -2343,7 +2339,7 @@ describe("Pagelet panel and tab view regressions", () => {
 
             const restored = new PageletDetailView({} as never, () => "en", undefined,
                 undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-                undefined, {
+                {
                     resolveContextualMemory: () => {
                         if (outcome === "throws") throw new Error("repository unavailable");
                         return {
@@ -2386,7 +2382,6 @@ describe("Pagelet panel and tab view regressions", () => {
         const createView = () => new PageletDetailView(
             {} as never,
             () => "en",
-            undefined,
             undefined,
             undefined,
             undefined,
@@ -2487,7 +2482,6 @@ describe("Pagelet panel and tab view regressions", () => {
             undefined,
             undefined,
             undefined,
-            undefined,
             { onPauseUse, onResumeUse },
         );
         await view.onOpen();
@@ -2527,7 +2521,6 @@ describe("Pagelet panel and tab view regressions", () => {
         const view = new PageletDetailView(
             {} as never,
             () => "en",
-            undefined,
             undefined,
             undefined,
             undefined,
@@ -3226,7 +3219,7 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.querySelector(".pa-pagelet-tab-maintenance-review")).not.toBeNull();
         expect(container.textContent).toContain("Maintenance Review");
         expect(container.textContent).toContain("Preview only");
-        expect(container.textContent).toContain("Weekly scan: configure in Settings");
+        expect(container.textContent).not.toContain("Weekly scan: configure in Settings");
         expect(container.textContent).toContain("Review inbox note destination");
         expect(container.textContent).toContain("Inbox/Untitled.md");
         expect(container.textContent).toContain("Notes/Untitled.md");
@@ -3842,44 +3835,6 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(contentEl.textContent).not.toContain("Result no longer available");
     });
 
-    it("clears only Scope Recap payloads from the in-memory native detail session", async () => {
-        const createCachedSummary = async (
-            entryReason: "scope-recap" | "default",
-            marker: string,
-        ): Promise<Record<string, unknown>> => {
-            const view = new PageletDetailView({} as never, () => "en");
-            await view.onOpen();
-            view.setPayload({
-                title: "Pagelet — Detail View",
-                locale: "en",
-                layoutType: "summary",
-                content: [],
-                entryReason,
-                extra: { markdown: `# ${marker}\n\n${marker} body` },
-            });
-            return view.getState();
-        };
-        const restore = async (state: Record<string, unknown>): Promise<FakeElement> => {
-            const view = new PageletDetailView({} as never, () => "en");
-            await view.onOpen();
-            await view.setState(state, {} as never);
-            return view.contentEl as unknown as FakeElement;
-        };
-
-        const recapState = await createCachedSummary("scope-recap", "PRIVATE RECAP CACHE");
-        const otherState = await createCachedSummary("default", "OTHER PAGELET CACHE");
-
-        clearScopeRecapPageletDetailSessionCache();
-
-        const restoredRecap = await restore(recapState);
-        expect(restoredRecap.textContent).toContain("Result no longer available");
-        expect(restoredRecap.textContent).not.toContain("PRIVATE RECAP CACHE");
-
-        const restoredOther = await restore(otherState);
-        expect(restoredOther.textContent).toContain("OTHER PAGELET CACHE body");
-        expect(restoredOther.textContent).not.toContain("Result no longer available");
-    });
-
     it("restores discovery payloads from the in-memory native detail session", async () => {
         const view = new PageletDetailView({} as never, () => "en");
 
@@ -4082,7 +4037,6 @@ describe("Pagelet panel and tab view regressions", () => {
         const createView = (): PageletDetailView => new PageletDetailView(
             {} as never,
             () => "en",
-            undefined,
             undefined,
             undefined,
             undefined,

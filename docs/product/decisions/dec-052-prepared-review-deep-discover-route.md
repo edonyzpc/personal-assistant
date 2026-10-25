@@ -2,9 +2,17 @@
 
 Decision ID: DEC-052
 Status: Accepted
-Updated: 2026-10-06
+Updated: 2026-10-25
 Authority: Owner 在本次文档整理中明确选择“接受当前深度发现路由，更新产品约定”；批准自本日生效，不回填为旧实现或旧验收时已经批准。
 Work item: B-162
+
+## 2026-10-25 Scoped Successor
+
+[DEC-075](./dec-075-legacy-surface-cleanup.md) 以新的用户批准退役
+`pa-pagelet:open-prepared-review`，不再要求保留该兼容 ID、名称或路由；旧快捷键需
+绑定到 `discover-connections` 或按目标使用 `open-panel`。后者零 provider 契约继续有效。
+下文 2026-10-06 接受路由的决定与历史事实不抹除，也不回填为当时已批准删除入口。
+实施证据见 [B-189 Tracker](../../development/active/legacy-surface-cleanup/tracker.md)。
 
 ## Context
 

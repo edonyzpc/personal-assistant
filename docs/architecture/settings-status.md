@@ -1,6 +1,6 @@
 # Settings Current Status
 
-Updated: 2026-10-09
+Updated: 2026-10-25
 
 ## Status
 
@@ -79,6 +79,15 @@ B-106 已退役的闭合字段集合是 `pagelet.preloadEnabled`、
 `pagelet.backgroundDiscoveryEnabled`，默认 true，保留有效显式 false，不由旧键推导。
 关闭只暂停 automatic lane，不重置 scheduler 或阻止手动发现。Skills 使用当前
 统一运行契约，不恢复已退役的 enabled-ID 配置。
+
+[DEC-075](../product/decisions/dec-075-legacy-surface-cleanup.md) 进一步退役
+`operationsAgentEnabled` 的设置链：通过既有 deprecated projection 忽略旧 true/false，
+保存时剔除该字段；它单独存在时也可触发一次规范化保存，不重置其他设置或清理历史。
+真实 Operations live availability、独立写权限/来源检查和
+`operationsProactiveSaveSuggestionsEnabled` 保留。Pagelet 另移除“高价值回顾提示”
+与“相关回顾”两个无效 UI，保留其旧值读取；维护界面的每周扫描设置跳转同步退役，
+不删除 weekly 数据或新建调度。实施与验证状态见
+[B-189 Tracker](../development/active/legacy-surface-cleanup/tracker.md)。
 
 AI 配置由 `PluginAIConfiguration` 持有共享事务队列、计数 credential lease、
 token tri-state 与失败补偿；`SettingTab` 只持有未提交草稿和界面状态。

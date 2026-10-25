@@ -95,7 +95,6 @@ export interface TabViewOptions {
     onForgetConfirmedMemory?: (record: ConfirmedMemoryRecord) => Promise<MemoryCandidateActionResult>;
     onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>;
     onLinkRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<QuietRecallLinkResult>;
-    onOpenSettings?: () => void;
 }
 
 type TabOpenOptions = Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason" | "deliveryTarget" | "reading">;
@@ -658,7 +657,6 @@ export class TabView {
                 new MaintenanceReviewSection(this.locale, data, {
                     onApply: this.options.onApplyMaintenanceProposal,
                     onUndo: this.options.onUndoMaintenanceAction,
-                    onOpenSettings: this.options.onOpenSettings,
                 }, sectionCallbacks, this.maintenanceActionState)) },
             { id: "quiet-recall", labelKey: "pagelet.tab.recall.title", render: () => this.renderExtractedSection(
                 options.extra?.quietRecall,

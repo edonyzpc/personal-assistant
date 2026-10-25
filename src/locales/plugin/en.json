@@ -1504,8 +1504,6 @@
     "plugin.memoryExtraction.settings.includeVaultInsights.confirm": "Include overview",
     "plugin.memoryExtraction.vaultInsightsInjection.onboardingNotice": "PA now shares your vault structure overview with the AI to improve answers. This adds a small amount to each prompt. You can disable this in Settings > Memory.",
 
-    "plugin.settings.operationsAgent.name": "Save Chat and Pagelet suggestions to notes (Beta)",
-    "plugin.settings.operationsAgent.desc": "Let PA prepare create, append, edit, and property updates from Chat and Pagelet. Nothing is written until you confirm the inline preview.",
     "plugin.settings.operationsAgent.proactiveSave.name": "Suggest saving useful conclusions",
     "plugin.settings.operationsAgent.proactiveSave.desc": "Offer one quiet Save option when a vault conversation reaches a clear conclusion. Declining suppresses further suggestions in that conversation.",
     "plugin.chat.operations.suggestion.ariaLabel": "Save this conclusion",

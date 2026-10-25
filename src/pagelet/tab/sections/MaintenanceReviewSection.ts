@@ -10,7 +10,6 @@ import type { TabSectionRenderer, TabSectionCallbacks, MaintenanceActionUiState 
 export interface MaintenanceReviewCallbacks {
     onApply?: (proposal: MaintenanceProposal) => Promise<MaintenanceMoveApplyResult>;
     onUndo?: (actionId: string) => Promise<MaintenanceMoveUndoResult>;
-    onOpenSettings?: () => void;
 }
 
 export class MaintenanceReviewSection implements TabSectionRenderer {
@@ -69,11 +68,6 @@ export class MaintenanceReviewSection implements TabSectionRenderer {
         const overviewCard = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-maintenance-overview-card");
         const tagRow = el("div", "pa-pagelet-tab-tag-row");
         tagRow.appendChild(el("span", "pa-pagelet-tab-muted", pageletT("pagelet.tab.maintenance.previewOnly", this.locale)));
-        const weeklyBtn = el("button", "pa-pagelet-tab-tag-chip pa-pagelet-tab-tag-chip--link",
-            pageletT("pagelet.tab.maintenance.weeklyDisabled", this.locale));
-        weeklyBtn.setAttribute("type", "button");
-        weeklyBtn.addEventListener("click", () => { this.callbacks.onOpenSettings?.(); });
-        tagRow.appendChild(weeklyBtn);
         overviewCard.appendChild(tagRow);
         section.appendChild(overviewCard);
 

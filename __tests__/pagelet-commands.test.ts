@@ -1,14 +1,12 @@
 import {
     PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID,
-    PAGELET_CLEAR_SCOPE_RECAP_CACHE_COMMAND_ID,
+    PAGELET_DISCOVER_COMMAND_ID,
     PAGELET_GRAPH_DISCOVERY_COMMAND_ID,
     PAGELET_MAINTENANCE_REVIEW_COMMAND_ID,
     PAGELET_OPEN_PANEL_COMMAND_ID,
-    PAGELET_OPEN_PREPARED_REVIEW_COMMAND_ID,
-    PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID,
-    PAGELET_QUIET_RECALL_COMMAND_ID,
-    PAGELET_REVIEW_CURRENT_COMMAND_ID,
-    PAGELET_SCOPE_RECAP_COMMAND_ID,
+    PAGELET_MOVE_PET_COMMAND_ID,
+    PAGELET_TOGGLE_HINTS_COMMAND_ID,
+    PAGELET_TOGGLE_PET_COMMAND_ID,
     registerPageletCommands,
     type PageletCommandCallbacks,
 } from "../src/pagelet/commands";
@@ -32,15 +30,9 @@ function makeHost(): { registered: RegisteredCommand[]; addCommand: (command: Re
 function makeCallbacks(): PageletCommandCallbacks {
     return {
         onOpenPanel: jest.fn(),
-        onOpenPreparedReview: jest.fn(),
-        onReviewCurrent: jest.fn(),
-        onQuickReview: jest.fn(),
         onDiscoverConnections: jest.fn(),
         onMaintenanceReview: jest.fn(),
-        onQuietRecall: jest.fn(),
         onGraphDiscovery: jest.fn(),
-        onScopeRecap: jest.fn(),
-        onClearScopeRecapCache: jest.fn(),
         onToggleProactiveHints: jest.fn(),
         onShowBackgroundPreparationStatus: jest.fn(),
         onMovePetCorner: jest.fn(),
@@ -49,7 +41,7 @@ function makeCallbacks(): PageletCommandCallbacks {
 }
 
 describe("registerPageletCommands", () => {
-    it("registers final Pagelet open/review/status commands without duplicates", () => {
+    it("registers current Pagelet commands without retired aliases or duplicate names", () => {
         const host = makeHost();
         const callbacks = makeCallbacks();
 
@@ -57,18 +49,28 @@ describe("registerPageletCommands", () => {
 
         expect(host.registered.map((command) => command.id)).toEqual(expect.arrayContaining([
             PAGELET_OPEN_PANEL_COMMAND_ID,
-            PAGELET_OPEN_PREPARED_REVIEW_COMMAND_ID,
-            PAGELET_REVIEW_CURRENT_COMMAND_ID,
+            PAGELET_DISCOVER_COMMAND_ID,
             PAGELET_MAINTENANCE_REVIEW_COMMAND_ID,
-            PAGELET_QUIET_RECALL_COMMAND_ID,
             PAGELET_GRAPH_DISCOVERY_COMMAND_ID,
-            PAGELET_SCOPE_RECAP_COMMAND_ID,
-            PAGELET_CLEAR_SCOPE_RECAP_CACHE_COMMAND_ID,
+            PAGELET_TOGGLE_HINTS_COMMAND_ID,
             PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID,
-            PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID,
+            PAGELET_MOVE_PET_COMMAND_ID,
+            PAGELET_TOGGLE_PET_COMMAND_ID,
         ]));
-        expect(host.registered.map((command) => command.id)).not.toContain("pa-pagelet:weekly-review");
-        expect(host.registered.map((command) => command.id)).not.toContain("pa-pagelet:periodic-summary");
+        const registeredIds = host.registered.map((command) => command.id);
+        for (const retiredId of [
+            "pa-pagelet:open-prepared-review",
+            "pa-pagelet:review-current",
+            "pa-pagelet:quick-review",
+            "pa-pagelet:quiet-recall",
+            "pa-pagelet:scope-recap",
+            "pa-pagelet:preload-status",
+            "pa-pagelet:clear-scope-recap-cache",
+            "pa-pagelet:weekly-review",
+            "pa-pagelet:periodic-summary",
+        ]) {
+            expect(registeredIds).not.toContain(retiredId);
+        }
 
         expect(new Set(host.registered.map((command) => command.id)).size).toBe(host.registered.length);
         expect(new Set(host.registered.map((command) => command.name)).size).toBe(host.registered.length);
@@ -80,28 +82,25 @@ describe("registerPageletCommands", () => {
 
         registerPageletCommands(host, callbacks);
         host.registered.find((command) => command.id === PAGELET_OPEN_PANEL_COMMAND_ID)?.callback();
-        host.registered.find((command) => command.id === PAGELET_OPEN_PREPARED_REVIEW_COMMAND_ID)?.callback();
-        host.registered.find((command) => command.id === PAGELET_REVIEW_CURRENT_COMMAND_ID)?.callback();
+        host.registered.find((command) => command.id === PAGELET_DISCOVER_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_MAINTENANCE_REVIEW_COMMAND_ID)?.callback();
-        host.registered.find((command) => command.id === PAGELET_QUIET_RECALL_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_GRAPH_DISCOVERY_COMMAND_ID)?.callback();
-        host.registered.find((command) => command.id === PAGELET_SCOPE_RECAP_COMMAND_ID)?.callback();
-        host.registered.find((command) => command.id === PAGELET_CLEAR_SCOPE_RECAP_CACHE_COMMAND_ID)?.callback();
+        host.registered.find((command) => command.id === PAGELET_TOGGLE_HINTS_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID)?.callback();
-        host.registered.find((command) => command.id === PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID)?.callback();
+        host.registered.find((command) => command.id === PAGELET_MOVE_PET_COMMAND_ID)?.callback();
+        host.registered.find((command) => command.id === PAGELET_TOGGLE_PET_COMMAND_ID)?.callback();
 
         expect(callbacks.onOpenPanel).toHaveBeenCalledTimes(1);
-        expect(callbacks.onOpenPreparedReview).toHaveBeenCalledTimes(1);
-        expect(callbacks.onReviewCurrent).toHaveBeenCalledTimes(1);
+        expect(callbacks.onDiscoverConnections).toHaveBeenCalledTimes(1);
         expect(callbacks.onMaintenanceReview).toHaveBeenCalledTimes(1);
-        expect(callbacks.onQuietRecall).toHaveBeenCalledTimes(1);
         expect(callbacks.onGraphDiscovery).toHaveBeenCalledTimes(1);
-        expect(callbacks.onScopeRecap).toHaveBeenCalledTimes(1);
-        expect(callbacks.onClearScopeRecapCache).toHaveBeenCalledTimes(1);
-        expect(callbacks.onShowBackgroundPreparationStatus).toHaveBeenCalledTimes(2);
+        expect(callbacks.onToggleProactiveHints).toHaveBeenCalledTimes(1);
+        expect(callbacks.onShowBackgroundPreparationStatus).toHaveBeenCalledTimes(1);
+        expect(callbacks.onMovePetCorner).toHaveBeenCalledTimes(1);
+        expect(callbacks.onTogglePetVisibility).toHaveBeenCalledTimes(1);
     });
 
-    it("registers the prepared review command with localized production copy", () => {
+    it("registers the canonical discovery command with localized production copy", () => {
         const englishHost = makeHost();
         const chineseHost = makeHost();
 
@@ -109,10 +108,10 @@ describe("registerPageletCommands", () => {
         registerPageletCommands(chineseHost, makeCallbacks(), "zh");
 
         expect(englishHost.registered.find(
-            (command) => command.id === PAGELET_OPEN_PREPARED_REVIEW_COMMAND_ID,
-        )?.name).toBe("Pagelet: Open prepared review");
+            (command) => command.id === PAGELET_DISCOVER_COMMAND_ID,
+        )?.name).toBe("Pagelet: Discover connections");
         expect(chineseHost.registered.find(
-            (command) => command.id === PAGELET_OPEN_PREPARED_REVIEW_COMMAND_ID,
-        )?.name).toBe("拾页：打开已准备的审阅");
+            (command) => command.id === PAGELET_DISCOVER_COMMAND_ID,
+        )?.name).toBe("拾页：发现关联");
     });
 });

@@ -92,7 +92,6 @@ function host(): AiServiceHost {
             webSearchEnabled: false,
             memoryEnabled: false,
             licenseTier: "paid",
-            operationsAgentEnabled: false,
         },
         app: {
             workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },

@@ -401,7 +401,6 @@ import { QuietRecallPluginIntegration } from '../src/pagelet/plugin-quiet-recall
 import { ScopeRecapPluginIntegration } from '../src/pagelet/plugin-scope-recap';
 import { DeepDiscoverPluginIntegration } from '../src/pagelet/plugin-deep-discover';
 import { RetainedReviewPluginIntegration } from '../src/pagelet/plugin-review-actions';
-import { PageletOperationsPluginIntegration } from '../src/pagelet/plugin-operations-integration';
 import { PageletFeatureIntegration } from '../src/pagelet/plugin-integration';
 import { PageletOrchestrator } from '../src/pagelet/orchestrator';
 import { RecordActions } from '../src/plugin/record-actions';
@@ -711,17 +710,6 @@ const installPluginShellOwners = (plugin: any) => { // eslint-disable-line @type
         getRateLimitStorageKey: (scope) => plugin.pageletRateLimitStorageKey('foreground-review', scope),
         log: (message, detail) => plugin.log(message, detail),
     });
-    plugin.pageletOperationsIntegration = new PageletOperationsPluginIntegration({
-        vault: {
-            get read() { return plugin.app.vault.read.bind(plugin.app.vault); },
-            get getAbstractFileByPath() { return plugin.app.vault.getAbstractFileByPath.bind(plugin.app.vault); },
-        },
-        isOperationsAgentEnabled: () => plugin.isOperationsAgentEnabled,
-        isPathAllowed: (path) => plugin.isPageletProviderPathAllowed(path),
-        createSession: (options) => plugin.getOperationsService().createSession(options),
-        now: () => Date.now(),
-        log: (message, detail) => plugin.log(message, detail),
-    });
     plugin.pageletIntegration = new PageletFeatureIntegration({
         createFeatureScope: () => plugin.createPageletFeatureScope(),
         releaseFeatureScope: (expectedScope) => plugin.releasePageletFeatureScope(expectedScope),
@@ -738,7 +726,6 @@ const installPluginShellOwners = (plugin: any) => { // eslint-disable-line @type
         invalidateRetainedReviewLimiter: () => plugin.retainedReviewIntegration.invalidateLimiter(),
         disposeScopeRecap: () => plugin.scopeRecapIntegration.dispose(),
         disposeQuietRecall: () => plugin.quietRecallIntegration.dispose(),
-        retireOperations: () => plugin.pageletOperationsIntegration.disposeFeature(),
         createRuntime: () => null,
         log: (message, detail) => plugin.log(message, detail),
     });
@@ -7196,11 +7183,6 @@ describe('Memory governance plugin bootstrap', () => {
             plugin.pageletRuntime = null;
             const disposeOperationsService = jest.fn();
             plugin.operationsService = { dispose: disposeOperationsService };
-            plugin.pageletOperationsIntegration.currentSession = {};
-            plugin.pageletOperationsIntegration.selfWrites = new Map([[
-                'notes/pending-self-write.md',
-                { count: 1, expiresAt: Date.now() + 10_000 },
-            ]]);
             plugin.scheduleMemoryForgetRetry();
             plugin.memoryForgetRetryDelayMs = 4_000;
 
@@ -7218,8 +7200,6 @@ describe('Memory governance plugin bootstrap', () => {
             expect(plugin.memoryGovernanceGarbageCollectionTimer).toBeNull();
             expect(disposeOperationsService).toHaveBeenCalledTimes(1);
             expect(plugin.operationsService).toBeNull();
-            expect(plugin.pageletOperationsIntegration.currentSession).toBeNull();
-            expect(plugin.pageletOperationsIntegration.selfWrites.size).toBe(0);
         } finally {
             jest.useRealTimers();
         }
@@ -10792,330 +10772,15 @@ describe('Pagelet detail workspace leaf', () => {
 
 });
 
-describe('Pagelet Operations direct action adapter', () => {
-    function createHarness(initialBodies: string[], rawOperationsEnabled = true) {
-        const TestTFile = TFile as unknown as new (path: string) => TFile;
-        const anchorFile = new TestTFile('Notes/Anchor.md');
-        const sourceFile = new TestTFile('Notes/Source.md');
-        const bodies = [...initialBodies];
-        let latestBody = bodies[0] ?? '';
-        const read = jest.fn(async () => {
-            latestBody = bodies.shift() ?? latestBody;
-            return latestBody;
-        });
-        const stageIntent = jest.fn(async (input: any) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
-            id: `intent-${stageIntent.mock.calls.length}`,
-            runId: input.runId,
-            turnId: input.turnId,
-            createdAt: 1,
-            expiresAt: 2,
-            state: 'pending',
-            operations: [{
-                id: `operation-${stageIntent.mock.calls.length}`,
-                ...input.operations[0],
-                path: 'Notes/Anchor.md',
-                expectedBefore: latestBody,
-                expectedAfter: latestBody,
-            }],
-        }));
-        const cancel = jest.fn();
-        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+describe('Operations host availability', () => {
+    it.each([true, false])('uses plugin lifecycle instead of the retired setting %s', (legacyValue) => {
+        const plugin = Object.create(PluginManager.prototype) as PluginManager;
         installPluginShellOwners(plugin);
-        plugin.settings = { operationsAgentEnabled: rawOperationsEnabled };
-        plugin.app = {
-            vault: {
-                getAbstractFileByPath: jest.fn((path: string) => {
-                    if (path === anchorFile.path) return anchorFile;
-                    if (path === sourceFile.path) return sourceFile;
-                    return null;
-                }),
-                read,
-            },
-        };
-        plugin.isPageletProviderPathAllowed = jest.fn(() => true);
-        plugin.pageletOperationsIntegration.currentSession = { stageIntent, cancel };
-        plugin.pageletOperationsIntegration.inFlight = new Map();
-        plugin.pageletOperationsIntegration.retiringSessions = new Set();
-        plugin.pageletOperationsIntegration.selfWrites = new Map();
-        return { plugin, read, stageIntent, cancel };
-    }
-
-    it('keeps the dedicated Pagelet write action available with the raw legacy switch false', async () => {
-        const { plugin, stageIntent } = createHarness(['Body'], false);
+        Object.assign(plugin, { settings: { operationsAgentEnabled: legacyValue }, unloading: false });
 
         expect(plugin.isOperationsAgentEnabled).toBe(true);
-        await plugin.stagePageletInsightLink({
-            candidateId: 'candidate-1',
-            anchorPath: 'Notes/Anchor.md',
-            sourcePath: 'Notes/Source.md',
-        });
-
-        expect(stageIntent).toHaveBeenCalledTimes(1);
-    });
-
-    it('fails closed when the host lifecycle is unavailable even though the raw switch is ignored', async () => {
-        const { plugin, stageIntent } = createHarness(['Body'], false);
-        plugin.unloading = true;
-
+        Object.assign(plugin, { unloading: true });
         expect(plugin.isOperationsAgentEnabled).toBe(false);
-        await expect(plugin.stagePageletInsightLink({
-            candidateId: 'candidate-1',
-            anchorPath: 'Notes/Anchor.md',
-            sourcePath: 'Notes/Source.md',
-        })).rejects.toThrow('Operations is not enabled. Nothing was written.');
-        expect(stageIntent).not.toHaveBeenCalled();
-    });
-
-    it.each([
-        {
-            label: 'scalar',
-            body: '---\npa-related: "[[Notes/Existing.md]]"\n---\nBody',
-            expected: ['[[Notes/Existing.md]]', '[[Notes/Source.md]]'],
-        },
-        {
-            label: 'array with duplicates',
-            body: '---\npa-related: ["[[Notes/Existing.md]]", "[[Notes/Existing.md]]", "[[Notes/Other.md]]"]\n---\nBody',
-            expected: ['[[Notes/Existing.md]]', '[[Notes/Other.md]]', '[[Notes/Source.md]]'],
-        },
-        {
-            label: 'semantic wikilink variants',
-            body: '---\npa-related: ["[[Notes/Existing]]", "[[Notes/Existing.md|Existing alias]]", "[[Notes/Existing#First]]", "[[Notes/Existing.md#First|First alias]]", "[[Notes/Existing.md#Second|Second alias]]"]\n---\nBody',
-            expected: [
-                '[[Notes/Existing]]',
-                '[[Notes/Existing#First]]',
-                '[[Notes/Existing.md#Second|Second alias]]',
-                '[[Notes/Source.md]]',
-            ],
-        },
-    ])('merges and deduplicates a $label pa-related value', async ({ body, expected }) => {
-        const { plugin, stageIntent } = createHarness([body]);
-
-        await plugin.stagePageletInsightLink({
-            candidateId: 'candidate-1',
-            anchorPath: 'Notes/Anchor.md',
-            sourcePath: 'Notes/Source.md',
-        });
-
-        expect(stageIntent).toHaveBeenCalledTimes(1);
-        expect(stageIntent.mock.calls[0]?.[0].operations).toEqual([expect.objectContaining({
-            name: 'frontmatter_update',
-            input: {
-                path: 'Notes/Anchor.md',
-                set: { 'pa-related': expected },
-            },
-        })]);
-    });
-
-    it.each([
-        {
-            label: 'already-linked notes',
-            body: '---\npa-related: "[[Notes/Source.md]]"\n---\nBody',
-            message: 'already linked',
-        },
-        {
-            label: 'extensionless already-linked notes',
-            body: '---\npa-related: "[[Notes/Source]]"\n---\nBody',
-            message: 'already linked',
-        },
-        {
-            label: 'aliased already-linked notes',
-            body: '---\npa-related: "[[Notes/Source.md|Readable source]]"\n---\nBody',
-            message: 'already linked',
-        },
-        {
-            label: 'malformed frontmatter',
-            body: '---\npa-related: "[[Notes/Existing.md]]"\nBody',
-            message: 'invalid Properties',
-        },
-        {
-            label: 'unsupported pa-related shape',
-            body: '---\npa-related: true\n---\nBody',
-            message: 'needs review in Chat',
-        },
-    ])('fails closed for $label', async ({ body, message }) => {
-        const { plugin, stageIntent } = createHarness([body]);
-
-        await expect(plugin.stagePageletInsightLink({
-            candidateId: 'candidate-1',
-            anchorPath: 'Notes/Anchor.md',
-            sourcePath: 'Notes/Source.md',
-        })).rejects.toThrow(message);
-
-        expect(stageIntent).not.toHaveBeenCalled();
-    });
-
-    it('preserves a heading-specific relation when adding the whole-note link', async () => {
-        const body = '---\npa-related: ["[[Notes/Source#Decision|Decision excerpt]]"]\n---\nBody';
-        const { plugin, stageIntent } = createHarness([body]);
-
-        await plugin.stagePageletInsightLink({
-            candidateId: 'candidate-1',
-            anchorPath: 'Notes/Anchor.md',
-            sourcePath: 'Notes/Source.md',
-        });
-
-        expect(stageIntent.mock.calls[0]?.[0].operations[0].input.set['pa-related']).toEqual([
-            '[[Notes/Source#Decision|Decision excerpt]]',
-            '[[Notes/Source.md]]',
-        ]);
-    });
-
-    it('cancels a drifted preview and retries once from the fresh body', async () => {
-        const first = '---\npa-related: "[[Notes/Old.md]]"\n---\nFirst';
-        const second = '---\npa-related: "[[Notes/Fresh.md]]"\n---\nSecond';
-        const { plugin, read, stageIntent, cancel } = createHarness([first, second]);
-        stageIntent
-            .mockImplementationOnce(async (input: any) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
-                id: 'intent-stale',
-                runId: input.runId,
-                turnId: input.turnId,
-                createdAt: 1,
-                expiresAt: 2,
-                state: 'pending',
-                operations: [{
-                    id: 'operation-stale',
-                    ...input.operations[0],
-                    path: 'Notes/Anchor.md',
-                    expectedBefore: 'different-body',
-                    expectedAfter: 'different-body',
-                }],
-            }))
-            .mockImplementationOnce(async (input: any) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
-                id: 'intent-fresh',
-                runId: input.runId,
-                turnId: input.turnId,
-                createdAt: 1,
-                expiresAt: 2,
-                state: 'pending',
-                operations: [{
-                    id: 'operation-fresh',
-                    ...input.operations[0],
-                    path: 'Notes/Anchor.md',
-                    expectedBefore: second,
-                    expectedAfter: second,
-                }],
-            }));
-
-        const intent = await plugin.stagePageletInsightLink({
-            candidateId: 'candidate-1',
-            anchorPath: 'Notes/Anchor.md',
-            sourcePath: 'Notes/Source.md',
-        });
-
-        expect(read).toHaveBeenCalledTimes(2);
-        expect(stageIntent).toHaveBeenCalledTimes(2);
-        expect(cancel).toHaveBeenCalledWith('intent-stale');
-        expect(intent.id).toBe('intent-fresh');
-        expect(stageIntent.mock.calls[1]?.[0].operations[0].input.set['pa-related']).toEqual([
-            '[[Notes/Fresh.md]]',
-            '[[Notes/Source.md]]',
-        ]);
-    });
-
-    it('removes only failed confirm and Undo self-write marks', async () => {
-        const { plugin } = createHarness(['Body']);
-        plugin.pageletOperationsIntegration.markSelfWrite('Notes/Anchor.md');
-        plugin.pageletOperationsIntegration.currentSession = {
-            confirm: jest.fn(async () => {
-                plugin.pageletOperationsIntegration.markSelfWrite('Notes/Anchor.md');
-                return {
-                    intentId: 'intent-1',
-                    state: 'failed',
-                    operations: [{
-                        operationId: 'operation-1',
-                        toolCallId: 'tool-1',
-                        name: 'frontmatter_update',
-                        path: 'Notes/Anchor.md',
-                        status: 'stale',
-                    }],
-                };
-            }),
-            undoMany: jest.fn(async () => {
-                plugin.pageletOperationsIntegration.markSelfWrite('Notes/Undo.md');
-                return [{
-                    receiptId: 'receipt-1',
-                    operationId: 'operation-1',
-                    path: 'Notes/Undo.md',
-                    status: 'stale',
-                }];
-            }),
-        };
-
-        await plugin.confirmPageletOperationsIntent('intent-1');
-        expect(plugin.consumePageletOperationsSelfWrite('Notes/Anchor.md')).toBe(true);
-        expect(plugin.consumePageletOperationsSelfWrite('Notes/Anchor.md')).toBe(false);
-
-        await plugin.undoPageletOperationsReceipts(['receipt-1']);
-        expect(plugin.consumePageletOperationsSelfWrite('Notes/Undo.md')).toBe(false);
-    });
-
-    it('retires a disabled Pagelet session only after an in-flight confirm returns its receipt', async () => {
-        const { plugin } = createHarness(['Body']);
-        let resolveConfirm!: (result: any) => void; // eslint-disable-line @typescript-eslint/no-explicit-any
-        const confirmResult = {
-            intentId: 'intent-1',
-            state: 'completed',
-            operations: [{
-                operationId: 'operation-1',
-                toolCallId: 'tool-1',
-                name: 'frontmatter_update',
-                path: 'Notes/Anchor.md',
-                status: 'succeeded',
-                receiptId: 'receipt-1',
-            }],
-        };
-        const session = {
-            confirm: jest.fn(() => new Promise((resolve) => {
-                resolveConfirm = resolve;
-            })),
-            dispose: jest.fn(),
-        };
-        plugin.pageletOperationsIntegration.currentSession = session;
-        plugin.resetDeepDiscoverController = jest.fn();
-        plugin.log = jest.fn();
-
-        const confirmation = plugin.confirmPageletOperationsIntent('intent-1');
-        await Promise.resolve();
-        plugin.destroyPageletRuntime();
-
-        expect(session.dispose).not.toHaveBeenCalled();
-        expect(plugin.pageletOperationsIntegration.currentSession).toBeNull();
-
-        resolveConfirm(confirmResult);
-        await expect(confirmation).resolves.toMatchObject({
-            operations: [expect.objectContaining({ receiptId: 'receipt-1' })],
-        });
-        expect(session.dispose).toHaveBeenCalledTimes(1);
-    });
-
-    it('retires a disabled Pagelet session only after an in-flight Undo settles', async () => {
-        const { plugin } = createHarness(['Body']);
-        let resolveUndo!: (result: any) => void; // eslint-disable-line @typescript-eslint/no-explicit-any
-        const session = {
-            undoMany: jest.fn(() => new Promise((resolve) => {
-                resolveUndo = resolve;
-            })),
-            dispose: jest.fn(),
-        };
-        plugin.pageletOperationsIntegration.currentSession = session;
-        plugin.resetDeepDiscoverController = jest.fn();
-        plugin.log = jest.fn();
-
-        const undo = plugin.undoPageletOperationsReceipts(['receipt-1']);
-        await Promise.resolve();
-        plugin.destroyPageletRuntime();
-
-        expect(session.dispose).not.toHaveBeenCalled();
-        resolveUndo([{
-            receiptId: 'receipt-1',
-            operationId: 'operation-1',
-            path: 'Notes/Anchor.md',
-            status: 'undone',
-        }]);
-        await expect(undo).resolves.toEqual([
-            expect.objectContaining({ receiptId: 'receipt-1', status: 'undone' }),
-        ]);
-        expect(session.dispose).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -11159,20 +10824,13 @@ describe('Quick Capture service lifecycle', () => {
         const integration = makeIntegration(plugin);
         plugin.quickCaptureIntegration = integration;
         const first = plugin.quickCaptureIntegration.getService();
-        const pageletOperationsSession = { dispose: jest.fn() };
         const operationsService = { dispose: jest.fn() };
-        plugin.pageletOperationsIntegration.currentSession = pageletOperationsSession;
         plugin.operationsService = operationsService;
-        plugin.pageletOperationsIntegration.inFlight = new Map();
-        plugin.pageletOperationsIntegration.retiringSessions = new Set();
-        plugin.pageletOperationsIntegration.selfWrites = new Map();
 
         plugin.destroyPageletRuntime();
 
         expect(plugin.quickCaptureIntegration).toBe(integration);
         expect(plugin.quickCaptureIntegration.getService()).toBe(first);
-        expect(pageletOperationsSession.dispose).toHaveBeenCalledTimes(1);
-        expect(plugin.pageletOperationsIntegration.currentSession).toBeNull();
         expect(operationsService.dispose).not.toHaveBeenCalled();
         expect(plugin.operationsService).toBe(operationsService);
     });

@@ -2,9 +2,18 @@
 
 Decision ID: DEC-035
 Status: Accepted
-Updated: 2026-09-13
+Updated: 2026-10-25
 Authority: Owner 在本次代码清理讨论中明确确认的产品取舍；仅记录已确认边界，不授予实现或 Git/release 权限。
 Work item: B-136
+
+## 2026-10-25 Scoped Successor
+
+[DEC-075](./dec-075-legacy-surface-cleanup.md) 接续本文旧命令 ID/名称保留条款中的七个
+明确入口，以及两个无效设置 UI、每周扫描跳转、旧 Operations 设置链和 Pagelet 专用
+关联链。Owner 已接受这些命令的热键需重绑；`discover-connections`、零 provider 的
+`open-panel`、共享 Chat/阅读/保存、历史读取及其他外围功能仍保留。
+下文原批准和 B-136 历史验收不改写；本次实施证据见
+[B-189 Tracker](../../development/active/legacy-surface-cleanup/tracker.md)。
 
 ## Context
 

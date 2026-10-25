@@ -1,17 +1,49 @@
 # PA Bounded Code Cleanup Product Spec
 
 Document status: Current
-Updated: 2026-09-13
-Work item: B-136
-Decision: [DEC-035](../decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md)
-Authority: 有界清理后的当前产品边界与行为验收；批准依据为 Owner 已确认的取舍，历史交付证据见文末。
+Updated: 2026-10-25
+Work item: B-189
+Decision: [DEC-075](../decisions/dec-075-legacy-surface-cleanup.md); predecessor [DEC-035](../decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md)
+Authority: 有界清理的当前产品边界与行为验收；B-189 的第一批范围由 Owner 于 2026-10-25 明确批准，实施证据由 Tracker 记录。B-136 的未接续边界与历史证据保留。
+
+## B-189 Approved Scope — 2026-10-25
+
+本轮仅执行以下第一批；不是整批清退旧功能。命令 ID 曾被明确保留，现在按 DEC-075
+局部接续。Owner 已接受所列旧快捷键需重绑，不实现兼容转发或修改热键文件。
+
+| Requirement | 行为边界 |
+| --- | --- |
+| B-189/REQ-01 | 删除 Pagelet “高价值回顾提示”和“相关回顾”设置 UI；保留 `scopeRecapHighValueHints`、`quietRecallMode` 旧值读取、归一化及兼容，不改变当前自动发现开关 |
+| B-189/REQ-02 | 删除 `pa-pagelet:open-prepared-review`、`pa-pagelet:review-current`、`pa-pagelet:quick-review`、`pa-pagelet:quiet-recall`、`pa-pagelet:scope-recap`、`pa-pagelet:preload-status`、`pa-pagelet:clear-scope-recap-cache`；保留 `pa-pagelet:discover-connections` 及 provider-free 的 `pa-pagelet:open-panel`，其他当前命令保持 |
+| B-189/REQ-03 | 移除 Maintenance Review 的 `weeklyDisabled` 设置跳转；保留手动维护、历史 `weeklyReview` / `weeklyScanEnabled`、action log 与评估工具消费者，不新增每周自动扫描 |
+| B-189/REQ-04 | 清理 `operationsAgentEnabled` 设置声明/默认/归一化/传递链；保留 live availability、独立写权限/来源、`operationsProactiveSaveSuggestionsEnabled` 及历史；规范化保存仅剔除退役字段，不丢其他设置或历史数据 |
+| B-189/REQ-05 | 移除无生产 `directAction` 生成方的 Pagelet 专用自动关联 UI、stage/confirm/cancel/undo 与专用会话接线；保留共享 Chat Operations、完整成果 discuss handoff 及共用有效性/取消检查、阅读/保存和已有 `pa-related` 元数据 |
+| B-189/REQ-06 | 仅删除上述链的专用类型/文案/样式/测试契约；有其他生产、历史或工具消费者时保留。不扩大其他旧功能清理，不删除用户笔记、会话、每周数据或测试 vault 内容 |
+
+### B-189 Acceptance Criteria
+
+| Criterion | 可观察结果 |
+| --- | --- |
+| B-189/AC-01 | 桌面/移动设置不再显示两个旧控制；旧配置输入仍按原兼容规则可读，当前自动发现及提示设置没有被一并移除 |
+| B-189/AC-02 | 七个 ID 不再注册；保留的发现命令继续按活动笔记和现有来源/模型准入运行，`open-panel` 只打开已有阅读且零 provider 调用；文档说明旧热键重绑 |
+| B-189/AC-03 | 维护界面不再显示每周扫描设置跳转，手动扫描仍可用；历史每周数据、action log 与评估读取未删除或改写 |
+| B-189/AC-04 | 无生产代码继续依赖旧设置字段；live controller 可用/不可用、写权限与 proactive save 仍按各自事实工作；旧配置规范化最多清退该旧字段，不重置其他设置、不清理历史 |
+| B-189/AC-05 | Pagelet 专用关联链和独立接线无残留；既有发现可阅读、保存并完整交给 Chat，取消/失效检查不被连带删除；Chat Operations 与旧 `pa-related` 笔记保持有效 |
+| B-189/AC-06 | 删除范围能追溯到批准条目与实际消费者，紧密相关文档和历史局部接续一致；受影响检查和部署后界面交互有独立记录，不以旧验收代替新结果 |
+
+### B-189 Delivery Boundary
+
+当前批准不包含提交、推送、发布或 closeout。具体实施与验证状态见
+[B-189 Tracker](../../development/active/legacy-surface-cleanup/tracker.md)。
+下面保留 B-136 的原规范及历史验收：其 REQ-03/AC-03 的旧命令保留仅按 B-189/REQ-02
+接续，正常保存/恢复等共享边界不随 Pagelet 专用关联退役改变；其余边界继续适用。
 
 ## Problem And Product Outcome
 
 删除没有生产作用的代码及专用资源，减少重复维护；移除 Pagelet 中未影响实际分析的
 旧范围控制。符合“安静且可信”：交互表达与实际行为一致，保留用户仍在使用的能力。
 
-## Scope
+## B-136 Inherited Scope
 
 | Requirement | 行为边界 |
 | --- | --- |
@@ -46,7 +78,7 @@ provider 及其实际发送前的来源校验、成本预算、首次通知保�
 源笔记是事实源，不通过清理变更用户数据；回滚恢复本次代码/资源变更即可，
 不以数据库清空或设置重置作为恢复方法。
 
-## Acceptance Criteria
+## B-136 Acceptance Criteria
 
 | Criterion | 可观察结果 |
 | --- | --- |
@@ -73,5 +105,6 @@ provider 及其实际发送前的来源校验、成本预算、首次通知保�
 ## Implementation And Evidence
 
 - Historical validation: [B-136 验证记录](../../archive/2026/b136-bounded-cleanup-validation.md)
+- Current implementation: [B-189 Feature Home](../../development/active/legacy-surface-cleanup/README.md) / [Tracker](../../development/active/legacy-surface-cleanup/tracker.md)
 - Current Pagelet contract: [Pagelet Product Design](../pagelet-product-design.md#foreground-scope)
 - Release / rollout boundary: 本规范不授予新的实现、Git 或发布权限；完成清理不等于已发布新版本。

@@ -33,7 +33,6 @@ const createDependencies = () => {
         invalidateRetainedReviewLimiter: () => order.push("invalidate-review"),
         disposeScopeRecap: () => order.push("dispose-recap"),
         disposeQuietRecall: () => order.push("dispose-quiet"),
-        retireOperations: () => order.push("retire-operations"),
         createRuntime: () => runtime as never,
         log: jest.fn(),
     };
@@ -80,7 +79,6 @@ describe("PageletFeatureIntegration", () => {
             "stop-deep",
             "destroy-orchestrator",
             "dispose-runtime",
-            "retire-operations",
             "invalidate-review",
             "dispose-recap",
             "dispose-quiet",
@@ -103,7 +101,6 @@ describe("PageletFeatureIntegration", () => {
         expect(harness.order.slice(2)).toEqual([
             "destroy-orchestrator",
             "dispose-runtime",
-            "retire-operations",
             "invalidate-review",
             "dispose-recap",
             "dispose-quiet",

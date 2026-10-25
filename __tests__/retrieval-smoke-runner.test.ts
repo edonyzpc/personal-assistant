@@ -11924,7 +11924,6 @@ function createRunnerContext(
             licenseTier: "free",
             focusMode: false,
             quietRecall: { enabled: true, quietRecallMode: "off" },
-            operationsAgentEnabled: false,
             retrievalHabitProfile: { enabled: false, state: { aggregates: [] } },
             vssCacheExcludePath: [".obsidian", ".trash"],
             pagelet: {

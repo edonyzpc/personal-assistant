@@ -3077,7 +3077,7 @@ describe('Pagelet agent cache and controller', () => {
         expect(current?.collectionId).toBe(createPageletInsightCollectionId([second.insightId]));
     });
 
-    it('projects complete immutable action and Chat context without hidden runtime fields', async () => {
+    it('projects complete immutable Chat context without a direct write action or hidden runtime fields', async () => {
         const body = `## Complete insight\n${'source-backed detail '.repeat(40)}`;
         const insight = {
             ...verifiedInsight(true),
@@ -3092,7 +3092,7 @@ describe('Pagelet agent cache and controller', () => {
 
         const candidate = pageletAgentInsightToDeliveryCandidate(insight, 'en');
 
-        expect(candidate.pageletAgent.directAction).toBeUndefined();
+        expect(candidate.pageletAgent).not.toHaveProperty('directAction');
         expect(candidate.pageletAgent.handoff).toMatchObject({
             version: 1,
             id: insight.insightId,
@@ -3127,7 +3127,7 @@ describe('Pagelet agent cache and controller', () => {
         expect(Object.isFrozen(candidate.pageletAgent.validationIdentity.cacheIdentity.sources)).toBe(true);
     });
 
-    it('omits the direct route when no verified non-anchor source exists', () => {
+    it('preserves Chat context when only the anchor is a verified source', () => {
         const insight = verifiedInsight();
         insight.sources = [{ ...insight.anchor }];
         insight.sourceRefs = [{ path: insight.anchor.path }];
@@ -3139,7 +3139,7 @@ describe('Pagelet agent cache and controller', () => {
 
         const candidate = pageletAgentInsightToDeliveryCandidate(insight, 'en');
 
-        expect(candidate.pageletAgent.directAction).toBeUndefined();
+        expect(candidate.pageletAgent).not.toHaveProperty('directAction');
         expect(candidate.pageletAgent.handoff.body).toBe(insight.body);
     });
 

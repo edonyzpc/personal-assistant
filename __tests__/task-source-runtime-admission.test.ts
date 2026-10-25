@@ -51,7 +51,7 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'bat
     const host = { settings: { debug: false, aiProvider: 'openai', baseURL: 'https://source-admission.invalid/v1',
         chatModelName: 'fixed-model', policyModelName: '', embeddingModelName: 'fixed-embedding',
         shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false, webSearchEnabled: false,
-        memoryEnabled: false, licenseTier: 'paid', operationsAgentEnabled: false,
+        memoryEnabled: false, licenseTier: 'paid',
         operationsProactiveSaveSuggestionsEnabled: false, operationsAuditIncludeContent: false,
         operationsAuditRetentionDays: 30, statisticsVaultId: 'synthetic-source-admission', retrievalOptimizationFlags: {} },
         app: { workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },

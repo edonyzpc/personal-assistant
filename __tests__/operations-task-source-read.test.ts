@@ -26,7 +26,7 @@ async function harness() {
         runKind: "chat-with-actions", allowWrite: true, allowedActionPermissions: ["local-filesystem-write"],
     }) });
     const loaded = await new OperationsToolProvider().load({
-        turnId: "turn", platform: "desktop", settings: { operationsAgentEnabled: true },
+        turnId: "turn", platform: "desktop", settings: {},
     });
     registry.registerMany(loaded.capabilities);
     let active = true;

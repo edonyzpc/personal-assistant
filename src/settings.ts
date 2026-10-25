@@ -341,8 +341,6 @@ export interface PluginManagerSettings {
         graphPpr?: boolean;
         relaxedRecovery?: boolean;
     };
-    /** Operations Agent mode (Beta): allow staged, user-confirmed core vault writes. */
-    operationsAgentEnabled: boolean;
     /** Offer at most one quiet save suggestion in a qualifying conversation. */
     operationsProactiveSaveSuggestionsEnabled: boolean;
     /** Low-friction raw note capture. AI post-processing stays disabled until its slice is complete. */
@@ -464,7 +462,6 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     // as a fresh-install default. mergeLoadedSettings preserves any persisted
     // value, so existing users keep their configured exclusions.
     vssCacheExcludePath: [LEGACY_CONFIG_DIR],
-    operationsAgentEnabled: false,
     operationsProactiveSaveSuggestionsEnabled: true,
     quickCapture: { ...QUICK_CAPTURE_DEFAULTS },
     dataBoundary: {
@@ -553,7 +550,7 @@ export function normalizeConfirmedMemoryCount(value: unknown): number {
 }
 
 const DEPRECATED_SIMPLE_SETTINGS_KEYS = [
-    "memoryAutoCheckBeforeChat", "skillContextEnabled", "enabledSkillIds",
+    "memoryAutoCheckBeforeChat", "skillContextEnabled", "enabledSkillIds", "operationsAgentEnabled",
 ] as const;
 const RETIRED_OPERATIONS_AUDIT_SETTINGS_KEYS = [
     "operationsAuditIncludeContent",
@@ -653,7 +650,6 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     // architecture stays enabled until a real authorization source is wired in.
     // Do not trust persisted data.json for this field.
     merged.licenseTier = MOCK_LICENSE_TIER;
-    merged.operationsAgentEnabled = loadedObject.operationsAgentEnabled === true;
     merged.operationsProactiveSaveSuggestionsEnabled =
         typeof loadedObject.operationsProactiveSaveSuggestionsEnabled === "boolean"
             ? loadedObject.operationsProactiveSaveSuggestionsEnabled

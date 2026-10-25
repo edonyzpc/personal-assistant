@@ -66,7 +66,6 @@ export interface AiServiceHost {
         licenseTier: AgentCapabilityTier;
         memoryEnabled: boolean;
         retrievalOptimizationFlags?: RetrievalOptimizationFlags;
-        operationsAgentEnabled: boolean;
         operationsProactiveSaveSuggestionsEnabled: boolean;
         statisticsVaultId: string;
     };

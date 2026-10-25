@@ -182,7 +182,7 @@ describe("B-160 note image removal", () => {
                 allowedActionPermissions: ["local-filesystem-write"],
             }) });
             registry.registerMany((await new OperationsToolProvider().load({
-                turnId: "blocked-turn", platform: "desktop", settings: { operationsAgentEnabled: true },
+                turnId: "blocked-turn", platform: "desktop", settings: {},
             })).capabilities);
             const executor = createOperationsStagingToolExecutor({
                 baseExecutor: { execute: jest.fn() }, registry, controller,
@@ -277,7 +277,7 @@ describe("B-160 note image removal", () => {
         const loaded = await new OperationsToolProvider().load({
             turnId: "b160-red-turn",
             platform: "desktop",
-            settings: { operationsAgentEnabled: true },
+            settings: {},
         });
         registry.registerMany(loaded.capabilities);
         const baseExecutor: PaAgentToolExecutor = {

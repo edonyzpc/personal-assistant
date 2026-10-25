@@ -257,7 +257,7 @@ describe('context continuity synthetic runner', () => {
         const settings = {
             aiProvider: 'custom', chatModelName: 'synthetic-model', baseURL: 'https://private-endpoint.invalid/v1',
             policyModelName: '',
-            memoryEnabled: true, webSearchEnabled: false, operationsAgentEnabled: true,
+            memoryEnabled: true, webSearchEnabled: false,
             operationsAuditRetentionDays: 30, licenseTier: 'paid', shareAnonymousCapabilityUsage: false,
         };
         const host: any = {
@@ -308,7 +308,8 @@ describe('context continuity synthetic runner', () => {
             expect(vaultRead).not.toHaveBeenCalled();
             expect(memorySearch).not.toHaveBeenCalled();
             expect(settings.memoryEnabled).toBe(true);
-            expect(settings.operationsAgentEnabled).toBe(true);
+            expect(isolated.isOperationsAgentEnabled).toBe(false);
+            expect(host.isOperationsAgentEnabled).toBe(true);
             if (requestTool) {
                 expect(report.results[0].status).not.toBe('recorded_for_review');
                 expect(report.results[0].error).toContain('Unexpected tool request');

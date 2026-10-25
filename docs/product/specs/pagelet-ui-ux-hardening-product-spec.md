@@ -1,12 +1,19 @@
 # Pagelet UI/UX Hardening Product Spec
 
 Document status: Approved
-Updated: 2026-10-06
+Updated: 2026-10-25
 Work item: B-118
 Decision: [DEC-021 — 按真实界面证据分阶段修复 Pagelet UI/UX 漂移](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)
 Scoped decision: [DEC-023 — Pagelet provider 首次使用采用共享非阻断通知](../decisions/dec-023-shared-pagelet-provider-first-use.md)
 Quiet Recall retrieval decision: [DEC-024 — 冷语义检索计入既有实际调用预算](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)
 Authority: B-118 的已授权修复范围、证据边界、非目标与验收标准；现有 Scope Recap、Quiet Recall、Bubble、Data Boundary、Retrieval Habit Profile 与 Saved Insight 合同继续定义其余行为。
+
+2026-10-25 scoped successor：[DEC-075](../decisions/dec-075-legacy-surface-cleanup.md)
+退役“高价值回顾提示”“相关回顾”两个旧设置 UI 及明确列出的七个命令入口；旧配置
+读取与兼容仍保留。下文相关 UI/命令保留承诺按新决定局部接续，不整批删除共享
+Recall/Recap，不改写原 SG 选择或历史设备验收。新范围及实施证据见
+[Bounded Cleanup Spec](./pa-bounded-code-cleanup-product-spec.md) 与
+[B-189 Tracker](../../development/active/legacy-surface-cleanup/tracker.md)。
 
 2026-10-05 scoped successor：[DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
 取消下文旧 REQ-03、AC-03/10 及 SG-05/06 中的来源篇数风险门；只澄清真实歧义，

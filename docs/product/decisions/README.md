@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-10-23
+Updated: 2026-10-25
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-075 | 第一批旧入口与保留代码清理 | Accepted | 退役指定 Pagelet 设置/七命令/每周跳转、旧 Operations 设置和专用关联；保留共享能力与历史数据，旧热键需重绑 | [Record](./dec-075-legacy-surface-cleanup.md) |
 | DEC-074 | Chat 原生 Mermaid 渲染前自动开启 | Accepted | 当前设备当前 vault 开关；保持原生交互，已开启零写，手动关闭后下次绘图再开启 | [Record](./dec-074-chat-mermaid-auto-enable.md) |
 | DEC-073 | Chat Canvas 生成时预览与原生打开 | Accepted | 可修改默认路径后显式保存；Chat 保留原始 JSON，打开文件最新内容及完整原生交互 | [Record](./dec-073-chat-canvas-preview-native-open.md) |
 | DEC-072 | 从 Pagelet 的发现继续思考 | Accepted | 来源直达、内容线索与继续输入优先；原页查看为辅助，不扩展历史和恢复 | [Record](./dec-072-pagelet-chat-continuation.md) |
@@ -30,7 +31,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 | DEC-055 | PA Agent 快照执行与完整 Debug | Accepted | 当前生成及重试固定快照、下一 loop 更新排除；完整文本历史与媒体引用指纹 | [Record](./dec-055-agent-snapshot-execution-and-debug-history.md) |
 | DEC-054 | Memory marker 异常优先复用本地数据 | Accepted | 同 scope 不以设备 ID 单项否决；缺 marker 先恢复兼容 SQLite 状态，保留 dirty/guard/policy | [Record](./dec-054-memory-marker-recovery.md) |
 | DEC-053 | 精简 Ghost 同步与人工上线 | Accepted | note 全量同步；草稿 Ghost Publish，已发布临时预览后 PA 确认；取消历史/恢复与自动 probe，目标尚待实施 | [Record](./dec-053-lean-ghost-publishing.md) |
-| DEC-052 | Open prepared review 沿用深度发现 | Accepted | 2026-10-06 接受现有显式发现路由及其可能的网络/额度使用；Open Pagelet 仍零调用，不回填旧批准或验收 | [Record](./dec-052-prepared-review-deep-discover-route.md) |
+| DEC-052 | Open prepared review 沿用深度发现 | Accepted | 2026-10-06 路由接受保留为历史；该 ID 由 DEC-075 局部接续并退役，Open Pagelet 零调用保持，不回填旧批准或验收 | [Record](./dec-052-prepared-review-deep-discover-route.md) |
 | DEC-051 | 必要确认、前后台预算与合同接续 | Accepted | 局部接续旧确认/容量条款，保留来源、Writing与Ghost边界；设计不等于实现 | [Record](./dec-051-proportionate-confirmation-and-contract-alignment.md) |
 | DEC-050 | 笔记图片联合删除与一键撤销 | Accepted | 共享引用阻止删除、临时快照一键撤销；不授予运行代码实施 | [Record](./dec-050-note-image-removal-and-undo.md) |
 | DEC-049 | Command、Agent、Host、Tool 统一契约 | Accepted | 架构与工作流先行，再公共框架及领域迁移；既有权限保持 | [Record](./dec-049-command-agent-host-tool-contract.md) |
@@ -47,14 +48,14 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 | DEC-038 | Chat image generation and unified image connection | Accepted | Wan 创建/参考/编辑、后台恢复、确切版本与复制下载；Chat/Featured Image 统一连接；透明确认与删聊天仅留文件 | [Record](./dec-038-chat-image-generation.md) |
 | DEC-037 | PA Agent essential capabilities | Accepted | 基础工具自主规划；日期口径由主 Agent 按上下文选择；官方 API 优先 | [Record](./dec-037-pa-agent-essential-capabilities.md) |
 | DEC-036 | Share Card per-export print styles | Accepted | 每次 Modal 默认原纸且不记忆；轻印/复印分层处理标题与正文，保护代码、视觉、品牌和宿主主题，并保持 preview/Copy/Save 一致 | [Record](./dec-036-share-card-print-styles.md) |
-| DEC-035 | Bounded cleanup and Pagelet scope retirement | Accepted | 删除旧 Panel 范围控件；保留当前 Deep Discover、旧命令、来源边界及已确认外围功能；其余清理保持有效行为 | [Record](./dec-035-bounded-cleanup-and-pagelet-scope-retirement.md) |
+| DEC-035 | Bounded cleanup and Pagelet scope retirement | Accepted | 旧 Panel 范围退役；Deep Discover、来源及外围功能保留，指定旧命令与专用链由 DEC-075 局部接续 | [Record](./dec-035-bounded-cleanup-and-pagelet-scope-retirement.md) |
 | DEC-034 | Unified Agent task execution | Accepted | B-135 已交付的主 Agent 语义、个性化取材、来源准入、作品交付、恢复与兼容边界；历史验证已归档 | [Record](./dec-034-unified-agent-task-execution.md) |
 | DEC-033 | Simple settings and unified defaults | Accepted | B-106 必要机制内置；2026-09-09 修订的长期提取与本地习惯学习默认开启、独立退出和旧值迁移已由 B-135 交付；废弃规则仍只限明确撤销项 | [Record](./dec-033-simple-settings-and-unified-defaults.md) |
 | DEC-001 | PA Agent builtin MCP-style WebSearch adapter | Accepted | PA Agent network-read capability | [Record](./pa-agent-mcp-adapter-decision.md) |
 | DEC-003 | Preserve the dual product line | Accepted | Product boundary and investment direction | [Record](./dec-003-dual-product-line.md) |
 | DEC-005 | Transparent and reversible Memory governance | Accepted | Memory trust and permission model | [Record](./dec-005-memory-governance.md) |
 | DEC-011 | Preserve capability and policy boundaries | Accepted | PA Agent/action safety architecture | [Record](./dec-011-capability-policy-boundary.md) |
-| DEC-014 | Bound Operations Agent to explicit vault opt-in | Accepted | Write/action product exposure | [Record](./dec-014-defer-operations-agent.md) |
+| DEC-014 | Bound Operations Agent to explicit vault opt-in | Accepted | 历史开放方式及写入保护；旧设置与 Pagelet 专用关联由 DEC-075 接续，Chat 共享能力保留 | [Record](./dec-014-defer-operations-agent.md) |
 | DEC-016 | Defer hosted Premium layer | Deferred | Hosted/commercial service | [Record](./dec-016-defer-hosted-premium.md) |
 | DEC-017 | Default bounded background preparation for Scope Recap | Accepted | Pagelet Recap trigger, data and cost boundary | [Record](./dec-017-default-background-recap-preparation.md) |
 | DEC-018 | Quality-gated proactive hints for Scope Recap | Accepted | Pagelet Recap visibility, attention and suppression boundary | [Record](./dec-018-quality-gated-scope-recap-hints.md) |

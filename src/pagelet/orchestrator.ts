@@ -16,12 +16,6 @@ import {
 import type { WorkspaceLeaf } from "obsidian";
 
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
-import { formatOperationsPreview } from "../ai-services/operations/operations-presentation";
-import type {
-    OperationsExecutionResult,
-    OperationsIntent,
-    UndoResult,
-} from "../ai-services/operations/types";
 import {
     clearPlatformTimeout,
     getPlatformDocument,
@@ -86,24 +80,16 @@ import {
 // Re-export so existing `import { PageletHost } from "./orchestrator"` keeps working.
 export type { PageletHost } from "./PageletHost";
 
-type PageletInsightActionErrorKind =
-    | "failed"
+type PageletInsightHandoffErrorKind =
     | "stale"
-    | "operations-unavailable"
     | "handoff-busy"
     | "handoff-draft"
     | "handoff-unavailable";
 
-type PageletInsightActionState =
+type PageletInsightHandoffState =
     | { kind: "idle" }
-    | { kind: "staging"; candidateId: string }
-    | { kind: "pending"; candidateId: string; intent: OperationsIntent }
-    | { kind: "executing"; candidateId: string; intent: OperationsIntent }
-    | { kind: "result"; candidateId: string; result: OperationsExecutionResult }
-    | { kind: "undoing"; candidateId: string; result: OperationsExecutionResult }
-    | { kind: "undone"; candidateId: string; results: readonly UndoResult[] }
     | { kind: "handoff-opening"; candidateId: string }
-    | { kind: "error"; candidateId: string; error: PageletInsightActionErrorKind };
+    | { kind: "error"; candidateId: string; error: PageletInsightHandoffErrorKind };
 
 interface PageletRecentReading {
     anchorPath: string;
@@ -164,9 +150,9 @@ export class PageletOrchestrator {
     private readonly readingListeners = new Set<() => void>();
     private unsubscribeReadingActivity: (() => void) | undefined;
     private readonly agentInsightNudgeKeys = new Set<string>();
-    private agentInsightActionState: PageletInsightActionState = { kind: "idle" };
-    private agentInsightActionToken = 0;
-    private agentInsightActionAbortController: AbortController | null = null;
+    private agentInsightHandoffState: PageletInsightHandoffState = { kind: "idle" };
+    private agentInsightHandoffToken = 0;
+    private agentInsightHandoffAbortController: AbortController | null = null;
     private onboardingNudge: OnboardingNudge | null = null;
     private onboardingNudgeAdmissionKey: string | null = null;
     get hasActiveOnboardingNudge(): boolean { return this.onboardingNudge !== null; }
@@ -344,7 +330,7 @@ export class PageletOrchestrator {
                 onSourceClick: (link) => this.handleSourceClick(link),
                 onSaveAsReviewNote: (findings) => { void this.saveFindingsAsReviewNote(findings); },
                 onReviewQueueItemDismiss: (id) => { void this.dismissReviewQueueItem(id); },
-                onRunReview: () => this.reviewCurrentNote(),
+                onRunReview: () => this.runExplicitDeepDiscover(),
                 onRelatedNoteClick: (noteName, sourcePath) => this.handleRelatedNoteClick(noteName, sourcePath),
                 onResearchFinding: (finding) => this.handleResearchFinding(finding),
                 onToggleHints: () => this.toggleProactiveHints(),
@@ -452,7 +438,7 @@ export class PageletOrchestrator {
         this.readingAbortController?.abort();
         this.readingRevalidationAbortController?.abort();
         this.clearReadingExpiry();
-        this.cancelPendingAgentInsightAction();
+        this.cancelAgentInsightHandoff();
         this.clearAgentInsight();
         this.readingListeners.clear();
         this.bubbleCoordinator.destroy();
@@ -489,25 +475,6 @@ export class PageletOrchestrator {
         } else {
             this.invalidateAgentInsightIfPolicyChanged();
         }
-        const operationsAvailable = this.operationsAvailable();
-        if (!operationsAvailable && this.agentInsightActionState.kind === "pending") {
-            this.cancelPendingAgentInsightAction();
-            this.refreshOpenAgentInsightPanel();
-        } else if (
-            this.agentInsightActionState.kind === "idle"
-            || this.agentInsightActionState.kind === "error"
-        ) {
-            if (
-                operationsAvailable
-                && this.agentInsightActionState.kind === "error"
-                && this.agentInsightActionState.error === "operations-unavailable"
-            ) {
-                this.agentInsightActionState = { kind: "idle" };
-            }
-            // Settings are live. Re-project idle/error actions so an already-open
-            // Panel never keeps a stale enabled or disabled Operations control.
-            this.refreshOpenAgentInsightPanel();
-        }
         if (this.petView) {
             this.petView.stateMachine.proactiveHintsEnabled = s.proactiveHints;
             this.petView.setCorner(s.petCorner);
@@ -524,15 +491,9 @@ export class PageletOrchestrator {
     getCommandCallbacks(): PageletCommandCallbacks {
         return {
             onOpenPanel: () => this.openPanel(),
-            onOpenPreparedReview: () => this.openPreparedReview(),
-            onReviewCurrent: () => this.runExplicitDeepDiscover(),
-            onQuickReview: () => this.runExplicitDeepDiscover(),
             onDiscoverConnections: () => this.runExplicitDeepDiscover(),
             onMaintenanceReview: () => this.runMaintenanceReview(),
-            onQuietRecall: () => this.runExplicitDeepDiscover(),
             onGraphDiscovery: () => this.runGraphDiscovery(),
-            onScopeRecap: () => this.runExplicitDeepDiscover(),
-            onClearScopeRecapCache: () => this.clearScopeRecapCache(),
             onToggleProactiveHints: () => this.toggleProactiveHints(),
             onShowBackgroundPreparationStatus: () => {
                 void this.showBackgroundPreparationStatusNotice();
@@ -681,7 +642,7 @@ export class PageletOrchestrator {
         const controller = new AbortController();
         this.readingAbortController = controller;
         const intent = ++this.readingIntent;
-        this.cancelPendingAgentInsightAction();
+        this.cancelAgentInsightHandoff();
         const reading = this.recentReadings.get(path) ?? this.createReading(path);
         const policyIdentity = this.agentInsightPolicyIdentity;
         // Expansion keeps the read alive for Detail; only the original intent
@@ -963,24 +924,6 @@ export class PageletOrchestrator {
         // Only the accepted result carrying this waiting request may fill its reader.
     }
 
-    openPreparedReview(): void {
-        void this.runExplicitDeepDiscover();
-    }
-
-    openQuickReview(): void {
-        void this.runExplicitDeepDiscover();
-    }
-
-    clearScopeRecapCache(): void {
-        this.host.clearScopeRecapDetailSessionCache?.();
-        this.host.updatePageletSetting("scopeRecapNudgeSuppressions", []);
-        new Notice(this.t("pagelet.recap.cacheCleared"), 4000);
-    }
-
-    async reviewCurrentNote(): Promise<void> {
-        await this.runExplicitDeepDiscover();
-    }
-
     async runMaintenanceReview(): Promise<void> {
         const routeToken = this.beginForegroundRoute("review", "review");
         if (routeToken === null) return;
@@ -1011,10 +954,6 @@ export class PageletOrchestrator {
         } finally {
             this.sessionManager.finishForegroundReviewRun();
         }
-    }
-
-    async runQuietRecall(): Promise<void> {
-        await this.runExplicitDeepDiscover();
     }
 
     async runGraphDiscovery(): Promise<void> {
@@ -1106,10 +1045,6 @@ export class PageletOrchestrator {
         this.onboardingNudgeAdmissionKey = null;
     }
 
-    async runScopeRecap(): Promise<void> {
-        await this.runExplicitDeepDiscover();
-    }
-
 
 
 
@@ -1168,7 +1103,7 @@ export class PageletOrchestrator {
             if (reading.candidates.length === 0) reading.emptyReason = "stale";
         }
         if (this.openAgentInsightCandidate) this.openAgentInsightCandidate.staleStatus = "boundary-changed";
-        this.cancelPendingAgentInsightAction();
+        this.cancelAgentInsightHandoff();
         this.agentInsightCandidate = null;
         this.pendingAgentInsightCandidates = [];
         this.agentInsightAnchorPath = null;
@@ -1237,8 +1172,8 @@ export class PageletOrchestrator {
         for (const candidate of invalidatedCandidates) {
             this.agentInsightNudgeKeys.delete(this.agentInsightTicketKey(candidate));
         }
-        if ((invalidatesCurrent || invalidatesOpen) && !this.agentInsightActionMustRemainReachable()) {
-            this.cancelPendingAgentInsightAction();
+        if (invalidatesCurrent || invalidatesOpen) {
+            this.cancelAgentInsightHandoff();
         }
         if (invalidatesCurrent) {
             this.agentInsightCandidate = this.pendingAgentInsightCandidates.shift() ?? null;
@@ -1268,8 +1203,7 @@ export class PageletOrchestrator {
     }
 
     private handleMarkdownModify(path: string): void {
-        const ownPageletWrite = this.host.consumePageletOperationsSelfWrite?.(path) === true;
-        if (!ownPageletWrite) this.invalidateAgentInsightForPaths([path]);
+        this.invalidateAgentInsightForPaths([path]);
         this.handleNoteActivity(path);
     }
 
@@ -1770,17 +1704,16 @@ export class PageletOrchestrator {
         );
         const isSameCollection = collectionIdentity(previousAvailable) === collectionIdentity(candidates);
         this.availableAgentInsights.set(options.path, candidates);
-        const actionCandidateId = "candidateId" in this.agentInsightActionState
-            ? this.agentInsightActionState.candidateId
+        const actionCandidateId = "candidateId" in this.agentInsightHandoffState
+            ? this.agentInsightHandoffState.candidateId
             : null;
         if (
             !this.openAgentInsightCandidate
             && !candidates.some((next) => next.id === this.agentInsightCandidate?.id)
             && !candidates.some((next) => next.id === this.openAgentInsightCandidate?.id)
             && !candidates.some((next) => next.id === actionCandidateId)
-            && !this.agentInsightActionMustRemainReachable()
         ) {
-            this.cancelPendingAgentInsightAction();
+            this.cancelAgentInsightHandoff();
         }
         this.agentInsightCandidate = candidate;
         this.pendingAgentInsightCandidates = candidates.slice(1);
@@ -1884,7 +1817,6 @@ export class PageletOrchestrator {
                 ...(integration.actions ?? []),
                 ...[previous, next].flatMap((target, targetIndex) => target ? [{
                     label: this.t(targetIndex === 0 ? "pagelet.reading.previous" : "pagelet.panel.agentInsight.nextResult"),
-                    disabled: this.agentInsightActionMustRemainReachable(),
                     callback: () => { void this.selectReadingCandidate(reading, target); },
                 }] : []),
             ];
@@ -1893,12 +1825,6 @@ export class PageletOrchestrator {
             integration.actionStatus = {
                 ...(integration.actionStatus ?? { label: this.t("pagelet.deepDiscover.incomplete") }),
                 detail: this.t("pagelet.deepDiscover.partialResults"),
-            };
-        }
-        if (candidate.staleStatus === "stale" && this.agentInsightActionMustRemainReachable()) {
-            integration.actionStatus = {
-                ...(integration.actionStatus ?? { label: this.t("pagelet.reading.stale") }),
-                detail: this.t("pagelet.reading.stale"),
             };
         }
         const findings: PanelFinding[] = candidate.sourceRefs.length > 0
@@ -1927,7 +1853,6 @@ export class PageletOrchestrator {
     }
 
     private async selectReadingCandidate(reading: PageletRecentReading, candidate: PageletAgentDeliveryCandidate): Promise<void> {
-        if (this.agentInsightActionMustRemainReachable()) return;
         const intent = ++this.readingIntent;
         this.readingAbortController?.abort();
         this.readingRevalidationAbortController?.abort();
@@ -1943,7 +1868,7 @@ export class PageletOrchestrator {
             this.refreshOpenAgentInsightPanel();
             return;
         }
-        this.cancelPendingAgentInsightAction();
+        this.cancelAgentInsightHandoff();
         this.openAgentInsightPanel(candidate, reading);
     }
 
@@ -1956,7 +1881,7 @@ export class PageletOrchestrator {
     private buildAgentInsightFindingIntegration(
         candidate: PageletAgentDeliveryCandidate,
     ): Pick<PanelFinding, "actionStatus" | "actions"> {
-        if (candidate.staleStatus === "stale" && !this.agentInsightActionMustRemainReachable()) {
+        if (candidate.staleStatus === "stale") {
             return {
                 actionStatus: { label: this.t("pagelet.reading.stale"), tone: "neutral" },
                 actions: [{
@@ -1966,142 +1891,18 @@ export class PageletOrchestrator {
                 }],
             };
         }
-        const state = "candidateId" in this.agentInsightActionState
-            && this.agentInsightActionState.candidateId === candidate.id
-            ? this.agentInsightActionState
+        const state = "candidateId" in this.agentInsightHandoffState
+            && this.agentInsightHandoffState.candidateId === candidate.id
+            ? this.agentInsightHandoffState
             : ({ kind: "idle" } as const);
         const discussAction = {
             label: this.t("pagelet.panel.agentInsight.discuss"),
-            disabled: candidate.staleStatus === "stale",
             callback: () => { void this.openAgentInsightInChat(candidate); },
         };
-        const direct = candidate.pageletAgent.directAction;
-        const directAction = direct ? {
-            label: direct.label,
-            primary: true,
-            callback: () => { void this.stageAgentInsightDirectAction(candidate); },
-        } : null;
 
         switch (state.kind) {
-            case "idle": {
-                const available = this.operationsAvailable();
-                return {
-                    ...(direct && !available ? {
-                        actionStatus: {
-                            label: this.t("pagelet.panel.agentInsight.operationsUnavailable"),
-                            tone: "neutral" as const,
-                        },
-                    } : {}),
-                    actions: [
-                        ...(directAction ? [{ ...directAction, disabled: !available }] : []),
-                        discussAction,
-                    ],
-                };
-            }
-            case "staging":
-                return {
-                    actionStatus: {
-                        label: this.t("pagelet.panel.agentInsight.staging"),
-                        busy: true,
-                    },
-                    actions: directAction ? [{ ...directAction, busy: true }] : [],
-                };
-            case "pending":
-                return {
-                    actionStatus: {
-                        label: this.t("pagelet.panel.agentInsight.pending"),
-                        detail: this.t("pagelet.panel.agentInsight.previewTarget", {
-                            path: state.intent.operations[0]?.path ?? candidate.pageletAgent.handoff.anchor.path,
-                        }),
-                        preview: state.intent.operations
-                            .map((operation) => formatOperationsPreview(operation, {
-                                formatFrontmatterSet: (key, value) => this.t(
-                                    "pagelet.panel.agentInsight.previewSet",
-                                    { key, value },
-                                ),
-                                formatFrontmatterRemove: (key) => this.t(
-                                    "pagelet.panel.agentInsight.previewRemove",
-                                    { key },
-                                ),
-                            }))
-                            .join("\n\n"),
-                    },
-                    actions: [
-                        {
-                            label: this.t("pagelet.panel.agentInsight.confirm"),
-                            primary: true,
-                            callback: () => { void this.confirmAgentInsightDirectAction(candidate); },
-                        },
-                        {
-                            label: this.t("pagelet.panel.agentInsight.cancel"),
-                            callback: () => this.cancelAgentInsightDirectAction(candidate),
-                        },
-                    ],
-                };
-            case "executing":
-                return {
-                    actionStatus: {
-                        label: this.t("pagelet.panel.agentInsight.executing"),
-                        busy: true,
-                    },
-                    actions: [{
-                        label: this.t("pagelet.panel.agentInsight.confirm"),
-                        busy: true,
-                        callback: () => undefined,
-                    }],
-                };
-            case "result": {
-                const receiptIds = successfulReceiptIds(state.result);
-                const stale = state.result.operations.some((operation) => operation.status === "stale");
-                const succeeded = operationsResultSucceeded(state.result);
-                return {
-                    actionStatus: {
-                        label: this.t(stale
-                            ? "pagelet.panel.agentInsight.stale"
-                            : succeeded
-                                ? "pagelet.panel.agentInsight.succeeded"
-                                : "pagelet.panel.agentInsight.failed"),
-                        tone: succeeded ? "success" : "error",
-                    },
-                    actions: [
-                        ...(receiptIds.length > 0 ? [{
-                            label: this.t("pagelet.panel.agentInsight.undo"),
-                            primary: true,
-                            callback: () => { void this.undoAgentInsightDirectAction(candidate); },
-                        }] : [discussAction]),
-                    ],
-                };
-            }
-            case "undoing":
-                return {
-                    actionStatus: {
-                        label: this.t("pagelet.panel.agentInsight.undoing"),
-                        busy: true,
-                    },
-                    actions: [{
-                        label: this.t("pagelet.panel.agentInsight.undo"),
-                        busy: true,
-                        callback: () => undefined,
-                    }],
-                };
-            case "undone": {
-                const succeeded = state.results.length > 0
-                    && state.results.every((result) => result.status === "undone");
-                const stale = state.results.some((result) => result.status === "stale");
-                return {
-                    actionStatus: {
-                        label: this.t(
-                            succeeded
-                                ? "pagelet.panel.agentInsight.undone"
-                                : stale
-                                    ? "pagelet.panel.agentInsight.undoStale"
-                                    : "pagelet.panel.agentInsight.failed",
-                        ),
-                        tone: succeeded ? "success" : "error",
-                    },
-                    actions: [discussAction],
-                };
-            }
+            case "idle":
+                return { actions: [discussAction] };
             case "handoff-opening":
                 return {
                     actionStatus: {
@@ -2110,219 +1911,62 @@ export class PageletOrchestrator {
                     },
                     actions: [{ ...discussAction, busy: true }],
                 };
-            case "error": {
-                const key = agentInsightErrorLocaleKey(state.error);
-                const stale = state.error === "stale";
+            case "error":
                 return {
                     actionStatus: {
-                        label: this.t(key),
+                        label: this.t(agentInsightHandoffErrorLocaleKey(state.error)),
                         tone: "error",
                     },
-                    actions: [
-                        ...(!stale && directAction && this.operationsAvailable() ? [directAction] : []),
-                        ...(!stale ? [discussAction] : []),
-                    ],
+                    actions: state.error === "stale" ? [] : [discussAction],
                 };
-            }
-        }
-    }
-
-    private operationsAvailable(): boolean {
-        return this.host.isOperationsAvailable?.() === true
-            && typeof this.host.stagePageletInsightLink === "function"
-            && typeof this.host.confirmPageletOperationsIntent === "function"
-            && typeof this.host.cancelPageletOperationsIntent === "function"
-            && typeof this.host.undoPageletOperationsReceipts === "function";
-    }
-
-    private async stageAgentInsightDirectAction(
-        candidate: PageletAgentDeliveryCandidate,
-    ): Promise<void> {
-        const direct = candidate.pageletAgent.directAction;
-        if (!direct || !this.isOpenAgentInsight(candidate)) return;
-        if (!this.operationsAvailable() || !this.host.stagePageletInsightLink) {
-            this.setAgentInsightActionError(candidate, "operations-unavailable");
-            return;
-        }
-        if (this.agentInsightActionState.kind !== "idle"
-            && this.agentInsightActionState.kind !== "error") return;
-
-        const { token, signal } = this.beginAgentInsightAction(candidate, "staging");
-        try {
-            if (!await this.validateAgentInsight(candidate, signal)) {
-                this.finishAgentInsightActionError(candidate, token, "stale");
-                return;
-            }
-            const intent = await this.host.stagePageletInsightLink({
-                candidateId: direct.candidateId,
-                anchorPath: direct.anchorPath,
-                sourcePath: direct.sourcePath,
-            }, signal);
-            if (!this.agentInsightActionIsCurrent(candidate, token)) {
-                this.host.cancelPageletOperationsIntent?.(intent.id);
-                return;
-            }
-            this.agentInsightActionState = { kind: "pending", candidateId: candidate.id, intent };
-            this.refreshOpenAgentInsightPanel();
-        } catch (error) {
-            this.finishAgentInsightActionError(
-                candidate,
-                token,
-                operationsErrorKind(error, this.operationsAvailable()),
-            );
-        } finally {
-            if (this.agentInsightActionToken === token) this.agentInsightActionAbortController = null;
-        }
-    }
-
-    private async confirmAgentInsightDirectAction(
-        candidate: PageletAgentDeliveryCandidate,
-    ): Promise<void> {
-        const state = this.agentInsightActionState;
-        if (
-            state.kind !== "pending"
-            || state.candidateId !== candidate.id
-            || !this.isOpenAgentInsight(candidate)
-            || !this.host.confirmPageletOperationsIntent
-        ) return;
-        const token = ++this.agentInsightActionToken;
-        this.agentInsightActionState = {
-            kind: "executing",
-            candidateId: candidate.id,
-            intent: state.intent,
-        };
-        this.refreshOpenAgentInsightPanel();
-        try {
-            const result = await this.host.confirmPageletOperationsIntent(state.intent.id);
-            if (operationsResultSucceeded(result)) {
-                this.retireAgentInsightCandidate(candidate.id);
-            }
-            if (!this.startedAgentInsightActionIsCurrent(candidate, token, "executing")) return;
-            this.agentInsightActionState = { kind: "result", candidateId: candidate.id, result };
-            this.refreshOpenAgentInsightPanel();
-        } catch (error) {
-            if (this.startedAgentInsightActionIsCurrent(candidate, token, "executing")) {
-                this.agentInsightActionState = {
-                    kind: "error",
-                    candidateId: candidate.id,
-                    error: operationsErrorKind(error, this.operationsAvailable()),
-                };
-                this.refreshOpenAgentInsightPanel();
-            }
-        }
-    }
-
-    private cancelAgentInsightDirectAction(candidate: PageletAgentDeliveryCandidate): void {
-        const state = this.agentInsightActionState;
-        if (state.kind !== "pending" || state.candidateId !== candidate.id) return;
-        try {
-            this.host.cancelPageletOperationsIntent?.(state.intent.id);
-        } catch {
-            // Expired and already-terminal intents are already fail-closed.
-        }
-        this.agentInsightActionToken += 1;
-        this.agentInsightActionState = { kind: "idle" };
-        this.refreshOpenAgentInsightPanel();
-    }
-
-    private retireAgentInsightCandidate(candidateId: string): void {
-        this.agentInsightNudgeKeys.delete(`${NudgeOwner.AgentInsight}:${candidateId}`);
-        if (this.agentInsightCandidate?.id === candidateId) {
-            this.agentInsightCandidate = this.pendingAgentInsightCandidates.shift() ?? null;
-        } else {
-            const before = this.pendingAgentInsightCandidates.length;
-            this.pendingAgentInsightCandidates = this.pendingAgentInsightCandidates.filter((candidate) => (
-                candidate.id !== candidateId
-            ));
-            if (before === this.pendingAgentInsightCandidates.length) return;
-        }
-        if (!this.agentInsightCandidate) this.agentInsightAnchorPath = null;
-        this.reconcilePetNudge();
-    }
-
-    private async undoAgentInsightDirectAction(
-        candidate: PageletAgentDeliveryCandidate,
-    ): Promise<void> {
-        const state = this.agentInsightActionState;
-        if (
-            state.kind !== "result"
-            || state.candidateId !== candidate.id
-            || !this.host.undoPageletOperationsReceipts
-        ) return;
-        const receiptIds = successfulReceiptIds(state.result);
-        if (receiptIds.length === 0) return;
-        const token = ++this.agentInsightActionToken;
-        this.agentInsightActionState = {
-            kind: "undoing",
-            candidateId: candidate.id,
-            result: state.result,
-        };
-        this.refreshOpenAgentInsightPanel();
-        try {
-            const results = await this.host.undoPageletOperationsReceipts(receiptIds);
-            if (!this.startedAgentInsightActionIsCurrent(candidate, token, "undoing")) return;
-            this.agentInsightActionState = { kind: "undone", candidateId: candidate.id, results };
-            this.refreshOpenAgentInsightPanel();
-        } catch (error) {
-            if (this.startedAgentInsightActionIsCurrent(candidate, token, "undoing")) {
-                this.agentInsightActionState = {
-                    kind: "error",
-                    candidateId: candidate.id,
-                    error: operationsErrorKind(error, this.operationsAvailable()),
-                };
-                this.refreshOpenAgentInsightPanel();
-            }
         }
     }
 
     private async openAgentInsightInChat(candidate: PageletAgentDeliveryCandidate): Promise<void> {
         if (!this.isOpenAgentInsight(candidate) || candidate.staleStatus === "stale"
             || candidate.staleStatus === "boundary-changed" || !this.host.openPageletChatHandoff) return;
-        const active = this.agentInsightActionState;
+        const active = this.agentInsightHandoffState;
         if (
             "candidateId" in active
             && active.candidateId === candidate.id
-            && active.kind !== "error"
-            && active.kind !== "undone"
-            && !(active.kind === "result" && successfulReceiptIds(active.result).length === 0)
+            && active.kind === "handoff-opening"
         ) return;
-        const { token, signal } = this.beginAgentInsightAction(candidate, "handoff-opening");
+        const { token, signal } = this.beginAgentInsightHandoff(candidate);
         try {
             if (!await this.validateAgentInsight(candidate, signal)) {
-                this.finishAgentInsightActionError(candidate, token, "stale");
+                this.finishAgentInsightHandoffError(candidate, token, "stale");
                 return;
             }
             const result = await this.host.openPageletChatHandoff(
                 candidate.pageletAgent.handoff,
                 signal,
             );
-            if (!this.agentInsightActionIsCurrent(candidate, token)) return;
+            if (!this.agentInsightHandoffIsCurrent(candidate, token)) return;
             if (result.status === "prepared") {
                 this.panelView?.close();
                 return;
             }
-            const error: PageletInsightActionErrorKind = result.status === "busy"
+            const error: PageletInsightHandoffErrorKind = result.status === "busy"
                 ? "handoff-busy"
                 : result.status === "draft-conflict"
                     ? "handoff-draft"
                     : "handoff-unavailable";
-            this.finishAgentInsightActionError(candidate, token, error);
+            this.finishAgentInsightHandoffError(candidate, token, error);
         } catch {
-            this.finishAgentInsightActionError(candidate, token, "handoff-unavailable");
+            this.finishAgentInsightHandoffError(candidate, token, "handoff-unavailable");
         } finally {
-            if (this.agentInsightActionToken === token) this.agentInsightActionAbortController = null;
+            if (this.agentInsightHandoffToken === token) this.agentInsightHandoffAbortController = null;
         }
     }
 
-    private beginAgentInsightAction(
+    private beginAgentInsightHandoff(
         candidate: PageletAgentDeliveryCandidate,
-        kind: "staging" | "handoff-opening",
     ): { token: number; signal: AbortSignal } {
-        this.agentInsightActionAbortController?.abort();
+        this.agentInsightHandoffAbortController?.abort();
         const controller = new AbortController();
-        this.agentInsightActionAbortController = controller;
-        const token = ++this.agentInsightActionToken;
-        this.agentInsightActionState = { kind, candidateId: candidate.id };
+        this.agentInsightHandoffAbortController = controller;
+        const token = ++this.agentInsightHandoffToken;
+        this.agentInsightHandoffState = { kind: "handoff-opening", candidateId: candidate.id };
         this.refreshOpenAgentInsightPanel();
         return { token, signal: controller.signal };
     }
@@ -2381,7 +2025,7 @@ export class PageletOrchestrator {
         }
         if (!valid) {
             candidate.staleStatus = "stale";
-            if (!this.agentInsightActionMustRemainReachable()) this.cancelPendingAgentInsightAction();
+            this.cancelAgentInsightHandoff();
         }
         this.refreshOpenAgentInsightPanel();
     }
@@ -2403,73 +2047,32 @@ export class PageletOrchestrator {
         }, Math.max(0, expiresAt - Date.now()));
     }
 
-    private finishAgentInsightActionError(
+    private finishAgentInsightHandoffError(
         candidate: PageletAgentDeliveryCandidate,
         token: number,
-        error: PageletInsightActionErrorKind,
+        error: PageletInsightHandoffErrorKind,
     ): void {
-        if (!this.agentInsightActionIsCurrent(candidate, token)) return;
-        this.agentInsightActionState = { kind: "error", candidateId: candidate.id, error };
+        if (!this.agentInsightHandoffIsCurrent(candidate, token)) return;
+        this.agentInsightHandoffState = { kind: "error", candidateId: candidate.id, error };
         this.refreshOpenAgentInsightPanel();
     }
 
-    private setAgentInsightActionError(
-        candidate: PageletAgentDeliveryCandidate,
-        error: PageletInsightActionErrorKind,
-    ): void {
-        this.agentInsightActionState = { kind: "error", candidateId: candidate.id, error };
-        this.refreshOpenAgentInsightPanel();
-    }
-
-    private agentInsightActionIsCurrent(
+    private agentInsightHandoffIsCurrent(
         candidate: PageletAgentDeliveryCandidate,
         token: number,
     ): boolean {
-        return this.agentInsightActionToken === token && this.isOpenAgentInsight(candidate);
-    }
-
-    private startedAgentInsightActionIsCurrent(
-        candidate: PageletAgentDeliveryCandidate,
-        token: number,
-        kind: "executing" | "undoing",
-    ): boolean {
-        const state = this.agentInsightActionState;
-        return this.agentInsightActionToken === token
-            && state.kind === kind
-            && state.candidateId === candidate.id;
-    }
-
-    private agentInsightActionMustRemainReachable(): boolean {
-        const state = this.agentInsightActionState;
-        return state.kind === "executing"
-            || state.kind === "undoing"
-            || (state.kind === "result" && successfulReceiptIds(state.result).length > 0);
+        return this.agentInsightHandoffToken === token && this.isOpenAgentInsight(candidate);
     }
 
     private isOpenAgentInsight(candidate: PageletAgentDeliveryCandidate): boolean {
         return this.openAgentInsightCandidate?.id === candidate.id && this.panelView?.isOpen === true;
     }
 
-    private cancelPendingAgentInsightAction(options: { preserveStarted?: boolean } = {}): void {
-        if (
-            options.preserveStarted
-            && (
-                this.agentInsightActionState.kind === "executing"
-                || this.agentInsightActionState.kind === "undoing"
-            )
-        ) return;
-        this.agentInsightActionAbortController?.abort();
-        this.agentInsightActionAbortController = null;
-        this.agentInsightActionToken += 1;
-        const state = this.agentInsightActionState;
-        if (state.kind === "pending") {
-            try {
-                this.host.cancelPageletOperationsIntent?.(state.intent.id);
-            } catch {
-                // Expired and already-terminal intents are already fail-closed.
-            }
-        }
-        this.agentInsightActionState = { kind: "idle" };
+    private cancelAgentInsightHandoff(): void {
+        this.agentInsightHandoffAbortController?.abort();
+        this.agentInsightHandoffAbortController = null;
+        this.agentInsightHandoffToken += 1;
+        this.agentInsightHandoffState = { kind: "idle" };
     }
 
     // ======================================================================
@@ -2865,7 +2468,7 @@ export class PageletOrchestrator {
             if (this.readingIntent !== intent) return;
             this.preservePanelSessionOnClose = true;
             try { this.panelView?.close(); } finally { this.preservePanelSessionOnClose = false; }
-            this.cancelPendingAgentInsightAction({ preserveStarted: true });
+            this.cancelAgentInsightHandoff();
             this.panelReading = null;
             this.openAgentInsightCandidate = null;
             this.readingRevalidationAbortController?.abort();
@@ -3029,19 +2632,7 @@ export class PageletOrchestrator {
         if (this.preservePanelSessionOnClose) return;
         if (this.saveFlow.isSaveInProgress) return;
         this.rememberPanelReadingPosition();
-        if (
-            this.openAgentInsightCandidate
-            && (
-                this.agentInsightActionState.kind === "executing"
-                || this.agentInsightActionState.kind === "undoing"
-            )
-        ) {
-            // A confirmed write/Undo cannot be cancelled. Keep its receipt UI
-            // reachable by immediately restoring the busy Panel until it settles.
-            this.renderAgentInsightPanel(this.openAgentInsightCandidate);
-            return;
-        }
-        this.cancelPendingAgentInsightAction({ preserveStarted: true });
+        this.cancelAgentInsightHandoff();
         this.readingIntent += 1;
         this.readingAbortController?.abort();
         this.readingAbortController = null;
@@ -3119,41 +2710,15 @@ export class PageletOrchestrator {
     private handleBubbleDismiss(): void { /* no-op */ }
 }
 
-function successfulReceiptIds(result: OperationsExecutionResult): string[] {
-    return result.operations.flatMap((operation) => (
-        operation.status === "succeeded" && operation.receiptId ? [operation.receiptId] : []
-    ));
-}
-
-function operationsResultSucceeded(result: OperationsExecutionResult): boolean {
-    return result.state === "completed"
-        && result.operations.length > 0
-        && result.operations.every((operation) => operation.status === "succeeded");
-}
-
-function operationsErrorKind(
-    error: unknown,
-    operationsAvailable: boolean,
-): PageletInsightActionErrorKind {
-    if (!operationsAvailable) return "operations-unavailable";
-    const message = error instanceof Error ? error.message.toLowerCase() : "";
-    return /stale|changed|expired|source|boundary|policy/.test(message) ? "stale" : "failed";
-}
-
-function agentInsightErrorLocaleKey(error: PageletInsightActionErrorKind): string {
+function agentInsightHandoffErrorLocaleKey(error: PageletInsightHandoffErrorKind): string {
     switch (error) {
         case "stale":
             return "pagelet.panel.agentInsight.stale";
-        case "operations-unavailable":
-            return "pagelet.panel.agentInsight.operationsUnavailable";
         case "handoff-busy":
             return "pagelet.panel.agentInsight.handoffBusy";
         case "handoff-draft":
             return "pagelet.panel.agentInsight.handoffDraft";
         case "handoff-unavailable":
             return "pagelet.panel.agentInsight.handoffUnavailable";
-        case "failed":
-        default:
-            return "pagelet.panel.agentInsight.failed";
     }
 }

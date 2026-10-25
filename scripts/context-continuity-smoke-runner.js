@@ -155,7 +155,7 @@
     const isolated = {
       ...original,
       settings: { ...original.settings, memoryEnabled: false,
-        policyModelName: "", webSearchEnabled: false, operationsAgentEnabled: false,
+        policyModelName: "", webSearchEnabled: false,
         operationsProactiveSaveSuggestionsEnabled: false, shareAnonymousCapabilityUsage: false, debug: false },
       app: {
         workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },

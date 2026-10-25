@@ -300,7 +300,7 @@ function syntheticHost(original, syntheticApp, identity, record) {
       chatModelName: identity.model, policyModelName: '', embeddingModelName: '',
       qwenThinkingEnabled: identity.thinking, shareAnonymousCapabilityUsage: false,
       webSearchEnabled: false, memoryEnabled: true, licenseTier: original.settings.licenseTier,
-      operationsAgentEnabled: true, operationsProactiveSaveSuggestionsEnabled: false,
+      operationsProactiveSaveSuggestionsEnabled: false,
       retrievalOptimizationFlags: {}, statisticsVaultId: 'b157-synthetic' },
     getAPIToken: () => original.getAPIToken(),
     isOperationsAgentEnabled: true,
@@ -1152,7 +1152,6 @@ export function installB157ContextEval(appInstance) {
         for (const key of ['debug', 'memoryEnabled', 'aiProvider', 'baseURL', 'chatModelName', 'embeddingModelName']) {
           if (originalHost.settings[key] !== undefined) nativeSettings[key] = originalHost.settings[key];
         }
-        nativeSettings.operationsAgentEnabled = true;
         nativeSettings.operationsProactiveSaveSuggestionsEnabled = false;
         Object.defineProperties(host, {
           app: { value: scopedApp }, chatHistoryManager: { value: manager },

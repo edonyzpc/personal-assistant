@@ -1,5 +1,11 @@
 # Pagelet Product Design
 
+> 2026-10-25 局部清理契约：[DEC-075](./decisions/dec-075-legacy-surface-cleanup.md) /
+> [Bounded Cleanup Spec](./specs/pa-bounded-code-cleanup-product-spec.md) 退役指定的七个旧命令、
+> 两个回顾设置 UI、无效每周扫描设置跳转及 Pagelet 专用自动关联链；保留发现、阅读、
+> 保存、完整 Chat 交接、共享 Operations 和历史数据。旧命令快捷键需重绑。
+> 这是已批准范围，实施和验证只由 [B-189 Tracker](../development/active/legacy-surface-cleanup/tracker.md) 记录。
+
 > 2026-10-17 当前 Detail UI 契约：[DEC-067](./decisions/dec-067-pagelet-note-detail-tabs.md) /
 > [B-177 Spec](./specs/pagelet-note-detail-tabs-product-spec.md) 将 Pet 默认阅读改为按当前笔记打开或定位独立 Detail，
 > 新发现提示跟随所属笔记；保留全部内容视图与 Discovery graph，采用顶部导航与宽窄阅读布局。
@@ -27,11 +33,11 @@
 > [B-136 cleanup spec](./specs/pa-bounded-code-cleanup-product-spec.md) narrowly supersede
 > the old Panel scope-selection promise and its unreachable generic preparation
 > chain; they do not retire global source boundaries. The current command section
-> below governs legacy aliases: Quick review/review/recall/recap invoke explicit
-> active-note Deep Discover. Earlier Bubble-hotkey scenarios are historical for
-> those aliases. Under [DEC-052](./decisions/dec-052-prepared-review-deep-discover-route.md),
-> `Open prepared review` is also an explicit Deep Discover compatibility entry
-> that may invoke the provider. `Open Pagelet` remains provider-free; no generic
+> below follows DEC-075: Quick review/review/recall/recap and `Open prepared review`
+> are retired compatibility entries; explicit active-note discovery remains available
+> through `Discover connections`. Their earlier preservation under
+> [DEC-052](./decisions/dec-052-prepared-review-deep-discover-route.md) is historical.
+> `Open Pagelet` remains provider-free; no generic
 > raw-preload producer or Prepared Panel remains.
 > Archive discussions are provenance only, never the current baseline.
 
@@ -56,14 +62,14 @@
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
 | Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; prior deploy/desktop/iPhone BRAT smoke and user-operated long-press/Review/Discover/Scope Recap evidence remain provenance. B-118 DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall pure-semantic retrieval、live-source/Saved Insight and owner-aware nudge boundaries pass full automated、adversarial review and deployment-identity gates. B-121 three-action Ring evidence covers automated、review、local/iCloud deployment、desktop and iPhone portrait gates；its physical landscape waiver remains historical only. B-121 core runtime is included in BRAT `2.9.0-beta.5`. The 2026-08-06 DEC-025/DEC-026 amendment adds Share as the fourth Ring action；the 2026-08-07 owner amendment accepts the current `master` compact layout fallback. B-124 is closed, with current behavior in DEC-026, its Product Spec, Architecture, tests and the smoke checklist. DEC-027/B-125 records the predecessor 0–2 insight and single-recovery contract; DEC-065 governs the current autonomous discovery and optional staging contract；its validation and per-flag rollout dispositions are closed in [B-125 compact evidence](../archive/2026/b-125-retrieval-optimization-closeout.md). |
-| Last revised | 2026-10-16 |
+| Last revised | 2026-10-25 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Current Deep Discover uses `PaAgentLoop` with `CapabilityRegistry` / `PolicyEngine`, `runKind="review"` and `allowWrite=false`; the D024 adapter and D032 generic background route are historical |
 | Write boundary | Background Deep Discover stays read-only. Current explicit Operations requests follow DEC-051 with source/permission checks and real receipts; optional preview remains non-executing. There is no standalone Periodic Summary save contract. |
 | Background preparation engine | Current automatic Deep Discover uses note-trigger scheduling and source admission. DEC-035 retires the unreachable generic timer/change-detector/preload chain; persisted settings remain compatible. |
-| Prepared Scope Recap history | DEC-017/018/019 describe the predecessor behavior. The current Scope Recap command aliases explicit active-note Deep Discover; this row does not revive its old preparation pipeline or controls. Shared first-use disclosure and current source boundaries still apply. |
+| Prepared Scope Recap history | DEC-017/018/019 describe the predecessor behavior. DEC-075 retires the Scope Recap command alias and the two ineffective review settings controls while retaining compatible old-value reading. This does not revive the old preparation pipeline; shared first-use disclosure and current source boundaries still apply. |
 | Historical reference | [review-assistant-product-design.md](../archive/review-assistant-product-design.md) |
-| Current decisions | D001-D041 as reconciled in this document, with DEC-017 through DEC-027 and the owning Scope Recap/Quiet Recall/B-121/B-124/B-125 contracts taking precedence for their scopes; DEC-035, DEC-051 and DEC-052 supersede the retired routes, confirmation/budgets and Open prepared review zero-call promise in their stated scopes |
+| Current decisions | D001-D041 as reconciled in this document, with DEC-017 through DEC-027 and the owning Scope Recap/Quiet Recall/B-121/B-124/B-125 contracts taking precedence for their scopes; DEC-035/051/052 govern their historical scoped changes. DEC-075 further retires the named legacy entries, ineffective controls and Pagelet-only direct-link chain without changing shared data or capability boundaries |
 | Historical decisions provenance | [review-assistant-decisions.md](../archive/review-assistant-decisions.md) (non-authoritative) |
 | Technical design | See [pagelet-sdd-guide.md](../development/workflows/pagelet-sdd-guide.md); [review-assistant-sdd.md](../archive/review-assistant-sdd.md) is preserved as historical implementation context |
 | Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
@@ -228,8 +234,8 @@ Pagelet does NOT try to solve (preserved from historical design):
 
 5. **Review should feel like recognition, not administration.** A user can read
    a Bubble, close it, and owe Pagelet nothing. Findings do not become queue
-   items merely because PA generated them. Pagelet review-note saves and
-   association actions retain their own preview/confirmation; Chat may execute
+   items merely because PA generated them. Pagelet review-note saves retain
+   their own preview/confirmation; DEC-075 retires the dedicated association chain. Chat may execute
    a clear current modification request under DEC-051 without a second approval.
    Domain-specific permission and confirmation boundaries still apply. **[NEW]**
 
@@ -242,7 +248,7 @@ Pagelet does NOT try to solve (preserved from historical design):
 
 7. **Vault-local and transparent.** Settings and feedback state are scoped to the current vault. Findings expose their actual sources; retained source/context views describe their own boundaries without reviving the retired scope controls. **[CHANGED]**
 
-8. **Narrow write boundary.** Pagelet keeps Deep Discover read-only. Basic Operations follow the [essential-capabilities contract](./specs/pa-agent-essential-capabilities-product-spec.md), without the retired opt-in gate. A user-opened, source-backed insight may prepare its bounded association action for preview/confirmation; the separate Panel save action also requires preview/confirmation. Multi-file, judgment-heavy, or uncertain work moves to Chat with visible context. DEC-051 permits current explicit modification requests in Chat to execute without a second confirmation; merely opening or staging a proposal never authorizes execution. No background writes. **[CHANGED — DEC-037 / DEC-051]**
+8. **Narrow write boundary.** Pagelet keeps Deep Discover read-only. Basic Chat Operations follow the [essential-capabilities contract](./specs/pa-agent-essential-capabilities-product-spec.md), without the retired opt-in gate. DEC-075 retires Pagelet's dedicated association chain; the separate Panel save action retains preview/confirmation. Modification requests move to Chat with visible context. DEC-051 permits current explicit modification requests in Chat to execute without a second confirmation; merely opening or staging a proposal never authorizes execution. No background writes. **[CHANGED — DEC-037 / DEC-051 / DEC-075]**
 
 9. **Quiet and non-intrusive.** Pagelet's voice and presence prioritise calm. No urgency, no interruption, no claim of being indispensable. The Pet never pops up a modal, plays a sound, or demands attention. **[PRESERVED]**
 
@@ -1204,8 +1210,8 @@ Current Deep Discover boundaries, reviewed against source on 2026-10-06:
   not automatically create, modify or delete vault notes.
 - Panel saving remains available: it creates a separate note in the configured
   review folder through the Write Action Framework's preview/confirmation,
-  choosing a non-colliding path. Pagelet's bounded association action also
-  stages a preview and requires its own confirmation before writing.
+  choosing a non-colliding path. DEC-075 retires the separate Pagelet association
+  action and its dedicated staging/confirmation flow; saved `pa-related` data remains.
 - Chat handoff opens a fresh conversation with visible context and a suggested
   question, without sending it. Busy Chat or an existing draft blocks handoff.
   A clear current modification request in Chat may execute under DEC-051;
@@ -1239,27 +1245,24 @@ Implementation sources: [Deep Discover integration](../../src/pagelet/plugin-dee
 | Pet click / tap | Mascot click opens side panel | Unseen delivery or required explanation opens Bubble; acknowledged Ready Empty or Intentionally Quiet opens Capture / Review / Discover / Share Action Ring |
 | Pet long press | N/A | A 520 ms hold opens the same Capture / Review / Discover / Share Action Ring without consuming a pending nudge |
 | Hotkey | User-configurable, opens panel | User-configurable, opens Bubble |
-| Command palette | `Pagelet: Review current note`, `Pagelet: Open Pagelet`, `Pagelet: Toggle mascot visibility` | Current commands are preserved where registered + new commands (see below) |
+| Command palette | `Pagelet: Review current note`, `Pagelet: Open Pagelet`, `Pagelet: Toggle mascot visibility` | Current retained commands and the scoped DEC-075 retirements below |
 | Proactive hints | N/A | Generic/Quiet Recall hints default off and can enter `nudge` only after opt-in; DEC-018 separately governs high-value Recap hints |
 
-New Pagelet commands (command palette, registered with `Pagelet:` prefix per D029):
+Retained Pagelet commands (command palette, registered with `Pagelet:` prefix per D029):
 
-- `Pagelet: Quick review` — preserved alias for the current explicit Deep Discover
-  route, using the active Markdown anchor and existing admission/cache behavior.
-- `Pagelet: Open prepared review` — explicit Deep Discover compatibility entry under DEC-052; may invoke the provider and use API credits.
-  It reuses an eligible insight when available, otherwise follows current discovery
-  admission and displays the actual result; it does not open the retired raw cache.
-- `Pagelet: Discover connections` — uses the same explicit Deep Discover route;
-  allowed cross-note evidence is part of the current behavior.
+- `Pagelet: Discover connections` — explicit Deep Discover using the active Markdown
+  anchor and existing admission/cache behavior; allowed cross-note evidence remains available.
+- `Pagelet: Open Pagelet` — opens existing reading without triggering provider analysis.
 - `Pagelet: Toggle proactive hints` — toggles 主动提示 on/off.
-- `Pagelet: Show background preparation status` — shows background preparation engine diagnostics.
+- `Pagelet: Show background preparation status` — retains current discovery diagnostics; the old preload alias is retired.
 - `Pagelet: Move Pet to corner` — switches Pet corner position.
 - `Pagelet: Toggle Pet visibility` — replaces `Toggle mascot visibility`.
 
-Preserved historical design commands:
-
-- `Pagelet: Review current note` — preserved alias for the current explicit Deep Discover route.
-- `Pagelet: Open Pagelet` — preserved, opens Panel without triggering analysis; the empty panel offers `Review current note` as the explicit provider-backed action.
+DEC-075 retires `pa-pagelet:open-prepared-review`, `pa-pagelet:review-current`,
+`pa-pagelet:quick-review`, `pa-pagelet:quiet-recall`, `pa-pagelet:scope-recap`,
+`pa-pagelet:preload-status` and `pa-pagelet:clear-scope-recap-cache`. Previously bound
+hotkeys must be rebound by the user. Other current commands are unchanged; this list is
+not a new command-registration contract for unrelated entries.
 
 ---
 
@@ -1379,9 +1382,8 @@ app/device validation or performance measurement has passed; original historical
 evidence retains its own scope.
 
 **Current discovery and entry contracts**:
-- Quick Review, Review Current Note, Discover, Quiet Recall and Scope Recap
-  compatibility commands use explicit active-note Deep Discover. Open prepared
-  review uses that same route under DEC-052; Open Pagelet only opens the Panel.
+- Discover connections uses explicit active-note Deep Discover. DEC-075 retires the
+  five duplicate discovery aliases; Open Pagelet only opens existing reading.
 - Automatic discovery follows eligible note activity and respects its independent
   enable/disable setting. The current entry uses the 12/hour, 36/local-day
   automatic-run pool; explicit manual discovery does not consume that pool.
@@ -1405,8 +1407,8 @@ evidence retains its own scope.
 - Saving Panel findings creates a separate review note in the configured folder,
   with a non-colliding path and the existing preview/confirmation flow; discovery
   itself never saves notes automatically.
-- A Pagelet association action previews its current bounded proposal and requires
-  confirmation; execution reports the actual result and available Undo.
+- The retired Pagelet association chain does not reappear; existing metadata and
+  shared Chat Operations, including their actual result/Undo behavior, remain.
 - Chat handoff exposes context and a suggested question without sending them,
   and preserves a busy conversation or existing composer draft by declining handoff.
 - Clear current modification requests in Chat can execute under DEC-051.
@@ -1422,7 +1424,7 @@ evidence retains its own scope.
 
 **Product validation targets**:
 - In a real usage window, assess whether findings are useful and sources can be
-  verified, whether optional save/association actions match the visible proposal,
+  verified, whether optional save actions match the visible proposal,
   and whether handoff leaves the user in control of sending and modification.
 - Assess enabled automatic discovery and its disabled state without treating
   retired generic preload or prepared Scope Recap production as required passes.
@@ -1515,7 +1517,7 @@ Original decisions remain in [the historical decision record](../archive/review-
 | Decision | Topic | Pagelet Change | New Decision |
 | --- | --- | --- | --- |
 | D024 | Runtime (RunKindAdapter) | Historical adapter plan; current Deep Discover uses `PaAgentLoop` plus read-only `CapabilityRegistry` / `PolicyEngine` with `runKind="review"` | DEC-035 current route retirement |
-| D025 | Write path strategy | Discovery is read-only; Panel review-note saving and Pagelet association actions retain preview/confirmation, while current explicit Chat Operations follow DEC-051 | DEC-035 / DEC-051 |
+| D025 | Write path strategy | Discovery is read-only; Panel review-note saving retains preview/confirmation; DEC-075 retires the dedicated association chain while current explicit Chat Operations follow DEC-051 | DEC-035 / DEC-051 / DEC-075 |
 | D030 | Write path infrastructure | No current standalone Periodic Summary caller; future export must use the Write Action Framework | D035 superseded |
 
 ### Pagelet Decisions (D032+) — Current and Historical Scope
@@ -1581,13 +1583,13 @@ current Phase 2 acceptance work; their original decisions remain historical.
 ### Out Of Pagelet Scope / Operations Boundaries
 
 - Background append to daily/periodic notes.
-- Arbitrary suggestion-to-source-note edits outside the bounded Step 3 action.
+- Direct suggestion-to-source-note edits from Pagelet.
 - Convert selected suggestions into tasks.
 - Deeper Web research workflows.
 - More durable personalization after a separate privacy and product review.
 - Multi-vault awareness.
 
-These are not current Pagelet behaviors. B-101 Step 3 authorizes only the focused [Pagelet Operations SDD](../development/proposals/operations-agent/operations-agent-step3-sdd.md): one deterministic, single-file action after inline confirmation, or a complete-context handoff to Chat. Do NOT promote any other write or automation behavior without explicit owner authority and an updated current contract.
+These are not current Pagelet behaviors. The [B-101 Step 3 SDD](../development/proposals/operations-agent/operations-agent-step3-sdd.md) records the historical focused association action. DEC-075 retires that dedicated direct-action chain while preserving complete-context handoff to Chat, normal Panel saving and existing metadata. Do NOT promote other write or automation behavior without explicit owner authority and an updated current contract.
 
 Future product definition: [Pagelet Maintenance Review Product Spec](../archive/pagelet-maintenance-review-product-spec.md) defines the proposed Pagelet-owned maintenance review surface. It does not change current shipped behavior until the write boundary and implementation SDD are explicitly updated.
 

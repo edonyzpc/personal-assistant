@@ -100,7 +100,6 @@ const makeRuntimeHost = (overrides: {
                 graphPpr: false,
                 relaxedRecovery: false,
             },
-            operationsAgentEnabled: false,
             operationsProactiveSaveSuggestionsEnabled: false,
             operationsAuditIncludeContent: false,
             operationsAuditRetentionDays: 30,

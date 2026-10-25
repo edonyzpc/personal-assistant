@@ -282,7 +282,7 @@ function createPlugin(overrides: {
     baseURL?: string;
     qwenThinkingEnabled?: boolean;
     webSearchEnabled?: boolean;
-    operationsAgentEnabled?: boolean;
+    operationsAvailable?: boolean;
     licenseTier?: AgentCapabilityTier;
     skillContextEnabled?: boolean;
     enabledSkillIds?: string[];
@@ -306,7 +306,6 @@ function createPlugin(overrides: {
             policyModelName: overrides.policyModelName ?? '',
             embeddingModelName: 'text-embedding-3-small',
             memoryEnabled: true,
-            operationsAgentEnabled: overrides.operationsAgentEnabled ?? false,
             operationsProactiveSaveSuggestionsEnabled: true,
             statisticsVaultId: 'test-vault',
             ...(overrides.skillContextEnabled === undefined ? {} : { skillContextEnabled: overrides.skillContextEnabled }),
@@ -358,7 +357,7 @@ function createPlugin(overrides: {
         },
         log: jest.fn(),
         getAPIToken: jest.fn(async () => 'sk-SECRET_TOKEN_SENTINEL'),
-        isOperationsAgentEnabled: overrides.operationsAgentEnabled ?? false,
+        isOperationsAgentEnabled: overrides.operationsAvailable ?? false,
         getMemoryExtractionPromptContext: jest.fn(() => overrides.memoryExtractionPromptContext),
         agentRunCoordinator: overrides.agentRunCoordinator,
     };
@@ -2098,7 +2097,7 @@ describe('ChatService.streamLLM integration', () => {
             const stageIntent = jest.fn(async (input: StageOperationsIntentInput) => (
                 createPendingOperationsIntent(input)
             ));
-            const runtime = createRuntime(createPlugin({ operationsAgentEnabled: true }), false, {
+            const runtime = createRuntime(createPlugin({ operationsAvailable: true }), false, {
                 skillContextProvider: null,
                 maxWallClockMs: 100,
                 finalizationReserveMs: 30,
@@ -2181,7 +2180,7 @@ describe('ChatService.streamLLM integration', () => {
         const stageIntent = jest.fn(async (input: StageOperationsIntentInput) => (
             createPendingOperationsIntent(input)
         ));
-        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const plugin = createPlugin({ operationsAvailable: true });
         const runtime = createRuntime(plugin, false, {
             skillContextProvider: null,
             operationsIntentController: { stageIntent },
@@ -2280,7 +2279,7 @@ describe('ChatService.streamLLM integration', () => {
             const stageIntent = jest.fn(async (input: StageOperationsIntentInput) => (
                 createPendingOperationsIntent(input)
             ));
-            const runtime = createRuntime(createPlugin({ operationsAgentEnabled: true }), false, {
+            const runtime = createRuntime(createPlugin({ operationsAvailable: true }), false, {
                 skillContextProvider: null,
                 maxWallClockMs: 100,
                 finalizationReserveMs: 30,
@@ -3352,7 +3351,7 @@ describe('ChatService.streamLLM integration', () => {
         const model = createStreamModel('Discussed without writing.', (input) => modelInputs.push(input));
         mockCreateChatModel.mockResolvedValue(model);
         const { context: pageletHandoff, ...sources } = await createPageletSourceFixture(true);
-        const plugin = createPlugin({ operationsAgentEnabled: true, webSearchEnabled: true, ...sources });
+        const plugin = createPlugin({ operationsAvailable: true, webSearchEnabled: true, ...sources });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
         const metadata = jest.fn();
 
@@ -3492,7 +3491,7 @@ describe('ChatService.streamLLM integration', () => {
     it('reuses an injected surface session provider and disposes that session with Chat', async () => {
         const model = createStreamModel('Done.');
         mockCreateChatModel.mockResolvedValue(model);
-        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const plugin = createPlugin({ operationsAvailable: true });
         const provider = new OperationsToolProvider();
         const load = jest.spyOn(provider, 'load');
         const dispose = jest.fn();
@@ -3608,7 +3607,7 @@ describe('ChatService.streamLLM integration', () => {
         const modelInputs: Record<string, string>[] = [];
         const model = createStreamChunksModel([{ content: 'ordinary answer' }], input => modelInputs.push(input));
         mockCreateChatModel.mockResolvedValue(model);
-        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const plugin = createPlugin({ operationsAvailable: true });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
 
         const staged: OperationsIntent[] = [];
@@ -3628,7 +3627,7 @@ describe('ChatService.streamLLM integration', () => {
         expect(staged).toEqual([]);
     });
 
-    it.each(['off', 'revoked'] as const)('rejects a model-proposed Operations action when opt-in is %s', async (mode) => {
+    it.each(['unavailable', 'revoked'] as const)('rejects a model-proposed Operations action when live availability is %s', async (mode) => {
         let modelTurn = 0;
         const model = {
             bindTools: jest.fn(() => model),
@@ -3637,7 +3636,6 @@ describe('ChatService.streamLLM integration', () => {
                 if (modelTurn === 1) {
                     if (mode === 'revoked') {
                         plugin.isOperationsAgentEnabled = false;
-                        plugin.settings.operationsAgentEnabled = false;
                     }
                     yield {
                         tool_call_chunks: [{
@@ -3656,7 +3654,7 @@ describe('ChatService.streamLLM integration', () => {
             }),
         };
         mockCreateChatModel.mockResolvedValue(model);
-        const plugin = createPlugin({ operationsAgentEnabled: mode === 'revoked' });
+        const plugin = createPlugin({ operationsAvailable: mode === 'revoked' });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
         const staged: OperationsIntent[] = [];
         const events: CanonicalAgentEvent[] = [];
@@ -3680,7 +3678,7 @@ describe('ChatService.streamLLM integration', () => {
         const modelInputs: Record<string, string>[] = [];
         const model = createStreamChunksModel([{ content: 'proposal ready' }], input => modelInputs.push(input));
         mockCreateChatModel.mockResolvedValue(model);
-        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const plugin = createPlugin({ operationsAvailable: true });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
 
         await service.streamLLM('Use the current note only and save this conclusion to this note.', jest.fn());
@@ -3730,7 +3728,7 @@ describe('ChatService.streamLLM integration', () => {
             }),
         };
         mockCreateChatModel.mockResolvedValue(model);
-        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const plugin = createPlugin({ operationsAvailable: true });
         const files = new Map<string, { path: string }>();
         const vault = plugin.app.vault as typeof plugin.app.vault & {
             adapter: {
@@ -3822,7 +3820,7 @@ describe('ChatService.streamLLM integration', () => {
     });
 
     it('rejects a prepared apply intent when the setting is revoked before execution', async () => {
-        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const plugin = createPlugin({ operationsAvailable: true });
         const vault = plugin.app.vault as typeof plugin.app.vault & {
             adapter: { exists: jest.Mock<(path: string) => Promise<boolean>> };
             create: jest.Mock;
@@ -3865,7 +3863,7 @@ describe('ChatService.streamLLM integration', () => {
     });
 
     it('constructs the fallback Operations service without touching historical audit paths', async () => {
-        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const plugin = createPlugin({ operationsAvailable: true });
         const vault = plugin.app.vault as typeof plugin.app.vault & {
             adapter: {
                 exists: jest.Mock<(path: string) => Promise<boolean>>;

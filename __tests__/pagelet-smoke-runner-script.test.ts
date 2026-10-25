@@ -5,7 +5,7 @@ import { describe, expect, it } from '@jest/globals';
 
 const runner = readFileSync(resolve(__dirname, '../scripts/pagelet-smoke-runner.js'), 'utf8');
 
-async function settingsPreflight(settings: Record<string, unknown>) {
+async function settingsPreflight(settings: Record<string, unknown>, extraCommands: Record<string, unknown> = {}) {
     let report: { checks: Array<{ name: string; status: string }> } | undefined;
     const context = {
         app: {
@@ -15,7 +15,7 @@ async function settingsPreflight(settings: Record<string, unknown>) {
                 adapter: { write: async (_path: string, content: string) => { report = JSON.parse(content); } },
             },
             commands: {
-                commands: { 'personal-assistant:pa-pagelet:discover-connections': {} },
+                commands: { 'personal-assistant:pa-pagelet:discover-connections': {}, ...extraCommands },
                 // This test covers the executable settings preflight. Real
                 // panel and Memory behavior are covered by the App smoke gate.
                 executeCommandById: () => { throw new Error('End of settings preflight fixture.'); },
@@ -37,11 +37,11 @@ describe('Pagelet smoke settings preflight', () => {
             name: 'Command registered: pa-pagelet:discover-connections', status: 'PASS',
         }));
         expect(checks.filter((check) => check.name.startsWith('Retired setting absent:')
-            || check.name.startsWith('Retired Pagelet setting absent:'))).toHaveLength(5);
+            || check.name.startsWith('Retired Pagelet setting absent:'))).toHaveLength(6);
         expect(checks.filter((check) => check.name.includes('setting absent:')).every((check) => check.status === 'PASS')).toBe(true);
     });
 
-    it.each(['preloadEnabled', 'deepDiscoverEnabled', 'memoryAutoCheckBeforeChat', 'skillContextEnabled', 'enabledSkillIds'])(
+    it.each(['preloadEnabled', 'deepDiscoverEnabled', 'memoryAutoCheckBeforeChat', 'skillContextEnabled', 'enabledSkillIds', 'operationsAgentEnabled'])(
         'reports a resurrected %s setting even when its value is false', async (key) => {
             const pagelet = { enabled: true, backgroundDiscoveryEnabled: true };
             const settings = { pagelet };
@@ -53,6 +53,15 @@ describe('Pagelet smoke settings preflight', () => {
             }));
         },
     );
+
+    it.each([false, true])('detects whether a retired discovery alias remains registered: %s', async (registered) => {
+        const checks = await settingsPreflight({ pagelet: { enabled: true, backgroundDiscoveryEnabled: true } },
+            registered ? { 'personal-assistant:pa-pagelet:review-current': {} } : {});
+        expect(checks).toContainEqual(expect.objectContaining({
+            name: 'Retired command absent: pa-pagelet:review-current',
+            status: registered ? 'FAIL' : 'PASS',
+        }));
+    });
 });
 
 type D6Capability = unknown | (() => unknown);

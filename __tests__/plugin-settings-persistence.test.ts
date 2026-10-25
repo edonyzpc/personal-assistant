@@ -148,7 +148,7 @@ describe("B-143 settings persistence owner", () => {
 
         await owner.loadSettings();
 
-        expect(owner.currentSettings.operationsAgentEnabled).toBe(true);
+        expect(owner.currentSettings).not.toHaveProperty("operationsAgentEnabled");
         expect(owner.currentSettings).not.toHaveProperty("operationsAuditIncludeContent");
         expect(owner.currentSettings).not.toHaveProperty("operationsAuditRetentionDays");
         expect(saveData).not.toHaveBeenCalled();

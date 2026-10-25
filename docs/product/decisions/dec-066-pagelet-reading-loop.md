@@ -2,9 +2,16 @@
 
 Decision ID: DEC-066
 Status: Accepted
-Updated: 2026-10-24
+Updated: 2026-10-25
 Authority: 用户认可第二轮行为并于 2026-10-16 要求独立方案与 SDD，随后授权开发测试、评审修复及本地 master 提交；2026-10-24 明确授权已完成记录收尾和归档。历史授权不授予新的 Git/release 操作。
 Work item: B-176
+
+## 2026-10-25 Scoped Successor
+
+[DEC-075](./dec-075-legacy-surface-cleanup.md) 接续本文的旧命令兼容约定，并删除无
+生产生成方的 Pagelet 专用关联链。阅读、完整成果继续讨论、来源准入和共用
+handoff 取消/失效保护仍按本决定保留；不扩大或回写第二轮历史验证。
+实施证据见 [B-189 Tracker](../../development/active/legacy-surface-cleanup/tracker.md)。
 
 ## Context
 

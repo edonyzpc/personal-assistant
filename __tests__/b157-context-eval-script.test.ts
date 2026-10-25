@@ -76,7 +76,7 @@ function offlineServicePlugin(reply: (body: any, index: number) => any, configur
     const bodies: any[] = [];
     const plugin: any = { manifest: { version: 'synthetic-version' }, settings: {
         aiProvider: 'qwen', chatModelName: 'synthetic-model', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-        qwenThinkingEnabled: false, licenseTier: 'paid', writingOutputProtocol: 'native', operationsAgentEnabled: false,
+        qwenThinkingEnabled: false, licenseTier: 'paid', writingOutputProtocol: 'native',
     }, createChatService() {
         const service: any = new ChatService({ settings: plugin.settings, app: harness.createSyntheticApp(),
             isOperationsAgentEnabled: false, getAPIToken: async () => 'synthetic-placeholder', log: () => undefined } as any);
@@ -1345,7 +1345,7 @@ describe('B157 independent context harness contracts (offline)', () => {
             expect({ status: report.status, error: report.error }).toEqual({ status: 'recorded_for_review', error: null });
             const episode = report.results[0];
             expect(episode.operationsCapability).toMatchObject({ originalEnabled: false, controlledEnabled: true });
-            expect(setup.plugin.settings.operationsAgentEnabled).toBe(false);
+            expect(setup.plugin.createChatService().host.isOperationsAgentEnabled).toBe(false);
             expect(setup.bodies[0].tools?.some((tool: any) => tool?.function?.name === 'vault_append')).toBe(false);
             expect(deferredDirectoryNames(setup.bodies[0])).toContain('vault_append');
             expect(episode.confirmations).toEqual([]);
@@ -1394,7 +1394,7 @@ describe('B157 independent context harness contracts (offline)', () => {
     it('isolates native history and preparation ports, creates the owned root, and awaits disposal before database deletion', async () => {
         const setup = offlineServicePlugin(() => { throw new Error('NO_MODEL_CALL_ALLOWED'); });
         const privateStylePreparation = jest.fn(() => { throw new Error('PRIVATE_STYLE_MUST_NOT_BE_READ'); });
-        const originalHost: any = { settings: { ...setup.plugin.settings, operationsAgentEnabled: false }, writingOutputProtocol: 'native',
+        const originalHost: any = { settings: { ...setup.plugin.settings }, writingOutputProtocol: 'native', isOperationsAgentEnabled: false,
             get chatHistoryManager() { throw new Error('ORIGINAL_HISTORY_MUST_NOT_BE_READ'); },
             prepareWritingStyleForScene: privateStylePreparation,
             memoryStatus: { prepareFromCommand: () => { throw new Error('ORIGINAL_MEMORY_MUST_NOT_RUN'); } } };
@@ -1422,7 +1422,7 @@ describe('B157 independent context harness contracts (offline)', () => {
             expect(await host.chatHistoryManager.listConversations()).toEqual([]);
             expect(host.chatHistoryManager.isAvailable()).toBe(true);
             expect(host.isOperationsAgentEnabled).toBe(true);
-            expect(setup.plugin.settings.operationsAgentEnabled).toBe(false);
+            expect(originalHost.isOperationsAgentEnabled).toBe(false);
             expect(await host.prepareWritingStyleForScene({ writingTask: 'copywriting', purpose: 'social_share',
                 audience: 'friends', domain: 'travel' }, { remainingTextChars: 6000, remainingMemoryChars: 6000 }))
                 .toMatchObject({ context: '', revisionIds: [] });

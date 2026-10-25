@@ -16,21 +16,22 @@
   const PLUGIN_ID = "personal-assistant";
   const COMMAND_IDS = [
     "pa-pagelet:open-panel",
-    "pa-pagelet:open-prepared-review",
-    "pa-pagelet:review-current",
-    "pa-pagelet:quick-review",
     "pa-pagelet:discover-connections",
     "pa-pagelet:maintenance-review",
-    "pa-pagelet:quiet-recall",
     "pa-pagelet:graph-discovery",
-    "pa-pagelet:scope-recap",
     "pa-pagelet:toggle-proactive-hints",
-    "pa-pagelet:preload-status",
     "pa-pagelet:background-preparation-status",
     "pa-pagelet:move-pet-corner",
     "pa-pagelet:toggle-pet-visibility",
   ];
   const RETIRED_COMMAND_IDS = [
+    "pa-pagelet:open-prepared-review",
+    "pa-pagelet:review-current",
+    "pa-pagelet:quick-review",
+    "pa-pagelet:quiet-recall",
+    "pa-pagelet:scope-recap",
+    "pa-pagelet:preload-status",
+    "pa-pagelet:clear-scope-recap-cache",
     "pa-pagelet:weekly-review",
     "pa-pagelet:periodic-summary",
   ];
@@ -217,7 +218,7 @@
     for (const key of ["preloadEnabled", "deepDiscoverEnabled"]) {
       assert(`Retired Pagelet setting absent: ${key}`, !Object.hasOwn(plugin?.settings?.pagelet || {}, key));
     }
-    for (const key of ["memoryAutoCheckBeforeChat", "skillContextEnabled", "enabledSkillIds"]) {
+    for (const key of ["memoryAutoCheckBeforeChat", "skillContextEnabled", "enabledSkillIds", "operationsAgentEnabled"]) {
       assert(`Retired setting absent: ${key}`, !Object.hasOwn(plugin?.settings || {}, key));
     }
 

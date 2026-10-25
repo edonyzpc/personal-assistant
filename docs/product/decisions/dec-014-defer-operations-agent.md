@@ -2,9 +2,18 @@
 
 Decision ID: DEC-014
 Status: Accepted
-Updated: 2026-10-05
+Updated: 2026-10-25
 Authority: Owner 于 2026-08-01 授权 B-101 Step 2 与 Step 3；两步均已交付，本记录限定 Operations Agent 的用户开放与 write/action 边界。
 Work item: B-101
+
+## 2026-10-25 Scoped Successor
+
+[DEC-075](./dec-075-legacy-surface-cleanup.md) 接续旧 `operationsAgentEnabled` 设置链和
+无生产生成方的 Pagelet 专用关联流程：退役其专用界面、stage/confirm/cancel/undo
+及会话接线。共享 Chat Operations 的 live availability、写权限、来源、正常恢复和
+proactive save suggestions 保留；完整 Pagelet 成果继续交给 Chat，历史 `pa-related`
+不清理。下文旧开放方式和 Pagelet 关联交付仍是历史事实，不是恢复该专用链的要求。
+本轮实施与证据见 [B-189 Tracker](../../development/active/legacy-surface-cleanup/tracker.md)。
 
 ## 2026-09-30 Scoped Successor
 

@@ -1254,29 +1254,6 @@ export function renderPageletPreferences(
                 .setValue(settings.proactiveHints)
                 .onChange((value) => saveOnChange(() => { settings.proactiveHints = value; })));
 
-    // The retained hint preference does not control provider preparation.
-    factory.create(detailsBodyEl)
-        .setName(t("pagelet.settings.scopeRecapHints.name"))
-        .setDesc(t("pagelet.settings.scopeRecapHints.desc"))
-        .addToggle((toggle) =>
-            toggle
-                .setValue(settings.scopeRecapHighValueHints)
-                .onChange((value) => saveOnChange(() => {
-                    settings.scopeRecapHighValueHints = value;
-                })));
-
-    // ── Quiet Recall (SG-01) ─────────────────────────────────────────
-    factory.create(detailsBodyEl)
-        .setName(t("pagelet.settings.quietRecallMode.name"))
-        .setDesc(t("pagelet.settings.quietRecallMode.desc"))
-        .addToggle((toggle) => {
-            toggle
-                .setValue(host.settings.quietRecall.quietRecallMode === "on")
-                .onChange((value) => saveOnChange(() => {
-                    host.settings.quietRecall.quietRecallMode = value ? "on" : "off";
-                }));
-        });
-
     // ── Quiet Hours ───────────────────────────────────────────────────
     factory.create(detailsBodyEl)
         .setName(t("pagelet.settings.quietHoursEnabled.name"))

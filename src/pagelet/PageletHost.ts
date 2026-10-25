@@ -17,12 +17,6 @@ import type {
     PageletChatHandoffContext,
     PageletChatHandoffPreparationResult,
 } from "../ai-services/pagelet-handoff";
-import type {
-    OperationsExecutionResult,
-    OperationsIntent,
-    UndoResult,
-} from "../ai-services/operations/types";
-
 import type { PetCorner } from "./pet/types";
 import type { PageletAttentionStorage } from "./attention";
 import type { GeneratedReviewNote } from "./output/types";
@@ -212,28 +206,6 @@ export interface PageletHost {
         signal?: AbortSignal,
     ): Promise<boolean>;
 
-    /** Live per-vault Operations gate used only to decide whether to show direct actions. */
-    isOperationsAvailable?(): boolean;
-
-    /** Stage (but never execute) the deterministic one-way Pagelet related-note action. */
-    stagePageletInsightLink?(input: {
-        candidateId: string;
-        anchorPath: string;
-        sourcePath: string;
-    }, signal?: AbortSignal): Promise<OperationsIntent>;
-
-    /** Execute an already staged Pagelet Operations intent after inline confirmation. */
-    confirmPageletOperationsIntent?(intentId: string): Promise<OperationsExecutionResult>;
-
-    /** Cancel an unconfirmed Pagelet Operations intent. */
-    cancelPageletOperationsIntent?(intentId: string): void;
-
-    /** Undo successful Pagelet Operations receipts through the shared executor. */
-    undoPageletOperationsReceipts?(receiptIds: readonly string[]): Promise<UndoResult[]>;
-
-    /** Consume one counted, short-lived Pagelet self-write vault event. */
-    consumePageletOperationsSelfWrite?(path: string): boolean;
-
     /** Open a new Chat with a visible, context-only Pagelet attachment. */
     openPageletChatHandoff?(
         context: PageletChatHandoffContext,
@@ -285,9 +257,6 @@ export interface PageletHost {
     revealPageletDetailViewForPath?(path: string): Promise<boolean>;
     /** Project a per-note new-results cue onto any live Detail for that note. */
     markPageletDetailNewResults?(path: string, hasNewResults: boolean): void;
-
-    /** Evict only Scope Recap-derived payloads from the in-memory detail cache. */
-    clearScopeRecapDetailSessionCache?(): void;
 
     /** Find semantically related notes via VSS hybrid search. */
     findRelatedNotes(

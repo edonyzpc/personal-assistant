@@ -7,7 +7,6 @@ import { QuietRecallPluginIntegration } from "../../src/pagelet/plugin-quiet-rec
 import { ScopeRecapPluginIntegration } from "../../src/pagelet/plugin-scope-recap";
 import { DeepDiscoverPluginIntegration } from "../../src/pagelet/plugin-deep-discover";
 import { RetainedReviewPluginIntegration } from "../../src/pagelet/plugin-review-actions";
-import { PageletOperationsPluginIntegration } from "../../src/pagelet/plugin-operations-integration";
 import { PageletFeatureIntegration } from "../../src/pagelet/plugin-integration";
 import { PageletOrchestrator } from "../../src/pagelet/orchestrator";
 import { ChatPluginIntegration } from "../../src/chat/plugin-integration";
@@ -425,17 +424,6 @@ export function createPluginHarness(options: PluginHarnessOptions = {}): PluginH
         getRateLimitStorageKey: (scope) => plugin.pageletRateLimitStorageKey("foreground-review", scope),
         log: (message, detail) => plugin.log(message, detail),
     });
-    plugin.pageletOperationsIntegration = new PageletOperationsPluginIntegration({
-        vault: {
-            get read() { return plugin.app.vault.read.bind(plugin.app.vault); },
-            get getAbstractFileByPath() { return plugin.app.vault.getAbstractFileByPath.bind(plugin.app.vault); },
-        },
-        isOperationsAgentEnabled: () => plugin.isOperationsAgentEnabled,
-        isPathAllowed: (path) => plugin.isPageletProviderPathAllowed(path),
-        createSession: (options) => plugin.getOperationsService().createSession(options),
-        now: () => Date.now(),
-        log: (message, detail) => plugin.log(message, detail),
-    });
     plugin.pageletIntegration = new PageletFeatureIntegration({
         createFeatureScope: () => plugin.createPageletFeatureScope(),
         releaseFeatureScope: (expectedScope) => plugin.releasePageletFeatureScope(expectedScope),
@@ -452,7 +440,6 @@ export function createPluginHarness(options: PluginHarnessOptions = {}): PluginH
         invalidateRetainedReviewLimiter: () => plugin.retainedReviewIntegration.invalidateLimiter(),
         disposeScopeRecap: () => plugin.scopeRecapIntegration.dispose(),
         disposeQuietRecall: () => plugin.quietRecallIntegration.dispose(),
-        retireOperations: () => plugin.pageletOperationsIntegration.disposeFeature(),
         createRuntime: () => null,
         log: (message, detail) => plugin.log(message, detail),
     });

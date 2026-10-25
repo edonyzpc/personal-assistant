@@ -61,15 +61,6 @@ export function clearPageletDetailSessionCache(): void {
     pageletDetailSessionCounter = 0;
 }
 
-/** Clear only cached Scope Recap detail payloads, preserving other Pagelet sessions. */
-export function clearScopeRecapPageletDetailSessionCache(): void {
-    for (const [sessionId, payload] of pageletDetailSessionCache) {
-        if (payload.entryReason === "scope-recap") {
-            pageletDetailSessionCache.delete(sessionId);
-        }
-    }
-}
-
 function createPageletDetailSessionId(): string {
     const cryptoProvider = getPlatformCrypto();
     if (typeof cryptoProvider?.randomUUID === "function") {
@@ -416,7 +407,6 @@ export class PageletDetailView extends ItemView {
     }>;
     private readonly onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>;
     private readonly onLinkQuietRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<{ ok: boolean; message: string }>;
-    private readonly onOpenSettings?: () => void;
     private readonly memoryCallbacks: PageletMemoryLifecycleCallbacks;
     private renderer: TabView | null = null;
     private title: string;
@@ -444,7 +434,6 @@ export class PageletDetailView extends ItemView {
         }>,
         onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>,
         onLinkQuietRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<{ ok: boolean; message: string }>,
-        onOpenSettings?: () => void,
         memoryCallbacks: PageletMemoryLifecycleCallbacks = {},
         onViewClosed?: (view: PageletDetailView) => void,
     ) {
@@ -458,7 +447,6 @@ export class PageletDetailView extends ItemView {
         this.onForgetConfirmedMemory = onForgetConfirmedMemory;
         this.onSaveQuietRecallAsInsight = onSaveQuietRecallAsInsight;
         this.onLinkQuietRecallCandidate = onLinkQuietRecallCandidate;
-        this.onOpenSettings = onOpenSettings;
         this.memoryCallbacks = memoryCallbacks;
         this.onViewClosed = onViewClosed;
         this.locale = getLocale();
@@ -530,7 +518,6 @@ export class PageletDetailView extends ItemView {
             onOpenMemorySettings: this.memoryCallbacks.onOpenMemorySettings,
             onSaveQuietRecallAsInsight: this.onSaveQuietRecallAsInsight,
             onLinkRecallCandidate: this.onLinkQuietRecallCandidate,
-            onOpenSettings: this.onOpenSettings,
         });
         this.renderer.mount(this.contentEl);
         this.renderer.setDisplayed(this.isViewDisplayed());

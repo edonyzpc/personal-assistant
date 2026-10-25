@@ -61,19 +61,11 @@ describe("Operations Agent direct runtime", () => {
     it("loads direct Operations and move without an execution handoff", async () => {
         const provider = new OperationsToolProvider();
 
-        await expect(provider.load(providerContext(false))).resolves.toMatchObject({
-            status: "available",
-            capabilities: [...CORE_WRITE_TOOL_NAMES].map(() => expect.anything()),
-        });
-        const loaded = await provider.load(providerContext(true));
+        const loaded = await provider.load(providerContext());
 
         expect(loaded.status).toBe("available");
         expect(loaded.capabilities.map((capability) => capability.name))
             .toEqual([...CORE_WRITE_TOOL_NAMES]);
-        await expect(provider.load(providerContext(false))).resolves.toMatchObject({
-            status: "available",
-            capabilities: [...CORE_WRITE_TOOL_NAMES].map(() => expect.anything()),
-        });
         expect(loaded.capabilities.every((capability) => (
             capability.kind === "action"
             && capability.permission === "local-filesystem-write"
@@ -124,18 +116,17 @@ describe("Operations Agent direct runtime", () => {
     it.each([
         ["default Chat staging", {}],
         ["explicit chat-with-actions", { runKind: "chat-with-actions" as const }],
-    ])("proposes the four writes with a live controller even when raw legacy Operations is false (%s)", async (_label, policyOptions) => {
+    ])("proposes the four writes with a live controller (%s)", async (_label, policyOptions) => {
         const fixture = operationsRuntimeFixture("Create notes/new.md with # Result", [
             toolCall("create", "vault_create", { path: "notes/new.md", content: "# Result" }, 0),
         ], {
-            operationsAgentEnabled: false,
             policyOptions,
         });
         try {
             await fixture.run();
 
             expect(fixture.boundToolNames[0]).toContain("load_tools");
-            const visibleWrites = (await fixture.operationsSession.provider.load(providerContext(true))).capabilities
+            const visibleWrites = (await fixture.operationsSession.provider.load(providerContext())).capabilities
                 .filter(capability => capability.sdkOnly !== true).map(capability => capability.name);
             expect(deferredNames(fixture.providerInputs[0]))
                 .toEqual(expect.arrayContaining(visibleWrites));
@@ -159,7 +150,7 @@ describe("Operations Agent direct runtime", () => {
             await fixture.run();
 
             expect(fixture.boundToolNames[1]).toContain("load_tools");
-            const visibleWrites = (await fixture.operationsSession.provider.load(providerContext(true))).capabilities
+            const visibleWrites = (await fixture.operationsSession.provider.load(providerContext())).capabilities
                 .filter(capability => capability.sdkOnly !== true).map(capability => capability.name);
             expect(deferredNames(fixture.providerInputs[1]))
                 .toEqual(expect.arrayContaining(visibleWrites));
@@ -323,7 +314,6 @@ describe("Operations Agent direct runtime", () => {
         const fixture = operationsRuntimeFixture("Create notes/new.md with # Result", [
             toolCall("create", "vault_create", { path: "notes/new.md", content: "# Result" }, 0),
         ], {
-            operationsAgentEnabled: false,
             policyOptions,
         });
         try {
@@ -342,7 +332,6 @@ describe("Operations Agent direct runtime", () => {
         const fixture = operationsRuntimeFixture("Create notes/new.md with # Result", [
             toolCall("create", "vault_create", { path: "notes/new.md", content: "# Result" }, 0),
         ], {
-            operationsAgentEnabled: false,
             operationsController: false,
         });
         try {
@@ -361,7 +350,6 @@ describe("Operations Agent direct runtime", () => {
         const fixture = operationsRuntimeFixture("Create notes/new.md with # Result", [
             toolCall("create", "vault_create", { path: "notes/new.md", content: "# Result" }, 0),
         ], {
-            operationsAgentEnabled: false,
             operationsHostUnavailable: true,
         });
         try {
@@ -521,7 +509,6 @@ describe("Operations-independent first-turn read capabilities", () => {
     it("exposes the fixed Memory action when the host action port is present", async () => {
         const prompt = "Remember that I prefer blue cards.";
         const fixture = operationsRuntimeFixture(prompt, [], {
-            operationsAgentEnabled: false,
             operationsController: false,
             memoryActions: true,
         });
@@ -540,7 +527,6 @@ describe("Operations-independent first-turn read capabilities", () => {
             toolCall("query", "query_notes", { path: "notes/other.md", limit: 1 }, 0),
             toolCall("read", "read_note", { path: "notes/other.md" }, 1),
         ], {
-            operationsAgentEnabled: false,
             operationsController: false,
             additionalCapabilityProviders: [availableWebSearchProvider()],
         });
@@ -592,7 +578,6 @@ describe("Operations-independent first-turn read capabilities", () => {
         const fixture = operationsRuntimeFixture("Read notes/other.md.", [
             toolCall("read", "read_note", { path: "notes/other.md" }, 0),
         ], {
-            operationsAgentEnabled: false,
             operationsController: false,
             additionalCapabilityProviders: [new BuiltinWebSearchProvider({
                 policy: createBailianWebSearchNetworkPolicy(),
@@ -885,7 +870,6 @@ interface OperationsRuntimeFixtureOptions {
     onFinalAnswerRequest?: () => void;
     nextToolCalls?: (input: unknown, modelTurn: number) => readonly ParsedBufferedToolCall[] | undefined;
     finalText?: string;
-    operationsAgentEnabled?: boolean;
     operationsHostUnavailable?: boolean;
     operationsController?: boolean;
     memoryActions?: boolean;
@@ -962,7 +946,7 @@ function operationsRuntimeFixture(
             : { frontmatter: { status: "active" } };
     });
     const host = createAiServiceHost({
-        settings: { memoryEnabled: false, operationsAgentEnabled: fixtureOptions.operationsAgentEnabled ?? true },
+        settings: { memoryEnabled: false },
         app: {
             vault,
             workspace: {
@@ -1072,11 +1056,11 @@ function expectNoSourceReadsOrWrites(fixture: ReturnType<typeof operationsRuntim
     expect(JSON.stringify(fixture.providerInputs)).not.toContain("PRIVATE OTHER NOTE BODY");
 }
 
-function providerContext(enabled: boolean) {
+function providerContext() {
     return {
         turnId: "turn-1",
         platform: "desktop" as const,
-        settings: { operationsAgentEnabled: enabled },
+        settings: {},
     };
 }
 
@@ -1104,7 +1088,7 @@ async function operationsRegistry(): Promise<CapabilityRegistry> {
             allowedActionPermissions: ["local-filesystem-write"],
         }),
     });
-    const loaded = await new OperationsToolProvider().load(providerContext(true));
+    const loaded = await new OperationsToolProvider().load(providerContext());
     registry.registerMany(loaded.capabilities);
     return registry;
 }

@@ -524,7 +524,7 @@ reasoning or impose a new round/time limit to decide task completion.
 
 ### Operations Agent providers
 
-`OPERATIONS_AGENT_RUNTIME_ENABLED=true` is a build-availability gate, not user consent. With a live controller and eligible policy, the same main Agent may call `vault_create`, `vault_append`, `vault_process`, `frontmatter_update`, `remove_note_image`, and `vault_move` according to the user's goal. Each call requires `mode: apply | preview`; the old persisted `operationsAgentEnabled` value no longer gates planning or admission. There is no separate local write-intent classifier or old append/selection action. New catalogs do not expose `execute_operations`; historical names remain interpretable without reviving execution authority. See [DEC-063](../product/decisions/dec-063-direct-operations-and-native-move.md) and the [Product Spec](../product/specs/pa-direct-operations-product-spec.md).
+`OPERATIONS_AGENT_RUNTIME_ENABLED=true` is a build-availability gate, not user consent. With a live controller and eligible policy, the same main Agent may call `vault_create`, `vault_append`, `vault_process`, `frontmatter_update`, `remove_note_image`, and `vault_move` according to the user's goal. Each call requires `mode: apply | preview`. [DEC-075](../product/decisions/dec-075-legacy-surface-cleanup.md) retires the old `operationsAgentEnabled` settings chain, which no longer gates planning or admission; live availability methods, independent write permissions, proactive save suggestions and history remain. Existing settings canonicalization may remove only this deprecated key while preserving other data. There is no separate local write-intent classifier or old append/selection action. New catalogs do not expose `execute_operations`; historical names remain interpretable without reviving execution authority. See [DEC-063](../product/decisions/dec-063-direct-operations-and-native-move.md) and the [Product Spec](../product/specs/pa-direct-operations-product-spec.md).
 
 Under [DEC-050](../product/decisions/dec-050-note-image-removal-and-undo.md),
 `remove_note_image` binds the original source authority, exact note reference and
@@ -693,13 +693,14 @@ The [B-154 validation record](../archive/2026/b154-note-change-review-validation
 retains local acceptance, build identity and device-evidence limits; it does not
 prove Git integration or release.
 
-The delivered Step 3 integration reuses the plugin-owned Operations provider
-with isolated Chat/Pagelet sessions. A user-opened, source-backed Pagelet Panel
-may stage only one deterministic `frontmatter_update` that adds a one-way
-`pa-related` link; complex or uncertain work carries the complete visible
-context into Chat without auto-sending or granting write authority. Every
-write outside the approved Operations tools and every broader Pagelet direct action
-remain closed. See [DEC-014](../product/decisions/dec-014-defer-operations-agent.md),
+The historical Step 3 integration used isolated Chat/Pagelet Operations sessions
+to stage a deterministic one-way `pa-related` link. [DEC-075](../product/decisions/dec-075-legacy-surface-cleanup.md)
+retires this Pagelet-only direct-action chain after its production producer was removed.
+Shared Chat Operations, existing `pa-related` metadata, normal reading/save flows and
+complete-context Chat handoff remain; handoff does not auto-send or grant write authority.
+Shared action tokens and cancellation checks still protect that handoff. Implementation
+and validation are tracked in [B-189](../development/active/legacy-surface-cleanup/tracker.md).
+The original delivery remains historical evidence in [DEC-014](../product/decisions/dec-014-defer-operations-agent.md),
 [Step 2 SDD](../development/proposals/operations-agent/operations-agent-step2-sdd.md),
 [Step 3 SDD](../development/proposals/operations-agent/operations-agent-step3-sdd.md),
 and [Write Action Framework](./write-action-framework-sdd.md).

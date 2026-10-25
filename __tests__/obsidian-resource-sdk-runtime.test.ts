@@ -347,7 +347,7 @@ describe("Obsidian Resource SDK runtime", () => {
         const session = service.createSession({ surface: "test" });
         const host = { settings: { debug: false, aiProvider: "qwen", baseURL: "https://example.invalid", chatModelName: "test-model",
             policyModelName: "", embeddingModelName: "", shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false,
-            webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid", operationsAgentEnabled: true },
+            webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid" },
             app: { vault, workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
                 metadataCache: { getFileCache: () => null, getCache: () => null } },
             memorySearch: { ensureReadyForChat: async () => ({ decision: "answer-now" }), searchHybrid: async () => [] },
@@ -462,7 +462,7 @@ describe("Obsidian Resource SDK runtime", () => {
         const file = { path: "notes/a.md", extension: "md", stat: { mtime: 0, size: 1 } };
         const host = { settings: { debug: false, aiProvider: "qwen", baseURL: "https://example.invalid", chatModelName: "test-model",
             policyModelName: "", embeddingModelName: "", shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false,
-            webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid", operationsAgentEnabled: false },
+            webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid" },
             app: { workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
                 vault: { getMarkdownFiles: () => [file], getAbstractFileByPath: (path: string) => path === file.path ? file : null,
                     cachedRead: read, read }, metadataCache: { getFileCache: () => null, getCache: () => null } },
@@ -548,7 +548,7 @@ describe("Obsidian Resource SDK runtime", () => {
         });
         const host = { settings: { debug: false, aiProvider: "qwen", baseURL: "https://example.invalid", chatModelName: "test-model",
             policyModelName: "", embeddingModelName: "", shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false,
-            webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid", operationsAgentEnabled: true },
+            webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid" },
             app: { vault, workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
                 metadataCache: { getFileCache: () => null, getCache: () => null } },
             memorySearch: { ensureReadyForChat: async () => ({ decision: "answer-now" }), searchHybrid: async () => [] },
@@ -662,7 +662,7 @@ describe("Obsidian Resource SDK runtime", () => {
             adapter: { exists: async (path: string) => files.has(path) } };
         const host = { settings: { debug: false, aiProvider: "qwen", baseURL: "https://example.invalid", chatModelName: "test-model",
             policyModelName: "", embeddingModelName: "", shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false,
-            webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid", operationsAgentEnabled: true },
+            webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid" },
             app: { vault, workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [],
                 getLeaf: () => openedLeaf, iterateAllLeaves: (visit: (leaf: unknown) => void) => visit(openedLeaf) },
                 metadataCache: { getFileCache: () => null, getCache: () => null } },
@@ -761,7 +761,7 @@ describe("Obsidian Resource SDK runtime", () => {
             readBinary, create, adapter: { exists: async (path: string) => files.has(path) } };
         const host = { settings: { debug: false, aiProvider: "qwen", baseURL: "https://example.invalid", chatModelName: "test-model",
             policyModelName: "", embeddingModelName: "", shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false,
-            webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid", operationsAgentEnabled: true },
+            webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid" },
             app: { vault, workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
                 metadataCache: { getFileCache: () => null, getCache: () => null } },
             memorySearch: { ensureReadyForChat: async () => ({ decision: "answer-now" }), searchHybrid: async () => [] },
@@ -1853,7 +1853,6 @@ describe("Obsidian Resource SDK runtime", () => {
                 webSearchEnabled: true,
                 memoryEnabled: false,
                 licenseTier: "paid",
-                operationsAgentEnabled: false,
             },
             app: {
                 workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },

@@ -991,7 +991,6 @@ function createView(options: {
             baseURL: '',
             chatModelName: 'gpt-test',
             embeddingModelName: 'embed-test',
-            operationsAgentEnabled: options.operationsEnabled === true,
             operationsProactiveSaveSuggestionsEnabled: true,
         },
         chatHistoryManager: options.chatHistoryManager,

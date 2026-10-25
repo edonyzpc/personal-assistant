@@ -442,14 +442,14 @@ class OperationsTurnPolicyEngine extends PolicyEngine {
 
     override canExport(capability: AgentCapability): CapabilityPolicyDecision {
         if (capability.kind === "action" && !this.allowsAction(capability)) {
-            return { allowed: false, reason: "Operations core actions require live opt-in and a staging controller" };
+            return { allowed: false, reason: "Operations core actions require an available host and staging controller" };
         }
         return super.canExport(capability);
     }
 
     override canExecute(capability: AgentCapability): CapabilityPolicyDecision {
         if (capability.kind === "action" && !this.allowsAction(capability)) {
-            return { allowed: false, reason: "Operations core actions require live opt-in and a staging controller" };
+            return { allowed: false, reason: "Operations core actions require an available host and staging controller" };
         }
         return super.canExecute(capability);
     }

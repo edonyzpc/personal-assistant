@@ -68,11 +68,6 @@ import { Notice, TFile } from "obsidian";
 import { PageletOrchestrator, type PageletHost } from "../src/pagelet/orchestrator";
 import { ShareCardModal } from "../src/share-card/share-card-modal";
 import { NudgeOwner, type NudgeTicket } from "../src/pagelet/BubbleCoordinator";
-import type {
-    OperationsExecutionResult,
-    OperationsIntent,
-    UndoResult,
-} from "../src/ai-services/operations/types";
 import type { PageletChatHandoffPreparationResult } from "../src/ai-services/pagelet-handoff";
 import type { OnboardingNudge } from "../src/pagelet/bubble/BubbleContent";
 import { quietRecallCandidateToDeliveryCandidate } from "../src/pagelet/bubble/recall-card";
@@ -418,62 +413,6 @@ function makeVerifiedDeepDiscoverResult(
             insights: [insight],
             preparedAt: insight.preparedAt,
         },
-    };
-}
-
-// These capability tests explicitly supply a link action. Discovery itself
-// no longer infers an action from the ordering of its evidence sources.
-function withExplicitLinkAction(candidate: PageletAgentDeliveryCandidate): PageletAgentDeliveryCandidate {
-    return {
-        ...candidate,
-        pageletAgent: {
-            ...candidate.pageletAgent,
-            directAction: {
-                kind: "link-related",
-                candidateId: candidate.id,
-                anchorPath: "notes/current.md",
-                sourcePath: "notes/related.md",
-                label: "Link “related” from “current”",
-            },
-        },
-    };
-}
-
-function makePageletOperationsIntent(): OperationsIntent {
-    return {
-        id: "intent-pagelet-1",
-        runId: "pagelet:deep-notes-current",
-        turnId: "pagelet-action:deep-notes-current",
-        createdAt: 1_000,
-        expiresAt: 61_000,
-        state: "pending",
-        operations: [{
-            id: "operation-pagelet-1",
-            toolCallId: "pagelet-link:deep-notes-current",
-            name: "frontmatter_update",
-            input: {
-                path: "notes/current.md",
-                set: { "pa-related": ["[[notes/related]]"] },
-            },
-            path: "notes/current.md",
-            expectedBefore: "# Current",
-            expectedAfter: "---\npa-related:\n  - '[[notes/related]]'\n---\n# Current",
-        }],
-    };
-}
-
-function makePageletOperationsResult(): OperationsExecutionResult {
-    return {
-        intentId: "intent-pagelet-1",
-        state: "completed",
-        operations: [{
-            operationId: "operation-pagelet-1",
-            toolCallId: "pagelet-link:deep-notes-current",
-            name: "frontmatter_update",
-            path: "notes/current.md",
-            status: "succeeded",
-            receiptId: "receipt-pagelet-1",
-        }],
     };
 }
 
@@ -863,7 +802,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             clearPanelSession(): void;
         };
         internals.panelView = panelView;
-        const pending = orchestrator.reviewCurrentNote();
+        const pending = Promise.resolve(orchestrator.getCommandCallbacks().onDiscoverConnections());
         panelView.open.mockClear();
         panelView.isOpen = false;
         internals.clearPanelSession();
@@ -887,11 +826,11 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         };
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
-        await orchestrator.reviewCurrentNote();
+        await Promise.resolve(orchestrator.getCommandCallbacks().onDiscoverConnections());
         const originalBody = panelView.open.mock.calls.at(-1)?.[1][0].insightText;
         await orchestrator.openPanel();
         expect(runDeepDiscover).toHaveBeenCalledTimes(1);
-        await orchestrator.reviewCurrentNote();
+        await Promise.resolve(orchestrator.getCommandCallbacks().onDiscoverConnections());
         expect(runDeepDiscover).toHaveBeenCalledTimes(2);
         await orchestrator.openPanel();
         expect(runDeepDiscover).toHaveBeenCalledTimes(2);
@@ -922,7 +861,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         };
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
-        await orchestrator.reviewCurrentNote();
+        await Promise.resolve(orchestrator.getCommandCallbacks().onDiscoverConnections());
         for (const insight of result.insights) {
             const finding = panelView.open.mock.calls.at(-1)?.[1][0] as {
                 insightText: string;
@@ -949,7 +888,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         [{ status: "stale", reason: "source-changed" }, "The sources or permissions changed. Run the analysis again."],
     ] as const)("reports the actual explicit terminal outcome: %o", async (result, message) => {
         const orchestrator = new PageletOrchestrator(makeHost({ runDeepDiscover: async () => result }));
-        await orchestrator.reviewCurrentNote();
+        await Promise.resolve(orchestrator.getCommandCallbacks().onDiscoverConnections());
         expect(Notice).toHaveBeenCalledWith(message, 5000);
     });
 
@@ -964,7 +903,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         });
         const orchestrator = new PageletOrchestrator(host);
 
-        await Promise.resolve(orchestrator.getCommandCallbacks().onReviewCurrent());
+        await Promise.resolve(orchestrator.getCommandCallbacks().onDiscoverConnections());
 
         expect(acknowledgeDeepDiscoverResult).toHaveBeenCalledTimes(1);
         const [acknowledgedResult, candidates] = acknowledgeDeepDiscoverResult.mock.calls[0]!;
@@ -991,7 +930,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         });
         const orchestrator = new PageletOrchestrator(host);
 
-        await Promise.resolve(orchestrator.getCommandCallbacks().onReviewCurrent());
+        await Promise.resolve(orchestrator.getCommandCallbacks().onDiscoverConnections());
 
         expect(acknowledgeDeepDiscoverResult).toHaveBeenCalledWith(result, []);
     });
@@ -1015,7 +954,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         });
         const orchestrator = new PageletOrchestrator(host);
 
-        const pending = Promise.resolve(orchestrator.getCommandCallbacks().onReviewCurrent());
+        const pending = Promise.resolve(orchestrator.getCommandCallbacks().onDiscoverConnections());
         await Promise.resolve();
         (orchestrator as unknown as { foregroundRouteToken: number }).foregroundRouteToken += 1;
         finishRun?.(result);
@@ -1025,7 +964,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         expect(acknowledgeDeepDiscoverResult).not.toHaveBeenCalled();
     });
 
-    it("routes every stable provider-backed entry to one controller and never calls legacy providers", async () => {
+    it("routes the discovery command to its controller without legacy providers or command callbacks", async () => {
         const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(async () => ({
             status: "quiet",
             reason: "no-insight",
@@ -1036,15 +975,15 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         const orchestrator = new PageletOrchestrator(host);
         const callbacks = orchestrator.getCommandCallbacks();
 
-        await Promise.resolve(callbacks.onReviewCurrent());
-        await Promise.resolve(callbacks.onQuickReview());
         await Promise.resolve(callbacks.onDiscoverConnections());
-        await Promise.resolve(callbacks.onQuietRecall());
-        await Promise.resolve(callbacks.onScopeRecap());
-        callbacks.onOpenPreparedReview();
-        await flushAsyncWork();
 
-        expect(runDeepDiscover).toHaveBeenCalledTimes(6);
+        for (const retired of [
+            "onOpenPreparedReview", "onReviewCurrent", "onQuickReview",
+            "onQuietRecall", "onScopeRecap", "onClearScopeRecapCache",
+        ]) {
+            expect(callbacks).not.toHaveProperty(retired);
+        }
+        expect(runDeepDiscover).toHaveBeenCalledTimes(1);
         for (const [request] of runDeepDiscover.mock.calls) {
             expect(request).toEqual({
                 path: "notes/current.md",
@@ -1054,7 +993,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         }
         expect(legacyDiscovery).not.toHaveBeenCalled();
         expect(legacyRecap).not.toHaveBeenCalled();
-        expect(Notice).toHaveBeenCalledTimes(6);
+        expect(Notice).toHaveBeenCalledTimes(1);
         expect(Notice).toHaveBeenCalledWith("No findings in this analysis.", 5000);
     });
 
@@ -1622,464 +1561,6 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         );
     });
 
-    it("stages the context-specific link first, then confirms once and keeps result through its own modify event", async () => {
-        const intent = makePageletOperationsIntent();
-        const result = makePageletOperationsResult();
-        const validateDeepDiscoverInsight = jest.fn<NonNullable<PageletHost["validateDeepDiscoverInsight"]>>(
-            async () => true,
-        );
-        const stagePageletInsightLink = jest.fn<NonNullable<PageletHost["stagePageletInsightLink"]>>(
-            async () => intent,
-        );
-        const confirmPageletOperationsIntent = jest.fn<NonNullable<PageletHost["confirmPageletOperationsIntent"]>>(
-            async () => result,
-        );
-        const cancelPageletOperationsIntent = jest.fn<NonNullable<PageletHost["cancelPageletOperationsIntent"]>>();
-        const undoPageletOperationsReceipts = jest.fn<NonNullable<PageletHost["undoPageletOperationsReceipts"]>>(
-            async (): Promise<UndoResult[]> => [{
-            receiptId: "receipt-pagelet-1",
-            operationId: "operation-pagelet-1",
-            path: "notes/current.md",
-            status: "undone",
-        }]);
-        const consumePageletOperationsSelfWrite = jest.fn<NonNullable<PageletHost["consumePageletOperationsSelfWrite"]>>()
-            .mockReturnValueOnce(true)
-            .mockReturnValue(false);
-        const host = makeHost({
-            validateDeepDiscoverInsight,
-            isOperationsAvailable: () => true,
-            stagePageletInsightLink,
-            confirmPageletOperationsIntent,
-            cancelPageletOperationsIntent,
-            undoPageletOperationsReceipts,
-            consumePageletOperationsSelfWrite,
-        });
-        const orchestrator = new PageletOrchestrator(host);
-        const panelView = {
-            open: jest.fn<(layout: string, findings: unknown[], extra?: unknown) => void>(),
-            close: jest.fn(),
-            isOpen: true,
-        };
-        const handleNoteActivity = jest.fn();
-        const internals = orchestrator as unknown as {
-            panelView: typeof panelView;
-            acceptDeepDiscoverResult(
-                result: PageletDeepDiscoverControllerResult,
-                options: { path: string; proactive: boolean },
-            ): PageletAgentDeliveryCandidate;
-            openAgentInsightPanel(candidate: PageletAgentDeliveryCandidate): void;
-            handleMarkdownModify(path: string): void;
-            handleNoteActivity: typeof handleNoteActivity;
-            revalidateOpenReading(): Promise<void>;
-            openAgentInsightCandidate: unknown;
-        };
-        internals.panelView = panelView;
-        internals.handleNoteActivity = handleNoteActivity;
-        const candidate = internals.acceptDeepDiscoverResult(
-            makeVerifiedDeepDiscoverResult(),
-            { path: "notes/current.md", proactive: false },
-        );
-        internals.openAgentInsightPanel(withExplicitLinkAction(candidate));
-        const latestFirstFinding = () => panelView.open.mock.calls.at(-1)?.[1][0] as {
-            actionStatus?: { label: string; preview?: string; detail?: string };
-            actions: Array<{ label: string; callback(): void }>;
-        };
-
-        expect(latestFirstFinding().actions.map((action) => action.label)).toEqual([
-            "Link “related” from “current”",
-            "Discuss in Chat",
-        ]);
-        latestFirstFinding().actions[0].callback();
-        await flushAsyncWork();
-
-        expect(validateDeepDiscoverInsight).toHaveBeenCalledTimes(1);
-        expect(stagePageletInsightLink).toHaveBeenCalledWith({
-            candidateId: "deep-notes/current.md",
-            anchorPath: "notes/current.md",
-            sourcePath: "notes/related.md",
-        }, expect.any(AbortSignal));
-        expect(confirmPageletOperationsIntent).not.toHaveBeenCalled();
-        expect(latestFirstFinding().actionStatus?.preview).toContain("Set pa-related");
-
-        latestFirstFinding().actions.find((action) => action.label === "Confirm")?.callback();
-        await flushAsyncWork();
-
-        expect(confirmPageletOperationsIntent).toHaveBeenCalledTimes(1);
-        expect(latestFirstFinding().actionStatus?.label).toBe("The related-note link was added.");
-        expect(latestFirstFinding().actions[0].label).toBe("Undo");
-
-        validateDeepDiscoverInsight.mockResolvedValueOnce(false);
-        await internals.revalidateOpenReading();
-        expect(latestFirstFinding().actions[0].label).toBe("Undo");
-        expect(latestFirstFinding().actionStatus?.detail).toContain("out of date");
-        await internals.revalidateOpenReading();
-
-        latestFirstFinding().actions[0].callback();
-        await flushAsyncWork();
-
-        expect(undoPageletOperationsReceipts).toHaveBeenCalledWith(["receipt-pagelet-1"]);
-        expect(latestFirstFinding().actionStatus?.label).toBe("The change was undone.");
-
-        internals.handleMarkdownModify("notes/current.md");
-        expect(internals.openAgentInsightCandidate).not.toBeNull();
-        expect(panelView.close).not.toHaveBeenCalled();
-        expect(handleNoteActivity).toHaveBeenCalledWith("notes/current.md");
-
-        internals.handleMarkdownModify("notes/current.md");
-        expect(internals.openAgentInsightCandidate).not.toBeNull();
-        expect(latestFirstFinding().actionStatus?.label).toContain("out of date");
-        expect(panelView.close).not.toHaveBeenCalled();
-    });
-
-    it("cancels a staged Pagelet intent on inline Cancel and Panel session close", async () => {
-        const intent = makePageletOperationsIntent();
-        const cancelPageletOperationsIntent = jest.fn<NonNullable<PageletHost["cancelPageletOperationsIntent"]>>();
-        const host = makeHost({
-            validateDeepDiscoverInsight: async () => true,
-            isOperationsAvailable: () => true,
-            stagePageletInsightLink: async () => intent,
-            confirmPageletOperationsIntent: jest.fn(async () => makePageletOperationsResult()),
-            cancelPageletOperationsIntent,
-            undoPageletOperationsReceipts: async () => [],
-        });
-        const orchestrator = new PageletOrchestrator(host);
-        const panelView = {
-            open: jest.fn<(layout: string, findings: unknown[], extra?: unknown) => void>(),
-            close: jest.fn(),
-            isOpen: true,
-        };
-        const internals = orchestrator as unknown as {
-            panelView: typeof panelView;
-            acceptDeepDiscoverResult(
-                result: PageletDeepDiscoverControllerResult,
-                options: { path: string; proactive: boolean },
-            ): PageletAgentDeliveryCandidate;
-            openAgentInsightPanel(candidate: PageletAgentDeliveryCandidate): void;
-            clearPanelSession(): void;
-        };
-        internals.panelView = panelView;
-        const candidate = internals.acceptDeepDiscoverResult(
-            makeVerifiedDeepDiscoverResult(),
-            { path: "notes/current.md", proactive: false },
-        );
-        internals.openAgentInsightPanel(withExplicitLinkAction(candidate));
-        const actions = () => (panelView.open.mock.calls.at(-1)?.[1][0] as {
-            actions: Array<{ label: string; callback(): void }>;
-        }).actions;
-
-        actions()[0].callback();
-        await flushAsyncWork();
-        actions().find((action) => action.label === "Cancel")?.callback();
-        expect(cancelPageletOperationsIntent).toHaveBeenCalledWith(intent.id);
-
-        actions()[0].callback();
-        await flushAsyncWork();
-        internals.clearPanelSession();
-        expect(cancelPageletOperationsIntent).toHaveBeenCalledTimes(2);
-    });
-
-    it("refreshes open idle/error controls on Operations setting changes and cancels a disabled pending intent", async () => {
-        const intent = makePageletOperationsIntent();
-        let operationsAvailable = false;
-        const cancelPageletOperationsIntent = jest.fn<NonNullable<PageletHost["cancelPageletOperationsIntent"]>>();
-        const host = makeHost({
-            validateDeepDiscoverInsight: async () => true,
-            isOperationsAvailable: () => operationsAvailable,
-            stagePageletInsightLink: async () => intent,
-            confirmPageletOperationsIntent: async () => makePageletOperationsResult(),
-            cancelPageletOperationsIntent,
-            undoPageletOperationsReceipts: async () => [],
-        });
-        const orchestrator = new PageletOrchestrator(host);
-        const panelView = {
-            open: jest.fn<(layout: string, findings: unknown[], extra?: unknown) => void>(),
-            close: jest.fn(),
-            isOpen: true,
-        };
-        const internals = orchestrator as unknown as {
-            panelView: typeof panelView;
-            agentInsightActionState: {
-                kind: "error";
-                candidateId: string;
-                error: "operations-unavailable";
-            } | { kind: "idle" };
-            acceptDeepDiscoverResult(
-                result: PageletDeepDiscoverControllerResult,
-                options: { path: string; proactive: boolean },
-            ): PageletAgentDeliveryCandidate;
-            openAgentInsightPanel(candidate: PageletAgentDeliveryCandidate): void;
-        };
-        internals.panelView = panelView;
-        const candidate = internals.acceptDeepDiscoverResult(
-            makeVerifiedDeepDiscoverResult(),
-            { path: "notes/current.md", proactive: false },
-        );
-        internals.openAgentInsightPanel(withExplicitLinkAction(candidate));
-        const latest = () => panelView.open.mock.calls.at(-1)?.[1][0] as {
-            actionStatus?: { label: string };
-            actions: Array<{ label: string; disabled?: boolean; callback(): void }>;
-        };
-
-        expect(latest().actions[0]).toMatchObject({
-            label: "Link “related” from “current”",
-            disabled: true,
-        });
-
-        internals.agentInsightActionState = {
-            kind: "error",
-            candidateId: candidate.id,
-            error: "operations-unavailable",
-        };
-        operationsAvailable = true;
-        orchestrator.syncSettings();
-        expect(latest().actionStatus).toBeUndefined();
-        expect(latest().actions[0]?.disabled).toBe(false);
-
-        latest().actions[0]?.callback();
-        await flushAsyncWork();
-        expect(latest().actions.map((action) => action.label)).toEqual(["Confirm", "Cancel"]);
-
-        operationsAvailable = false;
-        orchestrator.syncSettings();
-        expect(cancelPageletOperationsIntent).toHaveBeenCalledWith(intent.id);
-        expect(latest().actionStatus?.label).toBe(
-            "Turn on Operations in Settings to confirm note changes.",
-        );
-        expect(latest().actions[0]?.disabled).toBe(true);
-    });
-
-    it("retains Confirm and Undo results when the Panel closes after either operation starts", async () => {
-        let resolveConfirm!: (result: OperationsExecutionResult) => void;
-        let resolveUndo!: (results: UndoResult[]) => void;
-        const confirmPageletOperationsIntent = jest.fn<NonNullable<PageletHost["confirmPageletOperationsIntent"]>>(
-            async () => await new Promise<OperationsExecutionResult>((resolve) => {
-                resolveConfirm = resolve;
-            }),
-        );
-        const undoPageletOperationsReceipts = jest.fn<NonNullable<PageletHost["undoPageletOperationsReceipts"]>>(
-            async () => await new Promise<UndoResult[]>((resolve) => {
-                resolveUndo = resolve;
-            }),
-        );
-        const cancelPageletOperationsIntent = jest.fn<NonNullable<PageletHost["cancelPageletOperationsIntent"]>>();
-        const host = makeHost({
-            validateDeepDiscoverInsight: async () => true,
-            isOperationsAvailable: () => true,
-            stagePageletInsightLink: async () => makePageletOperationsIntent(),
-            confirmPageletOperationsIntent,
-            cancelPageletOperationsIntent,
-            undoPageletOperationsReceipts,
-        });
-        const orchestrator = new PageletOrchestrator(host);
-        const panelView = {
-            open: jest.fn<(layout: string, findings: unknown[], extra?: unknown) => void>(),
-            close: jest.fn(),
-            isOpen: true,
-        };
-        panelView.open.mockImplementation(() => {
-            panelView.isOpen = true;
-        });
-        const internals = orchestrator as unknown as {
-            panelView: typeof panelView;
-            agentInsightCandidate: PageletAgentDeliveryCandidate | null;
-            openAgentInsightCandidate: PageletAgentDeliveryCandidate | null;
-            agentInsightActionState: { kind: string; result?: OperationsExecutionResult };
-            acceptDeepDiscoverResult(
-                result: PageletDeepDiscoverControllerResult,
-                options: { path: string; proactive: boolean },
-            ): PageletAgentDeliveryCandidate;
-            openAgentInsightPanel(candidate: PageletAgentDeliveryCandidate): void;
-            clearPanelSession(): void;
-        };
-        internals.panelView = panelView;
-        const candidate = internals.acceptDeepDiscoverResult(
-            makeVerifiedDeepDiscoverResult(),
-            { path: "notes/current.md", proactive: true },
-        );
-        internals.openAgentInsightPanel(withExplicitLinkAction(candidate));
-        const actions = () => (panelView.open.mock.calls.at(-1)?.[1][0] as {
-            actionStatus?: { label: string };
-            actions: Array<{ label: string; callback(): void }>;
-        });
-
-        actions().actions[0]?.callback();
-        await flushAsyncWork();
-        actions().actions.find((action) => action.label === "Confirm")?.callback();
-        await flushAsyncWork();
-        expect(confirmPageletOperationsIntent).toHaveBeenCalledTimes(1);
-
-        panelView.isOpen = false;
-        const renderCountBeforeConfirmClose = panelView.open.mock.calls.length;
-        internals.clearPanelSession();
-        expect(cancelPageletOperationsIntent).not.toHaveBeenCalled();
-        expect(panelView.isOpen).toBe(true);
-        expect(panelView.open).toHaveBeenCalledTimes(renderCountBeforeConfirmClose + 1);
-        expect(internals.openAgentInsightCandidate?.id).toBe(candidate.id);
-        resolveConfirm(makePageletOperationsResult());
-        await flushAsyncWork();
-
-        expect(internals.agentInsightCandidate).toBeNull();
-        expect(internals.agentInsightActionState).toMatchObject({
-            kind: "result",
-            result: expect.objectContaining({ intentId: "intent-pagelet-1" }),
-        });
-        expect(actions().actionStatus?.label).toBe("The related-note link was added.");
-
-        const changedResult = makeVerifiedDeepDiscoverResult();
-        if (changedResult.status !== "verified") throw new Error("expected verified fixture");
-        changedResult.insight.insightId = "deep-notes/current.md-after-write";
-        changedResult.insight.collectionId = "collection-notes/current.md-after-write";
-        changedResult.collection.collectionId = changedResult.insight.collectionId;
-        changedResult.insight.cacheIdentityHash = "deep-notes/current.md-after-write";
-        changedResult.insight.anchor = {
-            ...changedResult.insight.anchor,
-            mtime: 200,
-            contentHash: "c".repeat(64),
-        };
-        changedResult.insight.cacheIdentity = {
-            ...changedResult.insight.cacheIdentity,
-            anchor: changedResult.insight.anchor,
-        };
-        const changedCandidate = internals.acceptDeepDiscoverResult(
-            changedResult,
-            { path: "notes/current.md", proactive: true },
-        );
-        expect(changedCandidate.id).not.toBe(candidate.id);
-        expect(internals.agentInsightActionState.kind).toBe("result");
-        expect(actions().actions.some((action) => action.label === "Undo")).toBe(true);
-
-        actions().actions.find((action) => action.label === "Undo")?.callback();
-        await flushAsyncWork();
-        expect(undoPageletOperationsReceipts).toHaveBeenCalledWith(["receipt-pagelet-1"]);
-
-        panelView.isOpen = false;
-        const renderCountBeforeUndoClose = panelView.open.mock.calls.length;
-        internals.clearPanelSession();
-        expect(panelView.isOpen).toBe(true);
-        expect(panelView.open).toHaveBeenCalledTimes(renderCountBeforeUndoClose + 1);
-        expect(internals.openAgentInsightCandidate?.id).toBe(candidate.id);
-        resolveUndo([{
-            receiptId: "receipt-pagelet-1",
-            operationId: "operation-pagelet-1",
-            path: "notes/current.md",
-            status: "undone",
-        }]);
-        await flushAsyncWork();
-
-        expect(internals.agentInsightActionState.kind).toBe("undone");
-        expect(actions().actionStatus?.label).toBe("The change was undone.");
-    });
-
-    it("shows a distinct stale Undo result and leaves the related-note link in place", async () => {
-        const persistedAnchor = "---\npa-related:\n  - '[[notes/related]]'\n---\n# Current";
-        const undoPageletOperationsReceipts = jest.fn<NonNullable<PageletHost["undoPageletOperationsReceipts"]>>(
-            async (): Promise<UndoResult[]> => [{
-                receiptId: "receipt-pagelet-1",
-                operationId: "operation-pagelet-1",
-                path: "notes/current.md",
-                status: "stale",
-                failureCategory: "stale_target",
-            }],
-        );
-        const host = makeHost({
-            validateDeepDiscoverInsight: async () => true,
-            isOperationsAvailable: () => true,
-            stagePageletInsightLink: async () => makePageletOperationsIntent(),
-            confirmPageletOperationsIntent: async () => makePageletOperationsResult(),
-            cancelPageletOperationsIntent: () => undefined,
-            undoPageletOperationsReceipts,
-        });
-        const orchestrator = new PageletOrchestrator(host);
-        const panelView = {
-            open: jest.fn<(layout: string, findings: unknown[], extra?: unknown) => void>(),
-            close: jest.fn(),
-            isOpen: true,
-        };
-        const internals = orchestrator as unknown as {
-            panelView: typeof panelView;
-            acceptDeepDiscoverResult(
-                result: PageletDeepDiscoverControllerResult,
-                options: { path: string; proactive: boolean },
-            ): PageletAgentDeliveryCandidate;
-            openAgentInsightPanel(candidate: PageletAgentDeliveryCandidate): void;
-        };
-        internals.panelView = panelView;
-        const candidate = internals.acceptDeepDiscoverResult(
-            makeVerifiedDeepDiscoverResult(),
-            { path: "notes/current.md", proactive: false },
-        );
-        internals.openAgentInsightPanel(withExplicitLinkAction(candidate));
-        const latest = () => panelView.open.mock.calls.at(-1)?.[1][0] as {
-            actionStatus?: { label: string };
-            actions: Array<{ label: string; callback(): void }>;
-        };
-
-        latest().actions[0]?.callback();
-        await flushAsyncWork();
-        latest().actions.find((action) => action.label === "Confirm")?.callback();
-        await flushAsyncWork();
-        latest().actions.find((action) => action.label === "Undo")?.callback();
-        await flushAsyncWork();
-
-        expect(undoPageletOperationsReceipts).toHaveBeenCalledWith(["receipt-pagelet-1"]);
-        expect(latest().actionStatus?.label).toBe(
-            "Undo stopped because the note changed. The related-note link was left in place.",
-        );
-        expect(persistedAnchor).toContain("[[notes/related]]");
-    });
-
-    it("localizes the Pagelet frontmatter preview without changing the shared English default", async () => {
-        const globalScope = globalThis as unknown as { window?: unknown };
-        const originalWindow = globalScope.window;
-        globalScope.window = { i18next: { language: "zh-CN" } };
-        try {
-            const host = makeHost({
-                validateDeepDiscoverInsight: async () => true,
-                isOperationsAvailable: () => true,
-                stagePageletInsightLink: async () => makePageletOperationsIntent(),
-                confirmPageletOperationsIntent: async () => makePageletOperationsResult(),
-                cancelPageletOperationsIntent: () => undefined,
-                undoPageletOperationsReceipts: async () => [],
-            });
-            const orchestrator = new PageletOrchestrator(host);
-            const panelView = {
-                open: jest.fn<(layout: string, findings: unknown[], extra?: unknown) => void>(),
-                close: jest.fn(),
-                isOpen: true,
-            };
-            const internals = orchestrator as unknown as {
-                panelView: typeof panelView;
-                acceptDeepDiscoverResult(
-                    result: PageletDeepDiscoverControllerResult,
-                    options: { path: string; proactive: boolean },
-                ): PageletAgentDeliveryCandidate;
-                openAgentInsightPanel(candidate: PageletAgentDeliveryCandidate): void;
-            };
-            internals.panelView = panelView;
-            const candidate = internals.acceptDeepDiscoverResult(
-                makeVerifiedDeepDiscoverResult(),
-                { path: "notes/current.md", proactive: false },
-            );
-            internals.openAgentInsightPanel(withExplicitLinkAction(candidate));
-            const latest = () => panelView.open.mock.calls.at(-1)?.[1][0] as {
-                actionStatus?: { preview?: string };
-                actions: Array<{ callback(): void }>;
-            };
-
-            latest().actions[0]?.callback();
-            await flushAsyncWork();
-            expect(latest().actionStatus?.preview).toBe(
-                "设置 pa-related：[\"[[notes/related]]\"]",
-            );
-        } finally {
-            if (originalWindow === undefined) {
-                Reflect.deleteProperty(globalThis, "window");
-            } else {
-                globalScope.window = originalWindow;
-            }
-        }
-    });
-
     it("opens a validated full Pagelet handoff without sending from the Panel", async () => {
         const openPageletChatHandoff = jest.fn<NonNullable<PageletHost["openPageletChatHandoff"]>>(
             async () => ({ status: "prepared" as const }),
@@ -2089,7 +1570,6 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         );
         const host = makeHost({
             validateDeepDiscoverInsight,
-            isOperationsAvailable: () => false,
             openPageletChatHandoff,
         });
         const orchestrator = new PageletOrchestrator(host);
@@ -2136,7 +1616,52 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         expect(panelView.close).toHaveBeenCalledTimes(1);
     });
 
-    it("aborts a late Pagelet Chat handoff when the Panel session closes", async () => {
+    it.each([
+        ["busy", "Chat is busy. Finish the current response, then try again."],
+        ["draft-conflict", "Chat already has a draft. Send or clear it before opening this insight."],
+    ] as const)("keeps the reading and permits retry after a %s Chat handoff", async (status, message) => {
+        const openPageletChatHandoff = jest.fn<NonNullable<PageletHost["openPageletChatHandoff"]>>()
+            .mockResolvedValueOnce({ status })
+            .mockResolvedValue({ status: "prepared" });
+        const orchestrator = new PageletOrchestrator(makeHost({
+            validateDeepDiscoverInsight: async () => true,
+            openPageletChatHandoff,
+        }));
+        const panelView = {
+            open: jest.fn<PanelOpen>(),
+            close: jest.fn(),
+            isOpen: true,
+        };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            acceptDeepDiscoverResult(
+                result: PageletDeepDiscoverControllerResult,
+                options: { path: string; proactive: boolean },
+            ): PageletAgentDeliveryCandidate;
+            openAgentInsightPanel(candidate: PageletAgentDeliveryCandidate): void;
+        };
+        internals.panelView = panelView;
+        const candidate = internals.acceptDeepDiscoverResult(
+            makeVerifiedDeepDiscoverResult(),
+            { path: "notes/current.md", proactive: false },
+        );
+        internals.openAgentInsightPanel(candidate);
+        const latestFinding = () => panelView.open.mock.calls.at(-1)![1][0];
+
+        expect(latestFinding().actions?.map((action) => action.label)).toEqual(["Discuss in Chat"]);
+        latestFinding().actions?.[0].callback();
+        await flushAsyncWork();
+
+        expect(latestFinding().actionStatus).toMatchObject({ label: message, tone: "error" });
+        expect(panelView.close).not.toHaveBeenCalled();
+        latestFinding().actions?.[0].callback();
+        await flushAsyncWork();
+
+        expect(openPageletChatHandoff).toHaveBeenCalledTimes(2);
+        expect(panelView.close).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["panel close", "source change"] as const)("aborts a late Pagelet Chat handoff after %s and ignores duplicate clicks", async (cancellation) => {
         let releaseHandoff: ((result: PageletChatHandoffPreparationResult) => void) | undefined;
         let observedSignal: AbortSignal | undefined;
         const handoffGate = new Promise<PageletChatHandoffPreparationResult>((resolve) => {
@@ -2148,15 +1673,16 @@ describe("PageletOrchestrator Deep Discover migration", () => {
                 return await handoffGate;
             },
         );
+        const validateDeepDiscoverInsight = jest.fn(async () => true);
         const host = makeHost({
-            validateDeepDiscoverInsight: async () => true,
-            isOperationsAvailable: () => false,
+            validateDeepDiscoverInsight,
             openPageletChatHandoff,
         });
         const orchestrator = new PageletOrchestrator(host);
         const panelView = {
             open: jest.fn<(layout: string, findings: unknown[], extra?: unknown) => void>(),
             close: jest.fn(),
+            destroy: jest.fn(),
             isOpen: true,
         };
         const internals = orchestrator as unknown as {
@@ -2168,29 +1694,43 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             ): PageletAgentDeliveryCandidate;
             openAgentInsightPanel(candidate: PageletAgentDeliveryCandidate): void;
             clearPanelSession(): void;
+            handleMarkdownModify(path: string): void;
         };
         internals.panelView = panelView;
-        const candidate = internals.acceptDeepDiscoverResult(
-            makeVerifiedDeepDiscoverResult(),
-            { path: "notes/current.md", proactive: false },
-        );
-        internals.openAgentInsightPanel(candidate);
-        const finding = panelView.open.mock.calls.at(-1)?.[1][0] as {
-            actions: Array<{ label: string; callback(): void }>;
-        };
+        try {
+            const candidate = internals.acceptDeepDiscoverResult(
+                makeVerifiedDeepDiscoverResult(),
+                { path: "notes/current.md", proactive: false },
+            );
+            internals.openAgentInsightPanel(candidate);
+            const finding = panelView.open.mock.calls.at(-1)?.[1][0] as {
+                actions: Array<{ label: string; callback(): void }>;
+            };
 
-        finding.actions.find((action) => action.label === "Discuss in Chat")?.callback();
-        await flushAsyncWork();
-        expect(openPageletChatHandoff).toHaveBeenCalledTimes(1);
-        expect(observedSignal?.aborted).toBe(false);
+            const discuss = finding.actions.find((action) => action.label === "Discuss in Chat");
+            discuss?.callback();
+            discuss?.callback();
+            await flushAsyncWork();
+            discuss?.callback();
+            expect(validateDeepDiscoverInsight).toHaveBeenCalledTimes(1);
+            expect(openPageletChatHandoff).toHaveBeenCalledTimes(1);
+            expect(observedSignal?.aborted).toBe(false);
 
-        internals.clearPanelSession();
-        expect(observedSignal?.aborted).toBe(true);
-        expect(internals.openAgentInsightCandidate).toBeNull();
-        releaseHandoff?.({ status: "prepared" });
-        await flushAsyncWork();
+            if (cancellation === "panel close") {
+                internals.clearPanelSession();
+                expect(internals.openAgentInsightCandidate).toBeNull();
+            } else {
+                validateDeepDiscoverInsight.mockResolvedValue(false);
+                internals.handleMarkdownModify("notes/related.md");
+            }
+            expect(observedSignal?.aborted).toBe(true);
+            releaseHandoff?.({ status: "prepared" });
+            await flushAsyncWork();
 
-        expect(panelView.close).not.toHaveBeenCalled();
+            expect(panelView.close).not.toHaveBeenCalled();
+        } finally {
+            orchestrator.destroy();
+        }
     });
 
     it("explains the daily limit only for an explicit trigger", async () => {
@@ -2200,7 +1740,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         });
         const orchestrator = new PageletOrchestrator(host);
 
-        await Promise.resolve(orchestrator.getCommandCallbacks().onReviewCurrent());
+        await Promise.resolve(orchestrator.getCommandCallbacks().onDiscoverConnections());
 
         expect(Notice).toHaveBeenCalledWith(
             "Deep Discover has reached today's 36-run limit. It will resume tomorrow.",
@@ -2214,7 +1754,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             runDeepDiscover: async () => ({ status: "error", reason: "function-calling-unsupported" }),
         }));
 
-        await Promise.resolve(orchestrator.getCommandCallbacks().onReviewCurrent());
+        await Promise.resolve(orchestrator.getCommandCallbacks().onDiscoverConnections());
 
         expect(Notice).toHaveBeenCalledWith(
             "The current model does not support Function Calling, so Deep Discover could not finish. Choose a model that supports it.",
@@ -2231,7 +1771,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             }),
         }));
 
-        await Promise.resolve(orchestrator.getCommandCallbacks().onReviewCurrent());
+        await Promise.resolve(orchestrator.getCommandCallbacks().onDiscoverConnections());
 
         expect(Notice).toHaveBeenCalledWith(
             "The model did not use any tools in this attempt, so Deep Discover could not finish. A model that follows tool calls may work better.",
@@ -2250,7 +1790,7 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             getDeepDiscoverFunctionCallingCapability,
         }));
 
-        await Promise.resolve(orchestrator.getCommandCallbacks().onReviewCurrent());
+        await Promise.resolve(orchestrator.getCommandCallbacks().onDiscoverConnections());
 
         expect(getDeepDiscoverFunctionCallingCapability).toHaveBeenCalledTimes(1);
         expect(Notice).toHaveBeenCalledWith(
@@ -4146,7 +3686,6 @@ describe("PageletOrchestrator LC-01 feature event lifecycle", () => {
         const host = makeHost({
             registerEvent: registerEvent as never,
             runDeepDiscover: jest.fn(async () => undefined as never),
-            consumePageletOperationsSelfWrite: jest.fn(() => false),
         });
         host.settings.pagelet.petVisible = false;
         host.settings.pagelet.backgroundDiscoveryEnabled = true;
@@ -4272,7 +3811,6 @@ describe("PageletOrchestrator LC-01 feature event lifecycle", () => {
             const modify = harness.refs.find(({ event }) => event === "modify");
             modify?.callback(makeTFile("notes/queued.md"));
 
-            expect(harness.host.consumePageletOperationsSelfWrite).not.toHaveBeenCalled();
             await jest.advanceTimersByTimeAsync(10_000);
             expect(harness.host.runDeepDiscover).not.toHaveBeenCalled();
         } finally {
@@ -4391,7 +3929,6 @@ describe("PageletOrchestrator LC-01 feature event lifecycle", () => {
             await jest.advanceTimersByTimeAsync(10_000);
 
             expect(state.currentMarkdownAnchorPath).toBeNull();
-            expect(harness.host.consumePageletOperationsSelfWrite).not.toHaveBeenCalled();
             expect(harness.host.runDeepDiscover).not.toHaveBeenCalled();
             expect(panelView.close).not.toHaveBeenCalled();
             orchestrator.destroy();

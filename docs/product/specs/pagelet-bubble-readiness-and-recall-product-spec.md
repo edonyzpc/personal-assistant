@@ -1,11 +1,18 @@
 # Pagelet Bubble Readiness & Recall Product Spec
 
 Document status: Current
-Updated: 2026-10-06
+Updated: 2026-10-25
 Work item: B-108
 Scoped work items: B-118, B-121, B-124, B-125
 Decisions: [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-027](../decisions/dec-027-bounded-retrieval-recovery.md)
 Authority: Pagelet Bubble readiness、DeliveryCandidate、Recall/Discover delivery、empty-state 与 progressive-disclosure contract。
+
+2026-10-25 applicability：[DEC-075](../decisions/dec-075-legacy-surface-cleanup.md)
+退役明确列出的七个命令入口与两个旧回顾设置 UI；`discover-connections` 和零 provider
+的 `open-panel` 保留，旧值读取和有效共享消费者保留。下文旧入口/控制与历史验收
+不构成恢复要求；本次范围和实施证据分别见
+[Bounded Cleanup Spec](./pa-bounded-code-cleanup-product-spec.md) 与
+[B-189 Tracker](../../development/active/legacy-surface-cleanup/tracker.md)。
 
 2026-10-05 applicability：[DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
 接续旧候选数/语言重试与预算适用性。当前命令走统一 Deep Discover；本文独立 Recall

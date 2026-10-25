@@ -2,9 +2,16 @@
 
 Decision ID: DEC-065
 Status: Accepted
-Updated: 2026-10-24
+Updated: 2026-10-25
 Authority: 用户于 2026-10-16 认可第一轮方案并要求文档化，随后另行授权开发、测试及本地 master 提交；2026-10-24 明确授权已完成记录收尾和归档。历史授权不授予新的 Git/release 操作。
 Work item: B-175
+
+## 2026-10-25 Scoped Successor
+
+[DEC-075](./dec-075-legacy-surface-cleanup.md) 接续本文沿用 DEC-035/DEC-052 的兼容
+命令保留约定，仅退役其明确列出的七个 ID 及专用接线；`discover-connections` 与
+provider-free `open-panel` 保留。自主发现、完整成果、来源与只读权限不变，旧验证
+仍仅证明原输入。当前实施证据见 [B-189 Tracker](../../development/active/legacy-surface-cleanup/tracker.md)。
 
 ## Context
 

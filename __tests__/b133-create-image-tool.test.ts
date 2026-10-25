@@ -28,7 +28,7 @@ function createNaturalImageSourceHost(file: { path: string }, reads: Array<{ pat
             debug: false, aiProvider: "qwen", baseURL: "https://example.test/v1",
             chatModelName: "qwen-test", policyModelName: "", embeddingModelName: "embedding-test",
             shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false, webSearchEnabled: false,
-            memoryEnabled: false, licenseTier: "paid", operationsAgentEnabled: false,
+            memoryEnabled: false, licenseTier: "paid",
             operationsProactiveSaveSuggestionsEnabled: false, operationsAuditIncludeContent: false,
             operationsAuditRetentionDays: 30, statisticsVaultId: "b161-t04-synthetic", retrievalOptimizationFlags: {},
         },

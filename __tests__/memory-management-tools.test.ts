@@ -31,7 +31,6 @@ function createHost(): AiServiceHost {
             webSearchEnabled: false,
             licenseTier: "free",
             memoryEnabled: true,
-            operationsAgentEnabled: false,
             operationsProactiveSaveSuggestionsEnabled: false,
             operationsAuditIncludeContent: false,
             operationsAuditRetentionDays: 30,

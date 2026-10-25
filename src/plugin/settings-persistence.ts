@@ -30,7 +30,6 @@ import { pageletT } from "../locales/pagelet";
 export type SettingsPermissionPatch = Partial<Pick<PluginManagerSettings,
     | "memoryEnabled" | "memoryExtractionEnabled" | "memoryExtractionConsent"
     | "memoryExtractionIncludeVaultInsights" | "memoryApprovalPolicy"
-    | "operationsAgentEnabled"
     | "webSearchEnabled" | "shareAnonymousCapabilityUsage" | "enableMetadataUpdating"
     | "vssCacheExcludePath" | "metadataExcludePath"
 >> & {

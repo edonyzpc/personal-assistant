@@ -58,11 +58,11 @@ class MemoryVault implements OperationsVault {
     }
 }
 
-function providerContext(enabled = true): ProviderLoadContext {
+function providerContext(): ProviderLoadContext {
     return {
         turnId: "turn-1",
         platform: "desktop",
-        settings: { operationsAgentEnabled: enabled },
+        settings: {},
     };
 }
 

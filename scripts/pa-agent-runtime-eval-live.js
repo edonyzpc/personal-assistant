@@ -135,7 +135,7 @@
       webSearchEnabled: Boolean(item.webEvidence), licenseTier: 'paid',
       // Model-visible Memory stays available for a bounded "answer-now" result.
       // The synthetic port below never opens an index or dispatches embeddings.
-      memoryEnabled: true, retrievalOptimizationFlags: {}, operationsAgentEnabled: false,
+      memoryEnabled: true, retrievalOptimizationFlags: {},
       operationsProactiveSaveSuggestionsEnabled: false, operationsAuditIncludeContent: false,
       operationsAuditRetentionDays: 30, statisticsVaultId: 'b149-synthetic' };
     return {

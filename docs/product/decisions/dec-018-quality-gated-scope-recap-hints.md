@@ -2,9 +2,16 @@
 
 Decision ID: DEC-018
 Status: Accepted
-Updated: 2026-07-21
+Updated: 2026-10-25
 Authority: 用户于 2026-07-18 在 Pagelet v2.9 正式验证后的逐项产品讨论中选择方案 C
 Work item: B-108
+
+## 2026-10-25 Scoped Successor
+
+[DEC-075](./dec-075-legacy-surface-cleanup.md) 明确退役当前已不控制发现路由的
+“高价值回顾提示”设置 UI，保留 `scopeRecapHighValueHints` 的旧值读取与兼容。
+这不整批删除 Scope Recap、共享提示/来源能力或历史数据。下文原取舍与验证保持历史
+事实；本轮界面及实现证据由 [B-189 Tracker](../../development/active/legacy-surface-cleanup/tracker.md) 记录。
 
 ## Context
 

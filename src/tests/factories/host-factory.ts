@@ -77,7 +77,6 @@ export function createAiServiceHost(
         webSearchEnabled: false,
         licenseTier: MOCK_LICENSE_TIER,
         memoryEnabled: true,
-        operationsAgentEnabled: false,
         operationsProactiveSaveSuggestionsEnabled: true,
         statisticsVaultId: "test-vault",
         ...settingsOverrides,
@@ -109,7 +108,7 @@ export function createAiServiceHost(
         memorySearch,
         getMemoryEvidenceEpoch: () => "test-memory-evidence-epoch",
         ...hostOverrides,
-        isOperationsAgentEnabled: hostOverrides.isOperationsAgentEnabled ?? settings.operationsAgentEnabled,
+        isOperationsAgentEnabled: hostOverrides.isOperationsAgentEnabled ?? false,
     };
 }
 
@@ -127,7 +126,6 @@ export function createChatHost(
         aiProvider: "openai",
         baseURL: "https://api.openai.com/v1",
         chatModelName: "gpt-4o-mini",
-        operationsAgentEnabled: false,
         operationsProactiveSaveSuggestionsEnabled: true,
         ...settingsOverrides,
     };
@@ -157,6 +155,6 @@ export function createChatHost(
         onSettingsChanged: () => () => undefined,
         scheduleMemoryExtractionAfterChatTurn: () => undefined,
         ...hostOverrides,
-        isOperationsAgentEnabled: hostOverrides.isOperationsAgentEnabled ?? settings.operationsAgentEnabled,
+        isOperationsAgentEnabled: hostOverrides.isOperationsAgentEnabled ?? false,
     };
 }

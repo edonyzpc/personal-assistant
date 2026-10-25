@@ -13,18 +13,9 @@ import type {
     PageletAgentVerifiedInsightCollection,
 } from "./types";
 
-export interface PageletAgentDirectLinkAction {
-    readonly kind: "link-related";
-    readonly candidateId: string;
-    readonly anchorPath: string;
-    readonly sourcePath: string;
-    readonly label: string;
-}
-
 export interface PageletAgentDeliveryIntegration {
     readonly validationIdentity: PageletAgentValidationIdentity;
     readonly handoff: PageletChatHandoffContext;
-    readonly directAction?: PageletAgentDirectLinkAction;
     readonly runIncomplete?: boolean;
 }
 

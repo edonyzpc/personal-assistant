@@ -778,19 +778,19 @@ graph LR
 
 **安全防护**: 路径遍历、`.obsidian` 目录、控制字符、不可见字符、尾部点/空格 — 共 10 种攻击类别校验。
 
-Operations 现支持四个 core writes 和 [DEC-050](../product/decisions/dec-050-note-image-removal-and-undo.md) 批准的 `remove_note_image`。按 [DEC-051](../product/decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)，主 Agent 对当前明确修改请求可 stage intent 后调用 `execute_operations`，不再必经整批第二次确认；只讨论或仅预览不执行。已有笔记仍在 `vault.process()` 内重验 baseline，Undo 遇到 drift 则 fail closed。旧 per-vault 开关是兼容字段，持久 Operations audit 与其设置已由 [DEC-046](../product/decisions/dec-046-note-change-review-and-audit-retirement.md) 退役；历史审计文件不自动读取、清理或迁移。
+Operations 的当前工具与执行边界见 [Agent Architecture](./pa-agent-architecture-plan.md#operations-agent-providers)；明确修改与 preview 遵循其既有权限和真实效果契约。已有笔记仍在 `vault.process()` 内重验 baseline，Undo 遇到 drift 则 fail closed。[DEC-075](../product/decisions/dec-075-legacy-surface-cleanup.md) 退役旧 `operationsAgentEnabled` 设置链，保留 live availability、写权限和 proactive save suggestions。持久 Operations audit 与其设置已由 [DEC-046](../product/decisions/dec-046-note-change-review-and-audit-retirement.md) 退役；历史审计文件不自动读取、清理或迁移。
 
-Step 3 已在同一 plugin-owned Operations provider 上交付 Pagelet 联动，Chat 与
-Pagelet 的 pending intent / Undo session 相互隔离。用户主动打开 source-backed
-Panel 后，只能预览并确认一个确定性的单文件 `pa-related` 更新；复杂或不确定动作
-以完整可见上下文进入 Chat，不自动发送，也不继承写入授权。额外工具、更多 Pagelet
-直接动作与后台写入仍关闭。
+历史 Step 3 曾通过独立 Pagelet Operations session 预览/确认单文件 `pa-related`
+更新。DEC-075 退役无生产生成方的这条专用关联链，保留共享 Chat Operations、既有
+`pa-related` 数据及正常阅读/保存。完整可见上下文仍可交给 Chat，不自动发送或继承
+写入授权，共用的取消/失效保护保留。实施与验证见
+[B-189 Tracker](../development/active/legacy-surface-cleanup/tracker.md)。
 
 ### 6.8 当前发现入口
 
 | 入口 | 当前路由 | Provider 行为 |
 |------|----------|---------------|
-| Discover、Review Current、Quick Review、Quiet Recall、Scope Recap 及 Open Prepared Review 兼容命令 | 活动 Markdown 为 anchor；符合当前策略的已有 insight 可直接复用，否则执行显式 Deep Discover | 经配置、来源和 provider 准入后可能调用 AI |
+| Discover connections；五个旧发现别名按 DEC-075 退役 | 活动 Markdown 为 anchor；符合当前策略的已有 insight 可直接复用，否则执行显式 Deep Discover | 经配置、来源和 provider 准入后可能调用 AI |
 | 笔记打开、离开、编辑后空闲 | 启用后台发现且来源获准时，经 scheduler 合并自动触发 | 经自动预算和 provider 准入运行；关闭或失效后不交付旧结果 |
 | Open Panel | 打开面板 | 不启动 provider 调用 |
 

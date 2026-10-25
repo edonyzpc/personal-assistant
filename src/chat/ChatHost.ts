@@ -68,7 +68,6 @@ export interface ChatHost {
         baseURL: string;
         chatModelName: string;
         embeddingModelName?: string;
-        operationsAgentEnabled: boolean;
         operationsProactiveSaveSuggestionsEnabled: boolean;
     };
     readonly isOperationsAgentEnabled: boolean;

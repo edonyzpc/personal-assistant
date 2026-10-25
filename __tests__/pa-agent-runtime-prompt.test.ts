@@ -992,7 +992,6 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
     it('retains original Ghost and resource child identities after Memory withdrawal without exposing withdrawn paths or refs to the next provider', async () => {
         const host = createPromptHost();
         host.settings.memoryEnabled = true;
-        host.settings.operationsAgentEnabled = true;
         const sourcePath = 'notes/withdrawn-resource-before.md', targetPath = 'notes/withdrawn-resource-after.md';
         const file = { path: sourcePath, extension: 'md', stat: { mtime: 1, size: 23 } };
         const notes = { path: 'notes', children: [file] };
@@ -1009,7 +1008,7 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         });
         const operations = new OperationsService({ vault: vault as never, renameFile: rename,
             trashFile: async () => { throw new Error('unexpected trash'); },
-            isOperationsAgentEnabled: () => host.settings.operationsAgentEnabled });
+            isOperationsAgentEnabled: () => host.isOperationsAgentEnabled });
         const session = operations.createSession({ surface: 'chat' });
         Object.assign(host.app.vault, vault);
         Object.assign(host, { isOperationsAgentEnabled: true });
@@ -1704,7 +1703,7 @@ function createPromptHost(): AiServiceHost {
             debug: false, aiProvider: "qwen", baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
             chatModelName: "qwen3.6-plus", policyModelName: "", embeddingModelName: "b149-fixed-embedding",
             shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false, webSearchEnabled: false,
-            memoryEnabled: false, licenseTier: "paid", operationsAgentEnabled: false,
+            memoryEnabled: false, licenseTier: "paid",
             operationsProactiveSaveSuggestionsEnabled: false, operationsAuditIncludeContent: false,
             operationsAuditRetentionDays: 30, statisticsVaultId: "b149-synthetic", retrievalOptimizationFlags: {},
         },

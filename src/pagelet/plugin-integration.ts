@@ -17,7 +17,6 @@ export interface PageletFeatureIntegrationDependencies {
     invalidateRetainedReviewLimiter(): void;
     disposeScopeRecap(): void;
     disposeQuietRecall(): void;
-    retireOperations(): void;
     createRuntime(): PaReviewRuntime | null;
     log(message: string, detail?: unknown): void;
 }
@@ -93,7 +92,6 @@ export class PageletFeatureIntegration {
         this.dependencies.releaseFeatureScope();
         this.dependencies.stopDeepDiscover();
         this.destroyOrchestratorAndRuntime();
-        this.dependencies.retireOperations();
         this.dependencies.invalidateRetainedReviewLimiter();
         this.dependencies.disposeScopeRecap();
         this.dependencies.disposeQuietRecall();
@@ -102,7 +100,6 @@ export class PageletFeatureIntegration {
 
     destroyAfterUnloadDrains(): void {
         this.destroyUnloadedRuntime();
-        this.dependencies.retireOperations();
         this.dependencies.invalidateRetainedReviewLimiter();
         this.dependencies.disposeScopeRecap();
         this.dependencies.disposeQuietRecall();
@@ -114,7 +111,6 @@ export class PageletFeatureIntegration {
     }
 
     finishUnloadAfterSharedService(): void {
-        this.dependencies.retireOperations();
         this.dependencies.invalidateRetainedReviewLimiter();
         this.dependencies.disposeScopeRecap();
         this.dependencies.disposeQuietRecall();

@@ -71,7 +71,6 @@ function createMemoryOffHost() {
             webSearchEnabled: false,
             licenseTier: "free",
             memoryEnabled: false,
-            operationsAgentEnabled: false,
             operationsProactiveSaveSuggestionsEnabled: false,
             operationsAuditIncludeContent: false,
             operationsAuditRetentionDays: 30,

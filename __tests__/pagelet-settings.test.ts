@@ -1346,8 +1346,8 @@ describe("renderPageletSection", () => {
         const names = rows.map((row) => row.name);
         expect(names).toEqual(expect.arrayContaining([
             "Enable Pagelet", "Output language", "Discover connections in the background",
-            "Show Pet", "Pet corner", "Proactive hints", "High-value Recap hints",
-            "Quiet Recall", "Enable quiet hours", "Start time", "End time",
+            "Show Pet", "Pet corner", "Proactive hints",
+            "Enable quiet hours", "Start time", "End time",
         ]));
         expect(names).not.toEqual(expect.arrayContaining(["Reviews folder"]));
         expect(names.some((name) => /temperature|token|cap$|cooldown|preparation/i.test(name ?? ""))).toBe(false);
@@ -1478,7 +1478,7 @@ describe("renderPageletSection", () => {
         expect(save).toHaveBeenCalledTimes(1);
     });
 
-    it("reads and writes Quiet Recall through the canonical runtime setting", async () => {
+    it("keeps retired review settings internal while saving current hint preferences", async () => {
         const parent = makeStubNode("div");
         const { factory, rows } = makeStubFactory();
         const { host, save } = makeHost({
@@ -1488,15 +1488,15 @@ describe("renderPageletSection", () => {
         }, "on");
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
-        const quietRecall = rows.find((row) => row.name === "Quiet Recall");
+        expect(rows.find((row) => row.name === "Quiet Recall")).toBeUndefined();
+        expect(rows.find((row) => row.name === "High-value Recap hints")).toBeUndefined();
+        expect(save).not.toHaveBeenCalled();
+        await rows.find((row) => row.name === "Proactive hints")!.toggleOnChange!(false);
 
-        expect(quietRecall?.toggleValue).toBe(true);
-        await quietRecall?.toggleOnChange?.(false);
-
-        expect(host.settings.quietRecall.quietRecallMode).toBe("off");
+        expect(host.settings.quietRecall.quietRecallMode).toBe("on");
         expect(host.settings.pagelet).not.toHaveProperty("quietRecallMode");
         expect(host.settings.pagelet).toMatchObject({
-            proactiveHints: true,
+            proactiveHints: false,
             scopeRecapPreparationEnabled: false,
             scopeRecapHighValueHints: false,
         });
@@ -1510,12 +1510,13 @@ describe("renderPageletSection", () => {
             scopeRecapPreparationEnabled: false,
             scopeRecapBackgroundAuthorization: "declined-v1",
             scopeRecapAuthorizationContextId: null,
+            scopeRecapHighValueHints: false,
         });
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
         const recapPreparation = rows.find((row) => row.name === "Prepare Scope Recap in the background");
         expect(recapPreparation).toBeUndefined();
-        await rows.find((row) => row.name === "High-value Recap hints")?.toggleOnChange?.(false);
+        expect(rows.find((row) => row.name === "High-value Recap hints")).toBeUndefined();
 
         expect(host.settings.pagelet).toMatchObject({
             scopeRecapPreparationEnabled: false,
@@ -1523,7 +1524,7 @@ describe("renderPageletSection", () => {
             scopeRecapAuthorizationContextId: null,
             scopeRecapHighValueHints: false,
         });
-        expect(save).toHaveBeenCalledTimes(1);
+        expect(save).not.toHaveBeenCalled();
     });
 
     it("normalizes reviewsFolder via the same merger on text edit", async () => {

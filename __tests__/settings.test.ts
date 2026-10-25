@@ -1181,9 +1181,7 @@ describe('PA Agent telemetry settings', () => {
 
 describe('Operations Agent settings compatibility', () => {
     it('ignores retired legacy audit controls without creating replacement settings', () => {
-        expect(DEFAULT_SETTINGS.operationsAgentEnabled).toBe(false);
-        expect(mergeLoadedSettings({ operationsAgentEnabled: true }).operationsAgentEnabled).toBe(true);
-        expect(mergeLoadedSettings({ operationsAgentEnabled: false }).operationsAgentEnabled).toBe(false);
+        expect(DEFAULT_SETTINGS).not.toHaveProperty('operationsAgentEnabled');
         const merged = mergeLoadedSettings({
             operationsAuditIncludeContent: true,
             operationsAuditRetentionDays: 90,
@@ -1193,7 +1191,7 @@ describe('Operations Agent settings compatibility', () => {
     });
 
     it('renders the suggestion control without retired audit controls', () => {
-        const plugin = makePlugin({ operationsAgentEnabled: true });
+        const plugin = makePlugin();
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
 
@@ -1279,7 +1277,7 @@ describe('simple settings canonicalization', () => {
 
     it.each([true, false, undefined, 'invalid'])('ignores retired switches with value %p', (value) => {
         const loaded = {
-            memoryAutoCheckBeforeChat: value, skillContextEnabled: value, enabledSkillIds: [],
+            memoryAutoCheckBeforeChat: value, skillContextEnabled: value, enabledSkillIds: [], operationsAgentEnabled: value,
             pagelet: { preloadEnabled: value, deepDiscoverEnabled: value },
         };
         const merged = mergeLoadedSettings(loaded);
@@ -1290,7 +1288,7 @@ describe('simple settings canonicalization', () => {
 
     it('strips only exact retired keys without mutating or normalizing unrelated state', () => {
         const raw = {
-            memoryAutoCheckBeforeChat: false, skillContextEnabled: false, enabledSkillIds: [],
+            memoryAutoCheckBeforeChat: false, skillContextEnabled: false, enabledSkillIds: [], operationsAgentEnabled: false,
             pagelet: { preloadEnabled: false, deepDiscoverEnabled: false,
                 backgroundDiscoveryEnabled: false, proactiveHints: false, preloadInterval: 42 },
             memoryExtractionConsent: { state: 'paused', version: 1 },

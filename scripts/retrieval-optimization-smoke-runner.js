@@ -886,7 +886,7 @@
     "memoryExtractionEnabled",
     "qwenThinkingEnabled", "webSearchEnabled",
     "licenseTier",
-    "focusMode", "quietRecall", "operationsAgentEnabled",
+    "focusMode", "quietRecall",
   ]);
   const PAGELET_EXECUTION_SETTING_KEYS = Object.freeze([
     "enabled", "reviewsFolder", "outputLanguage",

@@ -2,7 +2,7 @@
 
 Decision ID: DEC-021
 Status: Accepted
-Updated: 2026-09-12
+Updated: 2026-10-25
 Authority: 用户于 2026-07-19 要求把当日 UI/UX 审查与桌面/iPhone 实测完整交接给 Claude Code，并用于后续优化开发；2026-07-21 选择 DEC-023 方案 A，补齐 Review/preload 风险分类
 Work item: B-118
 Scoped resolution: SG-01 至 SG-04、SG-07a/SG-07b 已由用户于 2026-07-20
@@ -10,6 +10,14 @@ Scoped resolution: SG-01 至 SG-04、SG-07a/SG-07b 已由用户于 2026-07-20
 [DEC-023](./dec-023-shared-pagelet-provider-first-use.md) 于 2026-07-21 统一，当前无
 未决 SG product stop gate
 Scoped semantic resolution: [DEC-024 — Quiet Recall cold semantic retrieval](./dec-024-quiet-recall-cold-semantic-retrieval.md)
+
+## 2026-10-25 Scoped Successor
+
+[DEC-075](./dec-075-legacy-surface-cleanup.md) 接续“高价值回顾提示”“相关回顾”两个旧
+设置 UI 及所列七个命令入口的保留约定。旧配置读取、来源/权限和有效共享消费者继续
+保留；原 SG 决定及历史桌面/iPhone 证据不回写为新界面验收。具体新范围及交付证据见
+[Bounded Cleanup Spec](../specs/pa-bounded-code-cleanup-product-spec.md) 与
+[B-189 Tracker](../../development/active/legacy-surface-cleanup/tracker.md)。
 
 ## Context
 

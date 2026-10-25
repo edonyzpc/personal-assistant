@@ -1,12 +1,19 @@
 # PA Quiet Recall And Insight Timing Product Spec
 
 Document status: Current
-Updated: 2026-10-05
+Updated: 2026-10-25
 Work item: B-108
 Scoped work items: B-118, B-121
 Decision: [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md)
 Scoped decisions: [DEC-021](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)、[DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md)、[DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)、[DEC-025](../decisions/dec-025-consumption-aware-pagelet-delivery.md)
 Authority: Quiet Recall 的候选、触发、质量、成本、数据、交付、反馈与无自动写入边界。
+
+2026-10-25 scoped successor：[DEC-075](../decisions/dec-075-legacy-surface-cleanup.md)
+退役 Quiet Recall 命令与“相关回顾”设置 UI，保留 `quietRecallMode` 的旧值读取与
+兼容，以及有效共享、历史和评估消费者。下文旧命令路由/UI 不构成恢复要求，不以此
+整批删除 Recall 或改写原验收。具体范围及实施证据见
+[Bounded Cleanup Spec](./pa-bounded-code-cleanup-product-spec.md) 与
+[B-189 Tracker](../../development/active/legacy-surface-cleanup/tracker.md)。
 
 2026-10-05 applicability：[DEC-051](../decisions/dec-051-proportionate-confirmation-and-contract-alignment.md)
 将本文旧 evaluator 的候选 5 改为可调默认，撤销字符正则语言拒绝及自动重试。当前

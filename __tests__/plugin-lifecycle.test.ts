@@ -420,17 +420,43 @@ describe("B-106 settings lifecycle", () => {
         for (const key of ["memoryGovernance", "reviewQueue", "confirmedMemoryCount", "memoryAutoAcceptPaused"] as const) {
             expect(readPersisted()?.[key]).toEqual(raw[key]);
         }
-        await state.saveSettingsData({ ...plugin.settings, skillContextEnabled: false,
+        await state.saveSettingsData({ ...plugin.settings, skillContextEnabled: false, operationsAgentEnabled: true,
             pagelet: { ...plugin.settings.pagelet, deepDiscoverEnabled: false } });
         expect(hasDeprecatedSimpleSettingsFields(readPersisted())).toBe(false);
         expect(readPersisted()).toMatchObject({ baseURL: raw.baseURL, dataBoundary: raw.dataBoundary,
-            operationsAgentEnabled: false, webSearchEnabled: false });
+            webSearchEnabled: false });
         expect(secretStorage.getSecret).not.toHaveBeenCalled();
+    });
+
+    it.each([true, false])("retires a standalone Operations setting with value %s through migration and stale saves", async (value) => {
+        const { plugin, readPersisted } = createPluginHarness({ initialData: {
+            aiProvider: "openai", statisticsVaultId: "settings-test", operationsAgentEnabled: value,
+            operationsProactiveSaveSuggestionsEnabled: false,
+            dataBoundary: { excludedFolders: ["private"], sourceRevocationEpoch: "source:existing" },
+        } });
+        const state = plugin as unknown as Internals;
+
+        await plugin.loadSettings();
+
+        expect(state.pendingSimpleSettingsCanonicalization).toBe(true);
+        expect(plugin.settings).not.toHaveProperty("operationsAgentEnabled");
+        expect(readPersisted()).toHaveProperty("operationsAgentEnabled", value);
+
+        await state.migrateSettings();
+
+        expect(state.pendingSimpleSettingsCanonicalization).toBe(false);
+        expect(readPersisted()).not.toHaveProperty("operationsAgentEnabled");
+        await state.saveSettingsData({ ...plugin.settings, operationsAgentEnabled: !value });
+        expect(readPersisted()).not.toHaveProperty("operationsAgentEnabled");
+        expect(readPersisted()).toMatchObject({
+            operationsProactiveSaveSuggestionsEnabled: false,
+            dataBoundary: { excludedFolders: ["private"], sourceRevocationEpoch: "source:existing" },
+        });
     });
 
     it("keeps canonicalization pending after a failed write and retries", async () => {
         const { plugin, adapter, readPersisted } = createPluginHarness({ initialData: {
-            aiProvider: "openai", statisticsVaultId: "settings-test", skillContextEnabled: false,
+            aiProvider: "openai", statisticsVaultId: "settings-test", operationsAgentEnabled: false,
         } });
         const state = plugin as unknown as Internals;
         await plugin.loadSettings();
@@ -638,7 +664,7 @@ describe('B-106 feature and permission Plugin integration', () => {
         const harness = createPluginHarness({ initialData: {
             aiProvider: 'qwen', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
             chatModelName: 'qwen-plus', embeddingModelName: 'text-embedding-v4',
-            webSearchEnabled: false, operationsAgentEnabled: false,
+            webSearchEnabled: false,
             statisticsSyncEnabled: false,
             learningPreferences: { version: 1, memoryExtraction: 'default', habitLearning: 'disabled' },
         }, secretStorageValues: { 'pa-api-token': 'synthetic-token' } });
@@ -706,21 +732,21 @@ describe('B-106 feature and permission Plugin integration', () => {
         const { plugin, state, adapter } = await fixture();
         const queued = deferred();
         state.settingsSaveTail = queued.promise;
-        const requested = { operationsAgentEnabled: true, retrievalHabitProfile: { enabled: true } };
+        const requested = { webSearchEnabled: true, retrievalHabitProfile: { enabled: true } };
         const saving = plugin.saveSettingsPermissions(requested);
         requested.retrievalHabitProfile.enabled = false;
         adapter.process.mockRejectedValueOnce(new Error('disk unavailable'));
         const rejected = expect(saving).rejects.toThrow('disk unavailable');
         queued.resolve();
         await rejected;
-        expect(plugin.settings.operationsAgentEnabled).toBe(false);
+        expect(plugin.settings.webSearchEnabled).toBe(false);
         expect(plugin.settings.retrievalHabitProfile.enabled).toBe(false);
         expect(state.settingsPersistence.notifySettingsChanged).not.toHaveBeenCalled();
         requested.retrievalHabitProfile.enabled = true;
         const retry = plugin.saveSettingsPermissions(requested);
         requested.retrievalHabitProfile.enabled = false;
         await retry;
-        expect(plugin.settings.operationsAgentEnabled).toBe(true);
+        expect(plugin.settings.webSearchEnabled).toBe(true);
         expect(plugin.settings.retrievalHabitProfile.enabled).toBe(true);
     });
 
@@ -1957,8 +1983,6 @@ describe("inline AI setup coordinator", () => {
         internals.pageletFeatureScope = scope;
         internals.pageletOrchestrator = orchestrator as never;
         internals.resetDeepDiscoverController = jest.fn();
-        internals.retirePageletOperationsSession = jest.fn();
-        (internals.pageletOperationsIntegration as { selfWrites: Map<string, unknown> }).selfWrites = new Map();
         internals.reviewQueueStore = null;
         internals.savedInsightStore = null;
         internals.memoryGovernanceStore = null;
@@ -2148,8 +2172,6 @@ describe("inline AI setup coordinator", () => {
                 expect.objectContaining({ message: "stale initialization failed" }),
             );
 
-            internals.retirePageletOperationsSession = jest.fn();
-            (internals.pageletOperationsIntegration as { selfWrites: Map<string, unknown> }).selfWrites = new Map();
             internals.reviewQueueStore = null;
             internals.savedInsightStore = null;
             internals.memoryGovernanceStore = null;

@@ -322,7 +322,6 @@ function createHost(extraContents: Record<string, string> = {}): AiServiceHost {
             webSearchEnabled: false,
             licenseTier: 'paid',
             memoryEnabled: false,
-            operationsAgentEnabled: false,
             statisticsVaultId: 'vault',
         },
         log: jest.fn(),

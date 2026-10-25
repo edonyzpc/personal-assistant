@@ -1,12 +1,14 @@
 # Active Development Registry
 
 Document status: Current
-Updated: 2026-10-24
+Updated: 2026-10-25
 Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governance/tooling track 索引。
 
 新 track 只登记 Work item、Feature Home 与 Tracker。执行状态唯一权威是 Tracker，本索引不复制状态、目标、日期或 task 明细。
 
-当前没有未完成的 Active Package。新增 track 时按 Work item、Feature Home、Tracker 登记。
+| Track | Work item | Feature Home | Tracker |
+| --- | --- | --- | --- |
+| Legacy Surface Cleanup | B-189 | [Feature Home](./legacy-surface-cleanup/README.md) | [Tracker](./legacy-surface-cleanup/tracker.md) |
 
 已完成任务的稳定契约留在 Product/Governance/Architecture，
 独有历史验证及处置见 [Disposition Log](../../archive/disposition-log.md)，
