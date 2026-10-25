@@ -220,7 +220,11 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         const host = createPromptHost();
         const realFetch = globalThis.fetch;
         const requests: Array<{ messages: Array<{ role: string; content: string }>;
-            tools?: Array<{ function?: { name?: string } }> }> = [];
+            tools?: Array<{ function?: {
+                name?: string;
+                description?: string;
+                parameters?: { properties?: { query?: { description?: string } } };
+            } }> }> = [];
         const lifecycle: Array<{ type: string; message?: PaAgentMessage }> = [];
         let deferredNames: string[] = [];
         globalThis.fetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
@@ -278,6 +282,45 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(secondSystem).not.toContain("Deferred tools (");
         expect(secondSystem).not.toContain("Use load_tools only after reading the deferred tool directory");
         expect(secondSystem).toContain("Use for an explicit recent top-N request");
+        const methodGuidance = (system: string) => {
+            const inspectStart = system.indexOf("obsidian.metadata.inspect:");
+            const linksStart = system.indexOf("obsidian.metadata.links:", inspectStart);
+            const linksEnd = system.indexOf("obsidian.metadata.resolveLink:", linksStart);
+            return { inspect: system.slice(inspectStart, linksStart), links: system.slice(linksStart, linksEnd) };
+        };
+        const finalGuidance = methodGuidance(secondSystem);
+        expect(finalGuidance.inspect).toContain("`tags` contains body TagCache rows and is not merged with `frontmatter` tags");
+        expect(finalGuidance.inspect).toContain("array cache fields produce `{field,value}` rows, and object cache fields produce `{field,key,value}` rows");
+        expect(finalGuidance.inspect).toContain("means only the selected fields produced no rows in this cache observation");
+        expect(finalGuidance.links).toContain("`value.path → entry.target`");
+        expect(finalGuidance.links).toContain("`entry.source → value.path`");
+        expect(finalGuidance.links).toContain("neither proves B → A");
+        const linksStart = firstSystem.indexOf("obsidian.metadata.links:");
+        const linksEnd = firstSystem.indexOf("obsidian.metadata.resolveLink:", linksStart);
+        const linksGuidance = firstSystem.slice(linksStart, linksEnd);
+        expect(linksGuidance).toContain("value.entries");
+        expect(linksGuidance).toContain("unknown, not_applicable, or absent entries are not confirmed no-links observations");
+
+        for (const [request, system] of [[requests[0], firstSystem], [requests[1], secondSystem]] as const) {
+            const metadataFunction = request.tools?.find(tool => tool.function?.name === "search_vault_metadata")?.function;
+            expect(metadataFunction?.description).toContain("broad keyword matching");
+            expect(metadataFunction?.description).toContain("a filename or path alone can match");
+            expect(metadataFunction?.parameters?.properties?.query?.description).toContain("not an exact tag predicate");
+            const metadataGuidance = system.slice(system.indexOf("Available tool definitions:"))
+                .split("\n")
+                .filter(line => line.startsWith("{\"name\":"))
+                .map(line => JSON.parse(line) as { name?: string; planner_guidance?: string[] })
+                .find(row => row.name === "search_vault_metadata")?.planner_guidance ?? [];
+            expect(metadataGuidance).not.toEqual([]);
+            const joinedGuidance = metadataGuidance.join("\n");
+            expect(joinedGuidance).toContain("does not identify which field matched");
+            expect(joinedGuidance).toContain("unreturned fields are not read values and are not established absent");
+            expect(joinedGuidance).toContain("not exact tag equality");
+            expect(joinedGuidance).toContain("not that shared tags or topical relevance are proven");
+            expect(joinedGuidance).toContain("keeps matchCount as the exact total");
+            expect(joinedGuidance).toContain("requires actual field evidence or an explicit-condition query");
+            expect(joinedGuidance).toContain("autonomously choose more querying or reading, qualified wording, or omit");
+        }
 
         const loadResults = lifecycle.flatMap(event => event.type === "message_end" && event.message?.role === "toolResult"
             && event.message.toolName === "load_tools" ? [event.message] : []);

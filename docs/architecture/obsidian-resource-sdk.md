@@ -1,7 +1,7 @@
 # Obsidian Resource SDK
 
 Document status: Current
-Updated: 2026-10-14
+Updated: 2026-10-25
 Work item: B-174
 Authority: 已实现的核心 SDK 接线与数据合同；产品范围由 [DEC-064](../product/decisions/dec-064-obsidian-resource-sdk.md) 和 [Product Spec](../product/specs/pa-obsidian-resource-sdk-product-spec.md) 持有。
 
@@ -39,7 +39,8 @@ execute 路径。准备结果绑定精确子批次，不以 turn 全局槽承接
 其余既有 query/read/search/create/append/process/frontmatter/move 工具保持原接口。
 SDK 方法标为同一 registry 的 `sdkOnly` 能力，不逐一复制成顶层工具。
 
-guest 根对象为 `obsidian`。全部方法返回 Promise；以下表格省略该前缀。
+guest 中 `obsidian.*` 与 `tools.*` 是并列顶层入口，二者的动态调用均沿原 Host 执行链。
+SDK 根对象为 `obsidian`，全部方法返回 `Promise<SdkResult<T>>`；以下表格省略该前缀。
 精确参数/schema/validator 由 [读取定义](../../src/ai-services/independent-computation/obsidian-sdk-tool-definitions.ts)
 与 [Operations provider](../../src/ai-services/operations/operations-tool-provider.ts) 同源维护。
 
@@ -63,10 +64,23 @@ guest 根对象为 `obsidian`。全部方法返回 Promise；以下表格省略�
 | `operations.undo({receiptId})` | 原 owner 的会话内有效反向操作；身份、当前范围、碰撞及具体恢复资源仍需有效 |
 
 `tools.<name>(args)` 调用当前绑定且获准的既有能力，保持其原结果格式。
-`load_tools` 只影响后续 provider 请求披露；不安装、不授权，也不产生嵌套 Agent/Worker。
+`ALL_TOOLS` 只列出绑定到 `tools` 的规范化普通工具名称和说明，不包含 SDK、完整参数
+schema 或全部原名别名。外层 `load_tools` 只影响后续 provider 请求披露；不安装、
+不授权、不启用 SDK，也不产生嵌套 Agent/Worker；guest 中没有 `tools.load_tools`。
 指导按当前 registry 实例生成；Skill 只提供按需语法帮助，没有必经 Skill 或固定工具顺序。
+脚本入口按当前 `sdkOnly` / `canExecute` 筛选逐方法披露 description、Input 和原有
+plannerGuidance，保留方法作用域与顺序；共用 SdkResult 包络只在入口说明一次，普通
+`list_vault_entries` facade 仍保留自身说明。方法注销或策略排除后不再披露，不维护
+另一份能力清单；方法指导不提升为全局调用前置条件。
 固定 `markdownit`、`jsyaml` 在 guest 内可用，版本与许可见 package/THIRD_PARTY_NOTICES；
 没有任意 import 或运行时下载。
+
+[guest prelude](../../src/third_party/pi-codemode/runtime/prelude-source.ts) 对缺失成员生成
+`TypeError`：先保留真实成员；若 `tools` 中的缺失名字精确对应本次实际顶层绑定，
+说明该根是函数还是命名空间，并仅使用实际成员信息，不猜后续路径层数。其他拼写
+候选来自当前命名空间；空普通工具集合只说明普通工具为空，不臆断权限或加载原因。
+错误不推荐未注入的 `searchTools`，也不自动改写、加载、执行或重试。模型请求指导和
+脚本绑定分别依据各自时点的事实；纠错不改变 Agent 的工具选择或原效果结果链。
 
 ## 数据与身份合同
 
@@ -88,6 +102,29 @@ cursor 绑定原查询、对象与版本，不能混用到新查询或新对象�
 三种事实保持独立：vault.readText 是保存文本，workspace snapshot 是实际 editor buffer，
 metadata 是缓存观察。缓存没有可证明的文本版本时返回 unknown，不能当作写回凭证，
 也不强制等待刷新。全文 replace 的 expectedVersion 来自原保存文本 sourceVersion。
+
+`metadata.inspect` 的 fields 声明复用校验 owner 的 CACHE_FIELDS：frontmatter、headings、
+tags、sections、blocks、links、embeds。省略时选全部受支持字段，显式空数组选零字段，
+重复字段仍接受。tags 是正文 TagCache，不与 frontmatter 标签合并；文档属性保留原值
+和类型。可用结果在 `value.entries`：数组缓存每项为 `{field,value}`，对象缓存每键为
+`{field,key,value}`，例如 frontmatter 标签的 field 为 frontmatter、key 为 tags。
+available + complete + 空 entries 仅说明所选字段在本次缓存观察中没有行；range.total
+也是这些字段产生的行数，不能外推未选字段、保存文本或全库没有元数据/关联。
+unknown/not_applicable 或缺 entries 不作完整空结果，sourceVersion unknown 不是写版本。
+字段选择、是否续读或改用其他合法能力仍由 Agent 判断，不增加全部字段或完整分页的必经步骤。
+
+`metadata.links` 的可用缓存观察返回 `value.entries`，不是 `value.links` 或独立的
+`value.unresolved`。outgoing 行用 link/state 与可得 target；restricted 行只披露
+准入事实。已解析 outgoing 的方向为 `value.path → entry.target`，incoming 为
+`entry.source → value.path`，entry.target 即查询笔记。A outgoing 命中 B 与 B incoming
+来源为 A 可以是同一 A → B 的两个视角，不能证明 B → A；resolved 表示目标已解析，
+不表示互链。这些说明不要求双向查询或规定工具路径。
+incoming 行来自原生已解析计数，含 source/target/count/state，不枚举全部
+未解析入链。unknown/not_applicable 可缺 entries；只有 available + complete + 空
+entries 才是本次获准缓存观察的完整空结果。range.start/end 是页范围，total 是本次
+查询集合大小；restricted 仍可有 entries 且没有 nextCursor。Agent 自行决定续页与
+结果归约；字段缺失或程序投影 `{}` 不证明无链接。该说明沿方法指导进入模型请求，
+不改变返回对象、不添加别名、自动回灌或重试；说明可见不保证模型解释必然正确。
 
 editor snapshot 绑定真实 leaf/view/editor/file；原生 CRLF 规范化后的 buffer 才是坐标
 依据。`edits:{from,to,text}[]` 全部基于同一原快照，范围合法且非重叠；同位插入和
@@ -157,3 +194,5 @@ Worker、WASM、固定库全部内嵌；安装仍仅需 main.js、manifest.json�
 回退撤回新入口、保留纯计算与旧工具；不得通过隐藏入口抹去已经发生的效果。
 
 实际验证、已批准限制及未覆盖平台见 [B-174 验证记录](../archive/2026/b174-obsidian-resource-sdk-validation.md)。
+后续根入口、返回字段与搜索语义披露修正及模型观察边界见
+[接口一致性验证](../archive/2026/b174-interface-consistency-validation.md)。

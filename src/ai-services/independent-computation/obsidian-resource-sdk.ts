@@ -125,7 +125,7 @@ export const SDK_ITEMS_PER_PAGE = 200;
 // Retained read credentials are run-local observations, not another cache or Undo store.
 export const SDK_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const SINGLE_READ_BYTES = SDK_SNAPSHOT_BYTES / 4;
-const CACHE_FIELDS = ["frontmatter", "headings", "tags", "sections", "blocks", "links", "embeds"] as const;
+export const CACHE_FIELDS = ["frontmatter", "headings", "tags", "sections", "blocks", "links", "embeds"] as const;
 const BINARY_EXTENSIONS = new Set("png jpg jpeg gif webp avif heic bmp ico tif tiff psd pdf mp3 mp4 m4a mov wav ogg flac webm woff woff2 ttf otf zip gz tar 7z rar doc docx xls xlsx ppt pptx epub db sqlite sqlite3 wasm bin exe dll dylib so dmg apk".split(" "));
 export function isObsidianTextPath(path: string): boolean {
     return !BINARY_EXTENSIONS.has(path.split(".").pop()!.toLowerCase());

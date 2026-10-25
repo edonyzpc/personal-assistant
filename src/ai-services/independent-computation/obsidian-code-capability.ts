@@ -74,7 +74,9 @@ export function createExecuteObsidianCodeTool(): ChatToolDefinition<
         },
         plannerGuidance: [
             "Use for a concrete multi-step algorithm that benefits from JavaScript control flow and dynamic values.",
-            "The Host validates, admits, times, and records every tools.* call independently; loading/disclosure does not grant or remove execution authority.",
+            "obsidian.* and tools.* are parallel top-level roots: await obsidian.<namespace>.<method>(args) for SdkResult, or await tools.<name>(args) for the existing tool's original result.",
+            "The Host validates, admits, times, and records every dynamic obsidian.* and tools.* call independently; loading/disclosure does not grant or remove execution authority.",
+            "The outer load_tools tool only changes which ordinary tools are disclosed in later provider requests; it is not bound as tools.load_tools and does not enable SDK methods.",
             "A script return value is program output, not proof that a domain effect completed or failed. Use returned operation identities and existing status tools for recovery.",
         ],
         permission: "read-only",

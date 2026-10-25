@@ -707,6 +707,25 @@ and [Write Action Framework](./write-action-framework-sdd.md).
 
 ### B-140 note, Memory, and insight capabilities
 
+`search_vault_metadata` is a multi-field keyword search: a filename or path can
+match without a matching tag. Its lightweight `matches` contain only `path`,
+`title`, and optional `mtime`/`ctime`; they do not identify the matching field or
+return tags, frontmatter, scores, or match reasons. Unreturned fields are neither
+observed values nor evidence of absence. `matchCountKind: exact` describes the
+matching-note count, and `coverage.state: complete` describes completion over the
+permitted scope. Neither establishes a specific relationship such as shared tags.
+An explicit limit applies after complete matching and leaves the total count
+unchanged, so complete coverage does not imply that a limited list contains every
+hit. These semantics belong to the tool's local definition and use the existing
+registry/native-schema/planner-guidance path. The Agent decides whether existing
+field or explicit-condition query evidence supports a relationship, whether to
+gather more evidence, or whether to qualify or omit that claim; no tool or sequence
+is mandatory. Matching, result projection, `load_tools`, and Host admission remain
+unchanged.
+
+The disclosure correction and its scoped model evidence are recorded in the
+[B-174 interface validation](../archive/2026/b174-interface-consistency-validation.md).
+
 The main Agent receives the approved read tools at the first turn, subject to the live Host and policy. Under [DEC-059](../product/decisions/dec-059-complete-note-query-results.md), `query_notes` uses the public Vault file list and MetadataCache to evaluate the complete permitted scope and return all matching notes by default; date field and timezone are explicit, with the Agent explaining its contextual choice when the user leaves them open. `search_vault_metadata` likewise returns the complete lightweight metadata match list. `search_vault_snippets` performs literal saved-text matching locally and returns each matching note once with a first-match location, without body excerpts. These three list queries do not require model-driven pagination or directory splitting; an explicit top-N limit applies after complete matching. `read_note` retains public Vault/Editor reads with a versioned, bounded range and continuation for on-demand body access. `inspect_obsidian_note` uses public cached metadata first and reads/parses Markdown only for missing or requested details. These tools share target admission and coverage facts; accepted read snapshots follow DEC-055 across generation and retries. None creates a second persistent vault index. Historical validation and its limits are recorded in the [B-169 validation](../archive/2026/b169-complete-note-query-validation.md).
 
 `get_memory_status`, `query_memories`, and `get_memory_usage` project existing Control Center, governance, and usage records. `manage_memory` binds an explicit current-user request to the existing admission and governance coordinator; pending, review, cancellation, and committed effects stay distinct. The new `get_vault_insights` and `query_saved_insights` only read the existing Type-C snapshot and Saved Insight ledger, preserving generation time, coverage, source strength, status, and weak-only effect. Current factual claims still require the note read tools. `manage_saved_insight` applies an explicit save, Later, archive, or restore through the existing ledger or Review queue with request/source/target version checks; it never promotes a saved item to Memory or edits a note. Pagelet's ordinary discovery remains a separate read-only run bound to its frozen anchor and existing Review delivery flow.

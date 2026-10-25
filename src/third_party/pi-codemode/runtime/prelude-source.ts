@@ -322,30 +322,35 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	// Reading a member that does not exist throws an error that names the close matches, instead of
 	// a later "not a function". \`in\` checks still work.
 	const comparable = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
-	function guard(target, label, names, hint) {
+	function guard(target, label, names, topLevels) {
 		return new Proxy(target, {
 			get(object, property, receiver) {
 				if (typeof property !== "string" || property in object || property in Object.prototype || property === "then" || property === "toJSON") {
 					return Reflect.get(object, property, receiver);
 				}
 				const wanted = comparable(property);
+				const topLevel = label === "tools" ? topLevels.get(property) : undefined;
 				const exact = names.filter((name) => comparable(name) === wanted);
 				const close = exact.length > 0 ? exact : names.filter((name) => wanted && (comparable(name).includes(wanted) || wanted.includes(comparable(name))));
 				let message = label + "." + property + " does not exist.";
-				if (close.length > 0) message += " Did you mean " + close.slice(0, 5).map((name) => label + "." + name).join(", ") + "?";
-				else if (names.length <= 20) message += " Available: " + names.join(", ") + ".";
-				if (hint) message += " " + hint;
-				message += ' Check for a member with "' + property + '" in ' + label + ".";
+				if (topLevel && topLevel.kind === "namespace") {
+					message += " " + property + " is a top-level namespace, not a tools member; bound top-level members: "
+						+ topLevel.members.join(", ") + ".";
+				} else if (topLevel && topLevel.kind === "function") {
+					message += " " + property + " is a top-level function, not a tools member; call " + property + "(...) directly.";
+				} else {
+					if (close.length > 0) message += " Did you mean " + close.slice(0, 5).map((name) => label + "." + name).join(", ") + "?";
+					else if (label === "tools" && names.length === 0) message += " No ordinary tools are bound in this script.";
+					else message += " No close member match is bound under " + label + ".";
+					message += ' Check for a member with "' + property + '" in ' + label + ".";
+				}
+				if (label === "tools") {
+					message += " ALL_TOOLS lists the names and descriptions of bound ordinary tools only.";
+				}
 				throw new TypeErrorCtor(message);
 			},
 		});
 	}
-	const toolsProxy = guard(
-		tools,
-		"tools",
-		allTools.map((tool) => tool.name),
-		"ALL_TOOLS lists every tool; searchTools(query) finds tools by topic.",
-	);
 
 	const namespaces = new Map();
 	const roots = new Map();
@@ -382,6 +387,18 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 		}
 	}
 	for (const [name, value] of roots) Object.defineProperty(globalThis, name, { value, enumerable: true });
+	// Root descriptions are made only after globals are grouped. They name the
+	// actual direct members of a namespace without guessing a deeper call shape.
+	const topLevelBindings = new Map([...roots].map(([name, value]) => {
+		if (typeof value === "function") return [name, { kind: "function" }];
+		return [name, { kind: "namespace", members: Object.keys(value) }];
+	}));
+	const toolsProxy = guard(
+		tools,
+		"tools",
+		allTools.map((tool) => tool.name),
+		topLevelBindings,
+	);
 
 	// key -> JSON text. Sizes count key and JSON characters.
 	const stored = new Map(Object.entries(parse(storeJson)));

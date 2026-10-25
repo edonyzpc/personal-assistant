@@ -1682,7 +1682,7 @@ describe("B-140 T-07 vault observation physical integration", () => {
             f,
             // sourceMessages:[2] must refer to A in this complete first exchange,
             // before the retry and the later budget-hidden answer preparation.
-            "A_HIDDEN_AFTER_CHANGE " + distinctContext('Public source A', 50),
+            "A_HIDDEN_AFTER_CHANGE " + distinctContext('Public source A', 51),
             "B_INDEPENDENT_HISTORY_CHOICE " + distinctContext('Public source B', 50),
         );
         installed.history.push({ role: 'assistant', content: 'Acknowledged the current material.' });

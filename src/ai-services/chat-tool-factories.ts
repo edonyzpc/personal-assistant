@@ -596,10 +596,13 @@ export function createSearchVaultMetadataTool(
 ): ChatToolDefinition<SearchVaultMetadataInput, SearchVaultMetadataOutput> {
     return withTaskSourceReadBoundary({
         name: "search_vault_metadata",
-        description: "Search Markdown note filenames, paths, tags, and frontmatter metadata.",
+        description: "Search Markdown note filenames, paths, tags, and frontmatter with broad keyword matching; a filename or path alone can match.",
         plannerGuidance: [
             "Use when the user wants to find notes by title, path, tag, frontmatter, folder, or metadata keyword.",
-            "Omit limit for the complete matching-note list; supply limit only for an explicit user top-N request.",
+            "Omit limit for the complete matching-note list; supply limit only for an explicit user top-N request. An explicit limit is applied after complete matching and keeps matchCount as the exact total; coverage complete does not mean a limited matches list includes every hit.",
+            "A match is a candidate: it does not identify which field matched, and `matches` contains only path/title plus optional mtime/ctime. Tags, frontmatter, score, and match reasons are not returned; unreturned fields are not read values and are not established absent.",
+            "`matchCountKind: exact` means the exact number of matching notes, not exact tag equality. `coverage.state: complete` means the permitted-scope search completed, not that shared tags or topical relevance are proven.",
+            "A specific relationship requires actual field evidence or an explicit-condition query. Existing evidence may suffice; otherwise autonomously choose more querying or reading, qualified wording, or omit the unsupported relationship.",
             "This returns vault facts and note paths; it does not create Memory references or user preferences.",
         ],
         inputSchema: {
@@ -607,7 +610,7 @@ export function createSearchVaultMetadataTool(
             properties: {
                 query: {
                     type: "string",
-                    description: "Filename, path, tag, or frontmatter search query.",
+                    description: "Keyword query across filename, path, tags, and frontmatter; this is not an exact tag predicate.",
                 },
                 limit: {
                     type: "integer",

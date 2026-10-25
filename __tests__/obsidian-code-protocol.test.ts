@@ -34,6 +34,149 @@ describe("composed RPC protocol boundaries", () => {
         await sandbox.close();
     });
 
+    it("explains missing members from the actual roots and namespace members without host calls", async () => {
+        const calls: string[] = [];
+        const sandbox = new CodemodeSandboxBase({
+            timeoutMs: 2_000,
+            callResourceLimits: OBSIDIAN_CODE_CALL_RESOURCE_LIMITS,
+            globals: [{ name: "obsidian.metadata.links", execute: input => {
+                calls.push("obsidian.metadata.links");
+                return input;
+            } }, { name: "utility.ping", execute: input => {
+                calls.push("utility.ping");
+                return input;
+            } }],
+            tools: [{ name: "inspect_obsidian_note", execute: input => {
+                calls.push("inspect_obsidian_note");
+                return input;
+            } }],
+        }, inlineLauncher(await wasm));
+        try {
+            const result = await sandbox.execute(`
+                const attempt = async action => {
+                    try { return await action(); } catch (error) { return error.message; }
+                };
+                return {
+                    wrongRoot: await attempt(() => tools.obsidian.metadata.links({target: {path: "Cat.md"}})),
+                    twoPartRoot: await attempt(() => tools.utility.ping()),
+                    ordinaryTypo: await attempt(() => tools.inspect_obsidian_not({path: "Cat.md"})),
+                    sdkTypo: await attempt(() => obsidian.metadata.link({target: {path: "Cat.md"}})),
+                };
+            `);
+            expect(result).toMatchObject({ ok: true });
+            if (!result.ok) throw new Error(result.error.message);
+            const messages = result.value as {
+                wrongRoot: string; twoPartRoot: string; ordinaryTypo: string; sdkTypo: string;
+            };
+            expect(messages.wrongRoot).toContain("tools.obsidian does not exist");
+            expect(messages.wrongRoot).toContain("obsidian is a top-level namespace");
+            expect(messages.twoPartRoot).toContain("tools.utility does not exist");
+            expect(messages.twoPartRoot).toContain("utility is a top-level namespace");
+            expect(messages.twoPartRoot).toContain("bound top-level members: ping");
+            expect(messages.twoPartRoot).not.toContain("utility.<namespace>.<method>(args)");
+            expect(messages.wrongRoot).toContain("ALL_TOOLS lists the names and descriptions of bound ordinary tools only");
+            expect(messages.wrongRoot).not.toContain("inspect_obsidian_note");
+            expect(messages.wrongRoot).not.toContain("metadata.links");
+            expect(messages.wrongRoot).not.toContain("searchTools");
+            expect(messages.ordinaryTypo).toContain("tools.inspect_obsidian_note");
+            expect(messages.ordinaryTypo).not.toContain("obsidian.metadata.links");
+            expect(messages.ordinaryTypo).not.toContain("searchTools");
+            expect(messages.sdkTypo).toContain("obsidian.metadata.links");
+            expect(messages.sdkTypo).not.toContain("searchTools");
+            expect(calls).toEqual([]);
+        } finally {
+            await sandbox.close();
+        }
+
+        const empty = new CodemodeSandboxBase({
+            timeoutMs: 2_000,
+            globals: [{ name: "obsidian.metadata.links", execute: input => input }],
+        }, inlineLauncher(await wasm));
+        try {
+            const result = await empty.execute(`
+                const attempt = async action => {
+                    try { return await action(); } catch (error) { return error.message; }
+                };
+                return {
+                    wrongRoot: await attempt(() => tools.obsidian),
+                    unknownTool: await attempt(() => tools.unrelated),
+                    allTools: ALL_TOOLS.map(tool => tool.name),
+                };
+            `);
+            expect(result).toMatchObject({ ok: true });
+            if (!result.ok) throw new Error(result.error.message);
+            const value = result.value as { wrongRoot: string; unknownTool: string; allTools: string[] };
+            expect(value.allTools).toEqual([]);
+            expect(value.wrongRoot).toContain("tools.obsidian does not exist");
+            expect(value.wrongRoot).toContain("obsidian is a top-level namespace");
+            expect(value.wrongRoot).toContain("bound top-level members: metadata");
+            expect(value.wrongRoot).not.toContain("Available:");
+            expect(value.wrongRoot).not.toContain("searchTools");
+            expect(value.unknownTool).toContain("No ordinary tools are bound in this script");
+            expect(value.unknownTool).not.toContain("unavailable");
+            expect(value.unknownTool).not.toContain("Available:");
+            expect(value.unknownTool).not.toContain("searchTools");
+        } finally {
+            await empty.close();
+        }
+
+        const noGlobals = new CodemodeSandboxBase({ timeoutMs: 2_000 }, inlineLauncher(await wasm));
+        try {
+            const result = await noGlobals.execute(`
+                try { tools.obsidian; } catch (error) { return error.message; }
+            `);
+            expect(result).toMatchObject({ ok: true });
+            if (!result.ok) throw new Error(result.error.message);
+            const message = result.value as string;
+            expect(message).toContain("tools.obsidian does not exist");
+            expect(message).not.toContain("obsidian is a top-level");
+            expect(message).not.toContain("Available:");
+            expect(message).not.toContain("searchTools");
+        } finally {
+            await noGlobals.close();
+        }
+    });
+
+    it("keeps an ordinary member with the same name as a root and describes a root function accurately", async () => {
+        const calls: string[] = [];
+        const sandbox = new CodemodeSandboxBase({
+            timeoutMs: 2_000,
+            callResourceLimits: OBSIDIAN_CODE_CALL_RESOURCE_LIMITS,
+            globals: [
+                { name: "obsidian.metadata.links", execute: input => input },
+                { name: "helper", execute: input => {
+                    calls.push("helper");
+                    return input;
+                } },
+            ],
+            tools: [{ name: "obsidian", execute: input => {
+                calls.push("tools.obsidian");
+                return input;
+            } }],
+        }, inlineLauncher(await wasm));
+        try {
+            const result = await sandbox.execute(`
+                let missingRoot;
+                try { tools.helper; } catch (error) { missingRoot = error.message; }
+                return {
+                    rootType: typeof obsidian.metadata.links,
+                    direct: await tools.obsidian("called"),
+                    missingRoot,
+                };
+            `);
+            expect(result).toMatchObject({ ok: true, value: { rootType: "function", direct: "called" } });
+            if (!result.ok) throw new Error(result.error.message);
+            const value = result.value as { missingRoot: string };
+            expect(value.missingRoot).toContain("tools.helper does not exist");
+            expect(value.missingRoot).toContain("helper is a top-level function");
+            expect(value.missingRoot).toContain("call helper(...)");
+            expect(value.missingRoot).not.toContain("helper is a top-level namespace");
+            expect(calls).toEqual(["tools.obsidian"]);
+        } finally {
+            await sandbox.close();
+        }
+    });
+
     it("reserves a live sender slot before serialization and drains more calls than the in-flight allowance", async () => {
         let release!: () => void;
         const first = new Promise<void>(resolve => { release = resolve; });
