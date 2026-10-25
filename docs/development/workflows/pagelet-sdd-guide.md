@@ -928,8 +928,7 @@ src/
 │   │   └── PanelLayouts.ts     # Scenario-adaptive layouts (timeline, discovery, etc.)
 │   ├── tab/
 │   │   └── TabView.ts          # Full tab workspace
-│   ├── preload/
-│   │   └── PreloadBudget.ts  # Retained foreground analysis budget
+│   ├── pa-review-rate-limit.ts # Current call budgets; unused PreloadBudget retired by DEC-075
 │   ├── agent/
 │   │   ├── pagelet-deep-discover-controller.ts # Current discovery admission/run/cache
 │   │   └── pagelet-deep-discover-scheduler.ts  # Explicit and automatic scheduling

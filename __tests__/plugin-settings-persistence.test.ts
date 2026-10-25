@@ -154,6 +154,47 @@ describe("B-143 settings persistence owner", () => {
         expect(saveData).not.toHaveBeenCalled();
     });
 
+    it.each([true, false])("retires unused sharing and weekly switches set to %s without dropping history", async (value) => {
+        const actionLog = [{
+            id: "move-history", proposalId: "proposal", reviewQueueItemId: "queue",
+            actionType: "move", status: "applied", oldPath: "Inbox/note.md", newPath: "Notes/note.md",
+            appliedAt: "2026-10-25T00:00:00.000Z", sourceRefs: [{
+                path: "Inbox/note.md", excerptHash: "source-hash", whyShown: ["Inbox note"], evidenceStrength: "medium",
+            }], dataBoundarySnapshotId: "boundary", undoStrategy: "move_back",
+        }];
+        const weeklyHistory = { records: ["Reviews/existing.md"] };
+        const saveData = jest.fn(async (_data: unknown) => undefined);
+        const owner = createOwner({
+            ...cloneSettings(DEFAULT_SETTINGS), aiProvider: "openai", statisticsVaultId: "settings-owner-test",
+            shareAnonymousCapabilityUsage: value,
+            weeklyReview: { enabled: value, preparedReviewEnabled: value, history: weeklyHistory },
+            maintenanceReview: { weeklyScanEnabled: value, actionLog },
+        }, { saveData });
+
+        await owner.loadSettings();
+        expect(saveData).not.toHaveBeenCalled();
+        await owner.migrateSettings();
+        expect(saveData).toHaveBeenCalledTimes(1);
+        expect(saveData).toHaveBeenLastCalledWith(expect.objectContaining({
+            weeklyReview: { history: weeklyHistory }, maintenanceReview: { actionLog },
+        }));
+
+        await owner.saveSettingsData({
+            ...owner.currentSettings,
+            shareAnonymousCapabilityUsage: !value,
+            weeklyReview: { enabled: !value, preparedReviewEnabled: !value, history: weeklyHistory },
+            maintenanceReview: { ...owner.currentSettings.maintenanceReview, weeklyScanEnabled: !value },
+        } as PluginManagerSettings);
+        const persisted = saveData.mock.calls.at(-1)?.[0];
+        expect(persisted).not.toHaveProperty("shareAnonymousCapabilityUsage");
+        expect(persisted).not.toHaveProperty("weeklyReview.enabled");
+        expect(persisted).not.toHaveProperty("weeklyReview.preparedReviewEnabled");
+        expect(persisted).not.toHaveProperty("maintenanceReview.weeklyScanEnabled");
+        expect(persisted).toMatchObject({
+            weeklyReview: { history: weeklyHistory }, maintenanceReview: { actionLog },
+        });
+    });
+
     it("drains required transactions and writes admitted while draining to a fixed point", async () => {
         const owner = createOwner({ author: "queue" });
         await owner.loadSettings();

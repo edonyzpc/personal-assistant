@@ -15,7 +15,6 @@ import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
 
 import type {
     BubbleContent,
-    BubbleFinding,
     BubbleStateCallbacks,
     DeliveryCandidate,
     InlineContextHint,
@@ -25,9 +24,8 @@ import type {
     DeliveryReceipt,
 } from "./attention";
 import type { BubbleView } from "./bubble/BubbleView";
-import { buildAgentInsightDeliveryContent, buildContextLimitedContent, buildIntentionallyQuietContent, buildNeedsSetupContent, buildOnboardingNudgeContent, buildPatternDetectionNudgeContent, buildPreparingContent, buildReadyEmptyContent, buildTerseEmptyContent, buildWritingAssistContent, type OnboardingNudge } from "./bubble/BubbleContent";
+import { buildAgentInsightDeliveryContent, buildContextLimitedContent, buildIntentionallyQuietContent, buildNeedsSetupContent, buildOnboardingNudgeContent, buildPatternDetectionNudgeContent, buildPreparingContent, buildReadyEmptyContent, type OnboardingNudge } from "./bubble/BubbleContent";
 import { resolveBubbleExplanationState } from "./bubble/state-resolver";
-import type { PreloadFinding } from "./preload/types";
 import type { ProactiveHints } from "./hints/ProactiveHints";
 import type { PetView } from "./pet/PetView";
 import type { PageletHost } from "./PageletHost";
@@ -69,16 +67,12 @@ export interface BubbleCoordinatorCallbacks {
     onNudgePresented(ticket: NudgeTicket): void;
     /** Device-local consumption gate for proactive Recall/Recap/Agent insight delivery. */
     isDeliverySeen?(receipt: DeliveryReceipt): boolean;
-    /** Device-local, semantic/copy-version acknowledgement gate. */
-    isExplanationAcknowledged?(kind: AttentionExplanationKind, copyVersion: string): boolean;
     /** Commit only after the explanation Bubble actually became visible. */
     onExplanationVisible?(kind: AttentionExplanationKind, copyVersion: string): void;
 }
 
 export const READY_EMPTY_EXPLANATION_COPY_VERSION = "ready-empty-v1";
 export const INTENTIONALLY_QUIET_EXPLANATION_COPY_VERSION = "intentionally-quiet-v1";
-
-type BubbleEntry = "pet" | "quick-review";
 
 /** Explicit ownership for a renderable proactive nudge ticket. */
 export enum NudgeOwner {
@@ -115,9 +109,7 @@ interface BubblePresentation {
 
 interface MemoryReadinessRefreshRequest {
     bubbleView: BubbleView;
-    petView: PetView | null;
     expectedContent: BubbleContent;
-    entry: BubbleEntry;
     snapshotAtPresentation: boolean | null;
     epoch: number;
 }
@@ -149,7 +141,6 @@ export class BubbleCoordinator {
     private nudgeWakeAt: number | null = null;
     private lastBubbleView: BubbleView | null = null;
     private lastPetView: PetView | null = null;
-    private lastBubbleEntry: BubbleEntry = "pet";
     private suppressNudgeStateForce = false;
 
     destroy(): void {
@@ -162,7 +153,6 @@ export class BubbleCoordinator {
         this.clearNudgeWakeTimer();
         this.lastBubbleView = null;
         this.lastPetView = null;
-        this.lastBubbleEntry = "pet";
     }
 
     // ======================================================================
@@ -222,20 +212,16 @@ export class BubbleCoordinator {
     }
 
     /**
-     * Show the Bubble with cached background preparation findings, or an
-     * empty state that offers to trigger an immediate analysis cycle.
+     * Show the available insight, nudge, or preparation state.
      */
     showBubble(
         bubbleView: BubbleView | null,
         petView: PetView | null,
-        options: { preserveFocus?: boolean; entry?: BubbleEntry } = {},
+        options: { preserveFocus?: boolean } = {},
     ): void {
         const anchorEl = petView?.rootEl;
         if (!bubbleView || !anchorEl) return;
         petView.closeActionRing?.(false, "action");
-        const entry = options.entry
-            ?? (options.preserveFocus ? this.lastBubbleEntry : "pet");
-        this.lastBubbleEntry = entry;
 
         const locale = getPageletUiLanguage();
         const stateCallbacks = this.buildStateCallbacks(bubbleView);
@@ -268,7 +254,6 @@ export class BubbleCoordinator {
                 stateCallbacks,
                 locale,
                 admittedTickets,
-                entry,
             );
         }
         const { content, ticket, explanationAcknowledgement } = presentation;
@@ -278,7 +263,7 @@ export class BubbleCoordinator {
             this.recordNudgePresented(ticket);
         }
         this.acknowledgeExplanationIfNeeded(explanationAcknowledgement, bubbleView);
-        this.refreshMemoryReadinessSnapshot(bubbleView, petView, content, entry);
+        this.refreshMemoryReadinessSnapshot(bubbleView, content);
     }
 
     private buildRegularBubbleContent(
@@ -286,7 +271,6 @@ export class BubbleCoordinator {
         callbacks: BubbleStateCallbacks,
         locale: ReturnType<typeof getPageletUiLanguage>,
         admittedTickets: NudgeTicket[],
-        entry: BubbleEntry,
     ): BubblePresentation {
         const patternContent = this.buildPatternNudgeContent(callbacks, locale);
         if (patternContent) {
@@ -311,7 +295,7 @@ export class BubbleCoordinator {
                 )) ?? null,
             };
         }
-        return this.buildExplanationPresentation(callbacks, locale, entry);
+        return this.buildExplanationPresentation(callbacks, locale);
     }
 
     private buildOnboardingNudgeContent(
@@ -355,7 +339,6 @@ export class BubbleCoordinator {
     private buildExplanationPresentation(
         callbacks: BubbleStateCallbacks,
         locale: ReturnType<typeof getPageletUiLanguage>,
-        entry: BubbleEntry,
     ): BubblePresentation {
         const state = resolveBubbleExplanationState(this.buildStateContext());
         switch (state) {
@@ -380,18 +363,6 @@ export class BubbleCoordinator {
                     ticket: null,
                 };
             case "intentionally-quiet":
-                if (
-                    entry === "quick-review"
-                    && this.explanationIsAcknowledged(
-                        "intentionally-quiet",
-                        INTENTIONALLY_QUIET_EXPLANATION_COPY_VERSION,
-                    )
-                ) {
-                    return {
-                        content: buildTerseEmptyContent(callbacks, locale),
-                        ticket: null,
-                    };
-                }
                 return {
                     content: buildIntentionallyQuietContent(
                         callbacks,
@@ -406,18 +377,6 @@ export class BubbleCoordinator {
                 };
             case "ready-empty":
             default:
-                if (
-                    entry === "quick-review"
-                    && this.explanationIsAcknowledged(
-                        "ready-empty",
-                        READY_EMPTY_EXPLANATION_COPY_VERSION,
-                    )
-                ) {
-                    return {
-                        content: buildTerseEmptyContent(callbacks, locale),
-                        ticket: null,
-                    };
-                }
                 return {
                     content: buildReadyEmptyContent(callbacks, locale),
                     ticket: null,
@@ -472,10 +431,7 @@ export class BubbleCoordinator {
 
     private isDeliveryContent(content: BubbleContent): boolean {
         return content.type === "review-delivery"
-            || content.type === "recall-delivery"
-            || content.type === "recap-delivery"
-            || content.type === "pattern-delivery"
-            || content.type === "quick-review";
+            || content.type === "pattern-delivery";
     }
 
     private isExplanationContent(content: BubbleContent): boolean {
@@ -506,22 +462,18 @@ export class BubbleCoordinator {
 
     private refreshMemoryReadinessSnapshot(
         bubbleView: BubbleView,
-        petView: PetView | null,
         expectedContent: BubbleContent,
-        entry: BubbleEntry,
     ): void {
         const request: MemoryReadinessRefreshRequest = {
             bubbleView,
-            petView,
             expectedContent,
-            entry,
             snapshotAtPresentation: this.memoryReadySnapshot,
             epoch: this.memoryReadinessRefreshEpoch,
         };
         if (this.memoryReadinessRefreshInFlight) {
             // A later Bubble presentation supersedes any older queued one.
             // Re-check it after the active readiness probe settles instead of
-            // dropping Quick Review or other entry changes.
+            // dropping a newer presentation.
             this.pendingMemoryReadinessRefresh = request;
             return;
         }
@@ -546,16 +498,8 @@ export class BubbleCoordinator {
                     && stillShowingExpectedContent
                     && this.isExplanationContent(request.expectedContent)
                 ) {
-                    if (
-                        request.entry === "pet"
-                    ) {
-                        request.bubbleView.close();
-                        this.callbacks.onReadCurrentNote();
-                    } else {
-                        this.showBubble(request.bubbleView, request.petView, {
-                            preserveFocus: true,
-                        });
-                    }
+                    request.bubbleView.close();
+                    this.callbacks.onReadCurrentNote();
                 }
             })
             .catch((error) => {
@@ -741,13 +685,6 @@ export class BubbleCoordinator {
         );
     }
 
-    private explanationIsAcknowledged(
-        kind: AttentionExplanationKind,
-        copyVersion: string,
-    ): boolean {
-        return this.callbacks.isExplanationAcknowledged?.(kind, copyVersion) ?? false;
-    }
-
     private nudgeSurfaceAvailable(petView: PetView | null): boolean {
         return Boolean(
             petView?.rootEl
@@ -848,42 +785,5 @@ export class BubbleCoordinator {
         if (this.nudgeWakeTimer !== null) clearTimeout(this.nudgeWakeTimer);
         this.nudgeWakeTimer = null;
         this.nudgeWakeAt = null;
-    }
-
-    /**
-     * Show foreground analysis results in the Bubble.
-     * Called from analyzeFiles when results should go to Bubble rather than Panel.
-     */
-    showAnalysisResults(
-        bubbleView: BubbleView | null,
-        petView: PetView | null,
-        rawFindings: PreloadFinding[],
-    ): void {
-        const anchorEl = petView?.rootEl;
-        if (!bubbleView || !anchorEl) return;
-        petView?.closeActionRing?.(false, "action");
-
-        const locale = getPageletUiLanguage();
-        const stateCallbacks = this.buildStateCallbacks(bubbleView);
-
-        if (rawFindings.length > 0) {
-            const findings: BubbleFinding[] = rawFindings.map((f) => ({
-                text: f.text,
-                sourceLink: f.sourceFile,
-                sourceTitle: f.sourceTitle,
-            }));
-            const content = buildWritingAssistContent(findings, {
-                onExpandPanel: (type) => this.callbacks.onExpandPanel(type ?? ""),
-                onSourceClick: (link) => this.callbacks.onSourceClick(link),
-                onDismiss: () => {
-                    bubbleView.close();
-                    this.callbacks.onDismiss();
-                },
-            }, locale);
-            bubbleView.show(content, anchorEl);
-        } else {
-            const content = buildTerseEmptyContent(stateCallbacks, locale);
-            bubbleView.show(content, anchorEl);
-        }
     }
 }

@@ -6,14 +6,12 @@ import type { NoteConnection, PanelFinding } from "../panel/types";
 import type {
     PanelMaintenanceReviewState,
     PanelMemoryGovernanceState,
-    PanelQuietRecallState,
     PanelGraphDiscoveryState,
     PanelPatternDetectionState,
     PanelReviewQueueState,
     PanelSavedInsightState,
 } from "../panel/types";
 import type { ContextPagerState } from "../../pa";
-import type { ScopeRecapRunResult } from "../../pa";
 import type { DeliveryReceipt } from "../attention";
 import type { PageletAgentDeliveryCandidate } from "../agent/delivery-adapter";
 import type { PageletChatHandoffPreparationResult } from "../../ai-services/pagelet-handoff";
@@ -52,12 +50,6 @@ export interface TabCard {
  */
 export type PageletDetailDeliveryTarget =
     | {
-        kind: "quiet-recall";
-        candidateId: string;
-        receipt: DeliveryReceipt;
-        onVisible: (receipt: DeliveryReceipt) => void;
-    }
-    | {
         kind: "tab-card";
         card: TabCard;
         receipt: DeliveryReceipt;
@@ -78,19 +70,15 @@ export interface PageletDetailExtra {
     maintenanceReview?: PanelMaintenanceReviewState;
     /** @deprecated Weekly Review decomposed (2026-07-02). Field kept for deserialization compat. */
     weeklyReview?: unknown;
-    quietRecall?: PanelQuietRecallState;
     graphDiscovery?: PanelGraphDiscoveryState;
     patternDetection?: PanelPatternDetectionState;
-    scopeRecap?: ScopeRecapRunResult;
 }
 
 export type TabEntryReason =
     | "panel-expand"
     | "maintenance"
-    | "quiet-recall"
     | "graph-discovery"
     | "pattern-detection"
-    | "scope-recap"
     | "default";
 
 /** Current-session reading and callbacks; never serialized into workspace state. */

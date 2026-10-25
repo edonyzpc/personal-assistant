@@ -383,7 +383,6 @@ import {
     type MaintenanceMoveApplyResult,
     type MaintenanceMoveUndoResult,
     type MaintenanceProposal,
-    type QuietRecallCandidate,
     type ReviewQueueItem,
     type RetrievalOutcome,
     type SavedInsight,
@@ -1353,8 +1352,6 @@ describe("Pagelet panel and tab view regressions", () => {
             undefined,
             undefined,
             undefined,
-            undefined,
-            undefined,
             {},
             closedView => {
                 closed.push(closedView.getNoteAnchorPath() ?? "none");
@@ -1565,32 +1562,12 @@ describe("Pagelet panel and tab view regressions", () => {
         const container = new FakeElement("div");
         container.isConnected = true;
         const tab = new TabView("en");
-        const quietCandidate: QuietRecallCandidate = {
-            id: "qr-current-section",
-            title: "Recall: current section",
-            summary: "A saved insight may matter now.",
-            sourceInsightId: "ins-current-section",
-            sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
-            whyNow: ["Source matches the note you are looking at."],
-            nextAction: "Compare this saved insight with the current note.",
-            relation: "current",
-            score: 90,
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            context: { kind: "note_retrieval" },
-            evaluationProvenance: "ai",
-            evaluationFingerprint: "eval-current-section",
-        };
         tab.mount(container as unknown as HTMLElement);
         tab.open("Pagelet — Detail View", [], {
             layoutType: "review",
-            entryReason: "quiet-recall",
+            entryReason: "maintenance",
             extra: {
-                quietRecall: {
-                    generatedAt: "2026-06-29T12:00:00.000Z",
-                    currentPath: "notes/current.md",
-                    totalCount: 1,
-                    candidates: [quietCandidate],
-                },
+                savedInsights: { items: [makeSavedInsight()], totalCount: 1 },
                 memoryGovernance: {
                     records: [makeMemoryRecord()],
                     totalCount: 1,
@@ -1608,9 +1585,9 @@ describe("Pagelet panel and tab view regressions", () => {
 
         const body = container.querySelector(".pa-pagelet-tab-body");
         const sections = [
-            container.querySelector(".pa-pagelet-tab-quiet-recall"),
-            container.querySelector(".pa-pagelet-tab-memory-governance"),
             container.querySelector(".pa-pagelet-tab-maintenance-review"),
+            container.querySelector(".pa-pagelet-tab-memory-governance"),
+            container.querySelector(".pa-pagelet-tab-saved-insights"),
         ];
         const tops = [-160, -20, 140];
         const scrolledIntoView = sections.map(() => jest.fn());
@@ -1628,9 +1605,9 @@ describe("Pagelet panel and tab view regressions", () => {
 
         const buttons = container.querySelector(".pa-pagelet-tab-nav")?.querySelectorAll("button") ?? [];
         expect(buttons.map((button) => button.textContent)).toEqual([
-            "Quiet Recall",
-            "Memory",
             "Maintenance Review",
+            "Memory",
+            "Saved Insights",
         ]);
         expect(buttons.map((button) => button.getAttribute("aria-current"))).toEqual([
             null,
@@ -1964,8 +1941,6 @@ describe("Pagelet panel and tab view regressions", () => {
             undefined,
             undefined,
             undefined,
-            undefined,
-            undefined,
             callbacks,
         );
         const first = createView();
@@ -2066,8 +2041,6 @@ describe("Pagelet panel and tab view regressions", () => {
             undefined,
             undefined,
             undefined,
-            undefined,
-            undefined,
             { resolveContextualMemory, onOpenMemorySettings: jest.fn() },
         );
         await view.onOpen();
@@ -2138,7 +2111,7 @@ describe("Pagelet panel and tab view regressions", () => {
         else delete state.payload.contextualMemory;
 
         const restored = new PageletDetailView({} as never, () => "en", undefined, undefined,
-            undefined, undefined, undefined, undefined, undefined, undefined, {
+            undefined, undefined, undefined, undefined, {
                 resolveContextualMemory: () => ({
                     governanceMode: "effect_based",
                     records: [record],
@@ -2316,29 +2289,18 @@ describe("Pagelet panel and tab view regressions", () => {
                 locale: "en",
                 layoutType: "current",
                 extra: {
-                    quietRecall: {
-                        generatedAt: "2026-07-10T12:00:00.000Z",
-                        currentPath: "private/current.md",
+                    memoryGovernance: {
+                        governanceMode: "effect_based",
+                        contextual: true,
+                        records: [{ ...record, summary: "PRIVATE CACHED SUMMARY" }],
                         totalCount: 1,
-                        candidates: [{
-                            id: "private-recall",
-                            title: "PRIVATE CACHED RECALL",
-                            summary: "PRIVATE CACHED SUMMARY",
-                            sourceRefs: [{ path: "private/source.md" }],
-                            whyNow: ["PRIVATE CACHED REASON"],
-                            nextAction: "PRIVATE CACHED NEXT ACTION",
-                            relation: "related",
-                            score: 80,
-                            generatedAt: "2026-07-10T12:00:00.000Z",
-                            context: { kind: "governed_claim", claimId: record.id },
-                        }],
                     },
                 },
             });
             const state = first.getState();
 
             const restored = new PageletDetailView({} as never, () => "en", undefined,
-                undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+                undefined, undefined, undefined, undefined, undefined,
                 {
                     resolveContextualMemory: () => {
                         if (outcome === "throws") throw new Error("repository unavailable");
@@ -2359,98 +2321,6 @@ describe("Pagelet panel and tab view regressions", () => {
             expect(content.querySelector(".pa-pagelet-tab-memory-card")).toBeNull();
         },
     );
-
-    it("persists only an exact Quiet Recall governed claim ID and rehydrates a minimal route", async () => {
-        const record = {
-            ...makeMemoryRecord(),
-            effect: "future_answers" as const,
-            useStatus: "active" as const,
-            durableUseStatus: "active" as const,
-            actionPolicy: {
-                correct: true,
-                pause: true,
-                resume: false,
-                forget: true,
-            },
-        };
-        const resolveContextualMemory = jest.fn(() => ({
-            governanceMode: "effect_based" as const,
-            records: [record],
-            totalCount: 1,
-        }));
-        const onOpenMemorySettings = jest.fn();
-        const createView = () => new PageletDetailView(
-            {} as never,
-            () => "en",
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            { resolveContextualMemory, onOpenMemorySettings },
-        );
-        const first = createView();
-        await first.onOpen();
-        first.setPayload({
-            title: "PRIVATE VIEW TITLE",
-            content: [],
-            locale: "en",
-            layoutType: "current",
-            sourcePath: "private/current.md",
-            extra: {
-                quietRecall: {
-                    generatedAt: "2026-07-10T12:00:00.000Z",
-                    currentPath: "private/current.md",
-                    totalCount: 1,
-                    candidates: [{
-                        id: "recall-private",
-                        title: "PRIVATE RECALL TITLE",
-                        summary: "PRIVATE RECALL SUMMARY",
-                        sourceRefs: [{ path: "private/source.md" }],
-                        whyNow: ["PRIVATE WHY NOW"],
-                        nextAction: "PRIVATE NEXT ACTION",
-                        relation: "related",
-                        score: 80,
-                        generatedAt: "2026-07-10T12:00:00.000Z",
-                        context: { kind: "governed_claim", claimId: "mem-1" },
-                    }],
-                },
-            },
-        });
-        const state = first.getState();
-        expect(state).toMatchObject({
-            payload: {
-                contextualMemory: {
-                    marker: "exact-governed-claims-v1",
-                    claimIds: ["mem-1"],
-                },
-            },
-        });
-        for (const privateText of [
-            "PRIVATE RECALL TITLE",
-            "PRIVATE RECALL SUMMARY",
-            "PRIVATE VIEW TITLE",
-            "private/current.md",
-            "private/source.md",
-            "PRIVATE WHY NOW",
-            "PRIVATE NEXT ACTION",
-        ]) expect(JSON.stringify(state)).not.toContain(privateText);
-        clearPageletDetailSessionCache();
-
-        const restored = createView();
-        await restored.onOpen();
-        await restored.setState(state, {} as never);
-        const content = restored.contentEl as unknown as FakeElement;
-        expect(content.querySelector(".pa-pagelet-tab-quiet-recall")).toBeNull();
-        expect(content.querySelector(".pa-pagelet-tab-memory-card")).not.toBeNull();
-        expect(content.querySelector(".pa-pagelet-tab-memory-pause")).toBeNull();
-        expect(content.querySelector(".pa-pagelet-tab-memory-forget")).toBeNull();
-        await content.querySelector(".pa-pagelet-tab-memory-settings--record")?.click();
-        expect(onOpenMemorySettings).toHaveBeenCalledWith("mem-1");
-    });
 
     it("fails governed actions closed when a Pagelet action returns a plain record", async () => {
         const record = {
@@ -2474,8 +2344,6 @@ describe("Pagelet panel and tab view regressions", () => {
         const view = new PageletDetailView(
             {} as never,
             () => "en",
-            undefined,
-            undefined,
             undefined,
             undefined,
             undefined,
@@ -2521,8 +2389,6 @@ describe("Pagelet panel and tab view regressions", () => {
         const view = new PageletDetailView(
             {} as never,
             () => "en",
-            undefined,
-            undefined,
             undefined,
             undefined,
             undefined,
@@ -3019,19 +2885,6 @@ describe("Pagelet panel and tab view regressions", () => {
         const container = new FakeElement("div");
         container.isConnected = true;
         const tab = new TabView("en");
-        const recallCandidate: QuietRecallCandidate = {
-            id: "recall-alpha",
-            title: "Recall: Alpha",
-            summary: "Alpha may matter again.",
-            sourceRefs: [{ path: "notes/alpha.md", evidenceStrength: "medium" }],
-            whyNow: ["Source matches the note you are looking at."],
-            nextAction: "Compare it.",
-            relation: "related",
-            score: 80,
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            evaluationProvenance: "ai",
-            evaluationFingerprint: "eval-recall-alpha",
-        };
 
         tab.mount(container as unknown as HTMLElement);
         const options: Parameters<TabView['open']>[2] = {
@@ -3049,12 +2902,6 @@ describe("Pagelet panel and tab view regressions", () => {
                     totalCount: 1,
                     categories: [{ category: "inbox_cleanup", label: "inbox_cleanup", count: 1 }],
                     proposals: [makeMaintenanceProposal()],
-                },
-                quietRecall: {
-                    generatedAt: "2026-06-29T12:00:00.000Z",
-                    currentPath: "notes/current.md",
-                    totalCount: 1,
-                    candidates: [recallCandidate],
                 },
                 graphDiscovery: {
                     generatedAt: "2026-06-29T12:00:00.000Z",
@@ -3376,364 +3223,6 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.querySelector(".pa-pagelet-tab-maintenance-undo")).not.toBeNull();
     });
 
-    it("renders Quiet Recall in panel and tab before Bubble nudges", async () => {
-        const candidate: QuietRecallCandidate = {
-            id: "qr-ins-1",
-            title: "Recall: current",
-            summary: "A saved insight may matter now.",
-            sourceInsightId: "ins-1",
-            sourceRefs: [
-                { path: "notes/current.md", evidenceStrength: "medium" },
-                { path: "notes/related.md", evidenceStrength: "medium" },
-            ],
-            whyNow: ["Source matches the note you are looking at."],
-            nextAction: "Compare this saved insight with the current note.",
-            relation: "current",
-            score: 90,
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            context: { kind: "note_retrieval" },
-            evaluationProvenance: "ai",
-            evaluationFingerprint: "eval-qr-ins-1",
-        };
-        const quietRecall = {
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            currentPath: "notes/current.md",
-            totalCount: 1,
-            candidates: [candidate],
-        };
-        const panelContainer = new FakeElement("div");
-        panelContainer.isConnected = true;
-        const panel = new PanelView({
-            callbacks: {
-                onExpandToTab: jest.fn(),
-                onClose: jest.fn(),
-                onSourceClick: jest.fn(),
-                onSaveAsReviewNote: () => undefined,
-            },
-        });
-        panel.mount(panelContainer as unknown as HTMLElement);
-        panel.open("current", [], { quietRecall });
-
-        expect(panelContainer.querySelector(".pa-pagelet-panel-quiet-recall")).not.toBeNull();
-        expect(panelContainer.textContent).toContain("A saved insight may matter now.");
-        expect(panelContainer.textContent).toContain("notes/current.md");
-
-        const tabContainer = new FakeElement("div");
-        tabContainer.isConnected = true;
-        const linkRecall = jest.fn(async (_candidate: QuietRecallCandidate, _currentPath?: string) => ({
-            ok: true,
-            message: "Linked",
-        }));
-        const saveRecall = jest.fn(async (_candidate: QuietRecallCandidate) => ({
-            ok: true as const,
-            value: {
-                id: "ins-saved",
-                type: "observation" as const,
-                text: "A saved insight may matter now.",
-                origin: "pa-recommended" as const,
-                sourceRefs: candidate.sourceRefs,
-                whyShown: candidate.whyNow,
-                scope: { kind: "custom" as const, label: "Quiet Recall" },
-                status: "active" as const,
-                influencePolicy: "weak-only" as const,
-                createdAt: "2026-06-29T12:00:00.000Z",
-                updatedAt: "2026-06-29T12:00:00.000Z",
-            },
-            message: "Recall saved as insight.",
-        }));
-        const openSource = jest.fn((_path: string) => undefined);
-        const openMemorySettings = jest.fn((_targetId?: string) => undefined);
-        const tab = new TabView("en", {
-            onLinkRecallCandidate: linkRecall,
-            onSaveQuietRecallAsInsight: saveRecall,
-            onOpenSource: openSource,
-            onOpenMemorySettings: openMemorySettings,
-        });
-        tab.mount(tabContainer as unknown as HTMLElement);
-        tab.open("Quiet Recall", [], {
-            layoutType: "current",
-            extra: { quietRecall },
-        });
-
-        expect(tabContainer.querySelector(".pa-pagelet-tab-quiet-recall")).not.toBeNull();
-        expect(tabContainer.textContent).toContain("Why now: Source matches the note you are looking at.");
-        expect(tabContainer.textContent).toContain("You could: Compare this saved insight with the current note.");
-        expect(tabContainer.textContent).toContain("Source");
-        expect(tabContainer.textContent).toContain("Current vault");
-        expect(tabContainer.textContent).toContain("Helps relevant notes return when useful");
-        expect(tabContainer.querySelector(".pa-pagelet-tab-memory-settings")).toBeNull();
-        expect(tabContainer.querySelector(".pa-pagelet-tab-recall-memory-target")).toBeNull();
-        expect(openMemorySettings).not.toHaveBeenCalled();
-        const sourceButton = tabContainer.querySelector(".pa-pagelet-tab-recall-source");
-        expect(sourceButton?.textContent).toBe("notes/current.md");
-        await sourceButton?.click();
-        expect(openSource).toHaveBeenCalledWith("notes/current.md");
-        const linkButton = tabContainer.querySelector(".pa-pagelet-tab-recall-link");
-        expect(linkButton?.textContent).toBe("Link to current note");
-        expect(linkButton?.getAttribute("data-pa-recall-focus-key")).toBe("recall:qr-ins-1:link");
-        const saveButton = tabContainer.querySelector(".pa-pagelet-tab-recall-save");
-        expect(saveButton?.textContent).toBe("Save as insight");
-        linkButton?.focus();
-
-        await linkButton?.click();
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(linkRecall).toHaveBeenCalledWith(candidate, "notes/current.md");
-        expect(tabContainer.querySelector(".pa-pagelet-tab-recall-link")?.textContent).toBe("Linked");
-        expect(tabContainer.querySelector(".pa-pagelet-tab-recall-link")?.disabled).toBe(true);
-
-        const refreshedSaveButton = tabContainer.querySelector(".pa-pagelet-tab-recall-save");
-        expect((globalRecord.document as FakeDocument).activeElement).toBe(refreshedSaveButton);
-        const linkedStatus = tabContainer.querySelector(".pa-pagelet-tab-maintenance-status");
-        expect(linkedStatus?.getAttribute("role")).toBe("status");
-        expect(linkedStatus?.getAttribute("aria-live")).toBe("polite");
-        refreshedSaveButton?.focus();
-        await refreshedSaveButton?.click();
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(saveRecall).toHaveBeenCalledWith(candidate);
-        expect(tabContainer.textContent).toContain("Recall saved as insight.");
-        expect((globalRecord.document as FakeDocument).activeElement)
-            .toBe(tabContainer.querySelector(".pa-pagelet-tab-recall-card"));
-    });
-
-    it("hides Quiet Recall Link when the candidate has no distinct source note", () => {
-        const candidate: QuietRecallCandidate = {
-            id: "qr-self-only",
-            title: "Recall: current",
-            summary: "The current note backed this saved insight.",
-            sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
-            whyNow: ["Source matches the note you are looking at."],
-            nextAction: "Compare this saved insight with the current note.",
-            relation: "current",
-            score: 90,
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            evaluationProvenance: "ai",
-            evaluationFingerprint: "eval-qr-self-only",
-        };
-        const onLinkRecallCandidate = jest.fn(async () => ({ ok: true, message: "Linked" }));
-        const container = new FakeElement("div");
-        container.isConnected = true;
-        const tab = new TabView("en", { onLinkRecallCandidate });
-        tab.mount(container as unknown as HTMLElement);
-        tab.open("Quiet Recall", [], {
-            layoutType: "current",
-            extra: {
-                quietRecall: {
-                    generatedAt: candidate.generatedAt,
-                    currentPath: "notes/current.md",
-                    totalCount: 1,
-                    candidates: [candidate],
-                },
-            },
-        });
-
-        expect(container.querySelector(".pa-pagelet-tab-recall-card")).not.toBeNull();
-        expect(container.querySelector(".pa-pagelet-tab-recall-link")).toBeNull();
-        expect(onLinkRecallCandidate).not.toHaveBeenCalled();
-    });
-
-    it("separates local Discover clues from AI Recall cards and omits local why-now copy", () => {
-        const aiCandidate: QuietRecallCandidate = {
-            id: "qr-ai",
-            title: "Recall: Accepted",
-            summary: "An accepted source-backed recall.",
-            sourceRefs: [{ path: "notes/accepted.md", evidenceStrength: "medium" }],
-            whyNow: ["This accepted note resolves the question in the current note."],
-            nextAction: "Open the accepted source.",
-            relation: "related",
-            score: 82,
-            generatedAt: "2026-07-19T10:00:00.000Z",
-            evaluationProvenance: "ai",
-            evaluationFingerprint: "eval-accepted",
-        };
-        const localCandidate: QuietRecallCandidate = {
-            id: "qr-local",
-            title: "Recall: Local template title",
-            summary: "LOCAL SUMMARY MUST NOT RENDER",
-            sourceRefs: [{ path: "notes/local-clue.md", evidenceStrength: "medium" }],
-            whyNow: ["LOCAL WHY NOW MUST NOT RENDER"],
-            nextAction: "LOCAL NEXT ACTION MUST NOT RENDER",
-            relation: "related",
-            score: 78,
-            generatedAt: "2026-07-19T10:00:00.000Z",
-            evaluationProvenance: "local",
-        };
-        const container = new FakeElement("div");
-        container.isConnected = true;
-        const tab = new TabView("en", {
-            onLinkRecallCandidate: jest.fn(async () => ({ ok: true, message: "Linked" })),
-            onSaveQuietRecallAsInsight: jest.fn(async () => ({
-                ok: false as const,
-                reason: "write_failed" as const,
-                message: "Not saved",
-            })),
-        });
-        tab.mount(container as unknown as HTMLElement);
-        tab.open("Quiet Recall", [], {
-            layoutType: "current",
-            extra: {
-                quietRecall: {
-                    generatedAt: aiCandidate.generatedAt,
-                    currentPath: "notes/current.md",
-                    totalCount: 1,
-                    candidates: [aiCandidate],
-                    discoverCandidates: [
-                        { ...aiCandidate, evaluationProvenance: "local", evaluationFingerprint: undefined },
-                        localCandidate,
-                    ],
-                },
-            },
-        });
-
-        const recallCards = container.querySelectorAll(".pa-pagelet-tab-recall-card");
-        const localCards = container.querySelectorAll(".pa-pagelet-tab-local-clue-card");
-        const localCard = localCards[0];
-
-        expect(recallCards).toHaveLength(1);
-        expect(localCards).toHaveLength(1);
-        expect(container.textContent).toContain("1 source-backed recalls are available.");
-        expect(container.textContent).toContain("Why now: This accepted note resolves the question in the current note.");
-        expect(localCard?.textContent).toContain("Local related clue");
-        expect(localCard?.textContent).toContain("local-clue");
-        expect(localCard?.textContent).toContain("Related by local note signals.");
-        expect(localCard?.textContent).not.toContain("LOCAL WHY NOW MUST NOT RENDER");
-        expect(localCard?.textContent).not.toContain("LOCAL SUMMARY MUST NOT RENDER");
-        expect(localCard?.textContent).not.toContain("LOCAL NEXT ACTION MUST NOT RENDER");
-        expect(localCard?.classList.contains("pa-pagelet-tab-card--source-list")).toBe(true);
-        expect(localCard?.classList.contains("pa-pagelet-tab-recall-card")).toBe(false);
-        expect(localCard?.querySelector(".pa-pagelet-tab-recall-save")).toBeNull();
-        expect(recallCards[0]?.querySelector(".pa-pagelet-tab-recall-save")).not.toBeNull();
-    });
-
-    it("renders the dedicated Quiet Recall empty state when no candidate is strong enough", () => {
-        const container = new FakeElement("div");
-        container.isConnected = true;
-        const tab = new TabView("en");
-        tab.mount(container as unknown as HTMLElement);
-        tab.open("Quiet Recall", [], {
-            layoutType: "current",
-            extra: {
-                quietRecall: {
-                    generatedAt: "2026-06-29T12:00:00.000Z",
-                    currentPath: "notes/current.md",
-                    totalCount: 0,
-                    candidates: [],
-                },
-            },
-        });
-
-        expect(container.querySelector(".pa-pagelet-tab-quiet-recall")).not.toBeNull();
-        expect(container.querySelector(".pa-pagelet-tab-recall-empty")).not.toBeNull();
-        expect(container.textContent).toContain("No strong recall signal right now.");
-        expect(container.textContent).not.toContain("No findings yet");
-    });
-
-    it("routes a Quiet Recall Memory target only for an exact governed-claim trace", async () => {
-        const candidate: QuietRecallCandidate = {
-            id: "qr-governed",
-            title: "Recall governed context",
-            summary: "A saved understanding participated in this recall.",
-            sourceRefs: [{ path: "notes/related.md", evidenceStrength: "medium" }],
-            whyNow: ["It shaped this result."],
-            nextAction: "Review the source and saved understanding.",
-            relation: "related",
-            score: 80,
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            context: { kind: "governed_claim", claimId: "claim-exact" },
-            evaluationProvenance: "ai",
-            evaluationFingerprint: "eval-qr-governed",
-        };
-        const openMemorySettings = jest.fn((_targetId?: string) => undefined);
-        const container = new FakeElement("div");
-        container.isConnected = true;
-        const tab = new TabView("en", { onOpenMemorySettings: openMemorySettings });
-        tab.mount(container as unknown as HTMLElement);
-        tab.open("Quiet Recall", [], {
-            layoutType: "current",
-            extra: {
-                quietRecall: {
-                    generatedAt: candidate.generatedAt,
-                    currentPath: "notes/current.md",
-                    totalCount: 1,
-                    candidates: [candidate],
-                },
-            },
-        });
-
-        const target = container.querySelector(".pa-pagelet-tab-recall-memory-target");
-        expect(target).not.toBeNull();
-        expect(target?.classList.contains("pa-pagelet-tab-memory-settings")).toBe(true);
-        await target?.click();
-        expect(openMemorySettings).toHaveBeenCalledWith("claim-exact");
-    });
-
-    it("keeps Quiet Recall failures localized, announced, and keyboard reachable", async () => {
-        const candidate: QuietRecallCandidate = {
-            id: "qr-failure",
-            title: "Recall failure",
-            summary: "A related note may matter.",
-            sourceRefs: [{ path: "notes/related.md", evidenceStrength: "medium" }],
-            whyNow: ["Related to the current note."],
-            nextAction: "Compare the notes.",
-            relation: "related",
-            score: 80,
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            evaluationProvenance: "ai",
-            evaluationFingerprint: "eval-qr-failure",
-        };
-        const tabContainer = new FakeElement("div");
-        tabContainer.isConnected = true;
-        const tab = new TabView("en", {
-            onLinkRecallCandidate: jest.fn(async () => {
-                throw new Error("private/internal/link-code");
-            }),
-            onSaveQuietRecallAsInsight: jest.fn(async () => {
-                throw new Error("private/internal/save-code");
-            }),
-        });
-        tab.mount(tabContainer as unknown as HTMLElement);
-        tab.open("Quiet Recall", [], {
-            layoutType: "current",
-            extra: {
-                quietRecall: {
-                    generatedAt: candidate.generatedAt,
-                    currentPath: "notes/current.md",
-                    totalCount: 1,
-                    candidates: [candidate],
-                },
-            },
-        });
-
-        const linkButton = tabContainer.querySelector(".pa-pagelet-tab-recall-link");
-        linkButton?.focus();
-        await linkButton?.click();
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(tabContainer.textContent).toContain("Could not link these notes. Try again.");
-        expect(tabContainer.textContent).not.toContain("private/internal/link-code");
-        expect((globalRecord.document as FakeDocument).activeElement)
-            .toBe(tabContainer.querySelector(".pa-pagelet-tab-recall-link"));
-        expect(tabContainer.querySelector(".pa-pagelet-tab-maintenance-status")?.getAttribute("role"))
-            .toBe("status");
-
-        const saveButton = tabContainer.querySelector(".pa-pagelet-tab-recall-save");
-        saveButton?.focus();
-        await saveButton?.click();
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(tabContainer.textContent).toContain("Could not save this recall as an insight. Try again.");
-        expect(tabContainer.textContent).not.toContain("private/internal/save-code");
-        expect((globalRecord.document as FakeDocument).activeElement)
-            .toBe(tabContainer.querySelector(".pa-pagelet-tab-recall-save"));
-        const statuses = tabContainer.querySelectorAll(".pa-pagelet-tab-maintenance-status");
-        expect(statuses.every((status) => status.getAttribute("aria-live") === "polite")).toBe(true);
-    });
-
     it("saves recap markdown from the native detail tab", async () => {
         const markdown = "# Scope Recap\n\nA concise source-backed recap.";
         const summarySaveNote = {
@@ -4019,81 +3508,6 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(contentEl.querySelector(".pa-pagelet-tab-memory-forget")).toBeNull();
     });
 
-    it("preserves entry reason through native detail state restoration", async () => {
-        const candidate: QuietRecallCandidate = {
-            id: "qr-entry-reason",
-            title: "Recall: current",
-            summary: "A saved insight may matter now.",
-            sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
-            whyNow: ["Source matches the note you are looking at."],
-            nextAction: "Compare this saved insight with the current note.",
-            relation: "current",
-            score: 90,
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            evaluationProvenance: "ai",
-            evaluationFingerprint: "eval-qr-entry-reason",
-        };
-        const openSource = jest.fn((_path: string) => undefined);
-        const createView = (): PageletDetailView => new PageletDetailView(
-            {} as never,
-            () => "en",
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            { onOpenSource: openSource },
-        );
-        const view = createView();
-
-        await view.onOpen();
-        view.setPayload({
-            title: "Quiet Recall",
-            locale: "en",
-            layoutType: "current",
-            content: [],
-            entryReason: "quiet-recall",
-            extra: {
-                memoryGovernance: {
-                    records: [makeMemoryRecord()],
-                    candidates: [],
-                    totalCount: 1,
-                },
-                quietRecall: {
-                    generatedAt: "2026-06-29T12:00:00.000Z",
-                    currentPath: "notes/current.md",
-                    totalCount: 1,
-                    candidates: [candidate],
-                },
-            },
-        });
-        const serializedState = JSON.parse(JSON.stringify(view.getState()));
-        expect(serializedState.payload.entryReason).toBe("quiet-recall");
-
-        const restored = createView();
-        await restored.onOpen();
-        await restored.setState(serializedState, {} as never);
-
-        const restoredContent = restored.contentEl as unknown as FakeElement;
-        const text = restoredContent.textContent;
-        expect(text.indexOf("A saved insight may matter now.")).toBeGreaterThanOrEqual(0);
-        expect(text.indexOf("A saved insight may matter now.")).toBeLessThan(
-            text.indexOf("Prefers concise weekly planning."),
-        );
-        expect(text).toContain("Current vault");
-        expect(text).toContain("Helps relevant notes return when useful");
-        await restoredContent.querySelector(".pa-pagelet-tab-recall-source")?.click();
-        expect(openSource).toHaveBeenLastCalledWith("notes/current.md");
-
-        await restored.onClose();
-        await restored.onOpen();
-        await restoredContent.querySelector(".pa-pagelet-tab-recall-source")?.click();
-        expect(openSource).toHaveBeenCalledTimes(2);
-    });
-
     it("renders pattern detection details with clickable source refs and local dismiss", async () => {
         const sourceClick = jest.fn();
         const container = new FakeElement("div");
@@ -4242,72 +3656,6 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(JSON.stringify(state)).not.toContain("diary thread");
     });
 
-    it("commits only the exact rendered Quiet Recall target", () => {
-        const candidate: QuietRecallCandidate = {
-            id: "qr-delivery-target",
-            title: "Recall: exact target",
-            summary: "Only this rendered card may acknowledge delivery.",
-            sourceRefs: [{ path: "notes/older.md", evidenceStrength: "medium" }],
-            whyNow: ["This older note informs the current note."],
-            nextAction: "Open it when useful.",
-            relation: "related",
-            score: 90,
-            generatedAt: "2026-07-27T12:00:00.000Z",
-            evaluationProvenance: "ai",
-            evaluationFingerprint: "eval-detail-target",
-        };
-        const receipt = {
-            version: 1 as const,
-            kind: "recall" as const,
-            fingerprint: "v1:recall:0000000000000001",
-        };
-        const onVisible = jest.fn();
-        const target = {
-            kind: "quiet-recall" as const,
-            candidateId: candidate.id,
-            receipt,
-            onVisible,
-        };
-        const options = {
-            layoutType: "current" as const,
-            entryReason: "quiet-recall" as const,
-            sourcePath: "notes/current.md",
-            extra: {
-                quietRecall: {
-                    generatedAt: candidate.generatedAt,
-                    currentPath: "notes/current.md",
-                    totalCount: 1,
-                    candidates: [candidate],
-                },
-            },
-            deliveryTarget: target,
-        };
-        const container = new FakeElement("div");
-        container.isConnected = true;
-        const tab = new TabView("en");
-        tab.mount(container as unknown as HTMLElement);
-
-        tab.open("Quiet Recall", [], options);
-        tab.open("Quiet Recall", [], options);
-        expect(onVisible).toHaveBeenCalledTimes(1);
-        expect(onVisible).toHaveBeenCalledWith(receipt);
-
-        const missingTarget = jest.fn();
-        const failedContainer = new FakeElement("div");
-        failedContainer.isConnected = true;
-        const failedTab = new TabView("en");
-        failedTab.mount(failedContainer as unknown as HTMLElement);
-        failedTab.open("Quiet Recall", [], {
-            ...options,
-            deliveryTarget: {
-                ...target,
-                candidateId: "qr-not-rendered",
-                onVisible: missingTarget,
-            },
-        });
-        expect(missingTarget).not.toHaveBeenCalled();
-    });
-
     it("commits a Recap receipt only when the exact target TabCard is rendered", () => {
         const targetCard = {
             title: "Target insight",
@@ -4369,7 +3717,7 @@ describe("Pagelet panel and tab view regressions", () => {
             title: "Scope Recap",
             locale: "en",
             layoutType: "review",
-            entryReason: "scope-recap",
+            entryReason: "panel-expand",
             content: [{ title: "Observations", cards: [targetCard] }],
             deliveryTarget: {
                 kind: "tab-card",

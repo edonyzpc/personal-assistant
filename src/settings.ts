@@ -163,24 +163,8 @@ export const MEMORY_GOVERNANCE_DEFAULTS: Readonly<MemoryGovernanceSettings> = Ob
 });
 
 export interface MaintenanceReviewSettings {
-    weeklyScanEnabled: boolean;
     actionLog: MaintenanceMoveActionLogEntry[];
 }
-
-export const MAINTENANCE_REVIEW_DEFAULTS: Readonly<MaintenanceReviewSettings> = Object.freeze({
-    weeklyScanEnabled: false,
-    actionLog: [],
-});
-
-interface WeeklyReviewSettings {
-    enabled: boolean;
-    preparedReviewEnabled: boolean;
-}
-
-const WEEKLY_REVIEW_DEFAULTS: Readonly<WeeklyReviewSettings> = Object.freeze({
-    enabled: true,
-    preparedReviewEnabled: false,
-});
 
 /** SG-01: Off/On two-tier, no frequency cap. */
 export type QuietRecallMode = "off" | "on";
@@ -289,8 +273,6 @@ export interface PluginManagerSettings {
     enableMetadataUpdating: boolean;
     metadatas: { key: string, value: string, t: string }[];
     metadataExcludePath: string[];
-    cachePluginRepo: Record<string, string>;
-    cacheThemeRepo: Record<string, string>;
     statisticsType: string;
     statsPath: string;
     statisticsVaultId: string;
@@ -315,7 +297,6 @@ export interface PluginManagerSettings {
     qwenThinkingEnabled: boolean;
     webSearchEnabled: boolean;
     licenseTier: AgentCapabilityTier;
-    shareAnonymousCapabilityUsage: boolean;
     featuredImagePath: string;
     featuredImageModel: FeaturedImageModel;
     numFeaturedImages: number;
@@ -355,10 +336,8 @@ export interface PluginManagerSettings {
     savedInsights: SavedInsightSettings;
     /** Local Confirmed Memory governance shell state. */
     memoryGovernance: MemoryGovernanceSettings;
-    /** Pagelet Maintenance Review preview shell. Weekly scans remain disabled until approved. */
+    /** Historical actions from manual Pagelet Maintenance Review. */
     maintenanceReview: MaintenanceReviewSettings;
-    /** Manual Weekly Review loop. Prepared weekly review remains opt-in. */
-    weeklyReview: WeeklyReviewSettings;
     /** Quiet Recall surfaces. Bubble nudges remain disabled until the later slice. */
     quietRecall: QuietRecallSettings;
     /** Last structure-based cross-note pattern detection run timestamp. */
@@ -414,12 +393,6 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
         { key: "modify", value: "YYYY-MM-DD HH:mm:ss", t: "moment" },
     ],
     metadataExcludePath: [],
-    cachePluginRepo: {
-        "personal-assistant": "edonyzpc/personal-assistant",
-    },
-    cacheThemeRepo: {
-        "Minimal": "kepano/obsidian-minimal",
-    },
     statisticsType: "overview",
     statsPath: "",
     statisticsVaultId: "",
@@ -442,7 +415,6 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     qwenThinkingEnabled: false,
     webSearchEnabled: false,
     licenseTier: MOCK_LICENSE_TIER,
-    shareAnonymousCapabilityUsage: false,
     featuredImagePath: "",
     featuredImageModel: "wan2.7-image",
     numFeaturedImages: 1,
@@ -485,10 +457,8 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
         records: [],
     },
     maintenanceReview: {
-        weeklyScanEnabled: MAINTENANCE_REVIEW_DEFAULTS.weeklyScanEnabled,
         actionLog: [],
     },
-    weeklyReview: { ...WEEKLY_REVIEW_DEFAULTS },
     quietRecall: { ...QUIET_RECALL_DEFAULTS },
     lastPatternDetectionAt: undefined,
     focusMode: false,
@@ -551,18 +521,24 @@ export function normalizeConfirmedMemoryCount(value: unknown): number {
 
 const DEPRECATED_SIMPLE_SETTINGS_KEYS = [
     "memoryAutoCheckBeforeChat", "skillContextEnabled", "enabledSkillIds", "operationsAgentEnabled",
+    "shareAnonymousCapabilityUsage",
 ] as const;
 const RETIRED_OPERATIONS_AUDIT_SETTINGS_KEYS = [
     "operationsAuditIncludeContent",
     "operationsAuditRetentionDays",
 ] as const;
 const DEPRECATED_PAGELET_SETTINGS_KEYS = ["preloadEnabled", "deepDiscoverEnabled"] as const;
+const DEPRECATED_WEEKLY_REVIEW_SETTINGS_KEYS = ["enabled", "preparedReviewEnabled"] as const;
 
 export function hasDeprecatedSimpleSettingsFields(value: unknown): boolean {
     if (!isRecord(value)) return false;
     return DEPRECATED_SIMPLE_SETTINGS_KEYS.some((key) => Object.prototype.hasOwnProperty.call(value, key))
         || (isRecord(value.pagelet)
-            && DEPRECATED_PAGELET_SETTINGS_KEYS.some((key) => Object.prototype.hasOwnProperty.call(value.pagelet, key)));
+            && DEPRECATED_PAGELET_SETTINGS_KEYS.some((key) => Object.prototype.hasOwnProperty.call(value.pagelet, key)))
+        || (isRecord(value.weeklyReview)
+            && DEPRECATED_WEEKLY_REVIEW_SETTINGS_KEYS.some((key) => Object.prototype.hasOwnProperty.call(value.weeklyReview, key)))
+        || (isRecord(value.maintenanceReview)
+            && Object.prototype.hasOwnProperty.call(value.maintenanceReview, "weeklyScanEnabled"));
 }
 
 /** Exact, idempotent save projection. Never normalize consent or unrelated data here. */
@@ -573,6 +549,17 @@ export function omitDeprecatedSimpleSettingsFields<T extends object>(settings: T
         const pagelet = { ...canonical.pagelet };
         for (const key of DEPRECATED_PAGELET_SETTINGS_KEYS) delete pagelet[key];
         Object.assign(canonical, { pagelet });
+    }
+    if (isRecord(canonical.weeklyReview)) {
+        const weeklyReview = { ...canonical.weeklyReview };
+        for (const key of DEPRECATED_WEEKLY_REVIEW_SETTINGS_KEYS) delete weeklyReview[key];
+        if (Object.keys(weeklyReview).length > 0) Object.assign(canonical, { weeklyReview });
+        else delete canonical.weeklyReview;
+    }
+    if (isRecord(canonical.maintenanceReview)) {
+        const maintenanceReview = { ...canonical.maintenanceReview };
+        delete maintenanceReview.weeklyScanEnabled;
+        Object.assign(canonical, { maintenanceReview });
     }
     return canonical;
 }
@@ -665,7 +652,6 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     merged.savedInsights = mergeSavedInsightSettings(loadedObject.savedInsights);
     merged.memoryGovernance = mergeMemoryGovernanceSettings(loadedObject.memoryGovernance);
     merged.maintenanceReview = mergeMaintenanceReviewSettings(loadedObject.maintenanceReview);
-    merged.weeklyReview = mergeWeeklyReviewSettings(loadedObject.weeklyReview);
     // A short-lived B-118 settings shape persisted the visible toggle under
     // `pagelet.quietRecallMode` while runtime consumed `quietRecall` instead.
     // An explicit canonical mode is authoritative. When that field is absent,
@@ -913,22 +899,7 @@ export function mergeMemoryGovernanceSettings(loaded: unknown): MemoryGovernance
 export function mergeMaintenanceReviewSettings(loaded: unknown): MaintenanceReviewSettings {
     const loadedObject = isRecord(loaded) ? loaded : {};
     return {
-        weeklyScanEnabled: typeof loadedObject.weeklyScanEnabled === "boolean"
-            ? loadedObject.weeklyScanEnabled
-            : MAINTENANCE_REVIEW_DEFAULTS.weeklyScanEnabled,
         actionLog: normalizeMaintenanceMoveActionLog(loadedObject.actionLog),
-    };
-}
-
-export function mergeWeeklyReviewSettings(loaded: unknown): WeeklyReviewSettings {
-    const loadedObject = isRecord(loaded) ? loaded : {};
-    return {
-        enabled: typeof loadedObject.enabled === "boolean"
-            ? loadedObject.enabled
-            : WEEKLY_REVIEW_DEFAULTS.enabled,
-        preparedReviewEnabled: typeof loadedObject.preparedReviewEnabled === "boolean"
-            ? loadedObject.preparedReviewEnabled
-            : WEEKLY_REVIEW_DEFAULTS.preparedReviewEnabled,
     };
 }
 
@@ -3036,12 +3007,6 @@ export class SettingTab extends PluginSettingTab {
             .addToggle((toggle) => this.configurePermissionToggle("statisticsSyncEnabled", toggle,
                 () => Boolean(plugin.settings.statisticsSyncEnabled),
                 (value) => plugin.setStatisticsSyncEnabled(value)));
-        new Setting(parentEl)
-            .setName(this.t("plugin.settings.advanced.shareUsage.name"))
-            .setDesc(this.t("plugin.settings.advanced.shareUsage.desc"))
-            .addToggle((toggle) => this.configurePermissionToggle("shareAnonymousCapabilityUsage", toggle,
-                () => plugin.settings.shareAnonymousCapabilityUsage,
-                (value) => plugin.saveSettingsPermissions({ shareAnonymousCapabilityUsage: value })));
     }
 
     private renderLegalSection(parentEl: HTMLElement): void {

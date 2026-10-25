@@ -60,7 +60,6 @@ export interface AiServiceHost {
         chatModelName: string;
         policyModelName: string;
         embeddingModelName: string;
-        shareAnonymousCapabilityUsage: boolean;
         qwenThinkingEnabled: boolean;
         webSearchEnabled: boolean;
         licenseTier: AgentCapabilityTier;

@@ -40,7 +40,7 @@
  *    `execute` directly would bypass all 4 gates; we make that loud.
  */
 
-import { normalizePath, type App, type TFile } from "obsidian";
+import { normalizePath, type App } from "obsidian";
 
 import type {
     AgentCapabilityContext,
@@ -762,12 +762,3 @@ export function createPaReviewToolProviderForApp(
         ...(getLocale ? { getLocale } : {}),
     });
 }
-
-// Re-export for tests that need to inspect the helper used by both gates.
-export { computeTargetPath as __computeTargetPathForTest };
-
-// Suppress unused-warning sentinel: TFile is referenced from doc-strings only,
-// kept in scope so future "trigger from active TFile" helpers can import the
-// type without re-introducing the obsidian dependency.
-type _TFileSentinel = TFile;
-void (null as unknown as _TFileSentinel);

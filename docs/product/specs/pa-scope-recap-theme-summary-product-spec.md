@@ -9,8 +9,9 @@ Authority: Scope Recap 及其 B-108 dogfood follow-up 的用户行为、Quiet Re
 2026-10-25 scoped successor：[DEC-075](../decisions/dec-075-legacy-surface-cleanup.md)
 退役 Scope Recap 命令、专用清缓存命令与“高价值回顾提示”设置 UI；保留
 `scopeRecapHighValueHints` 的历史读取/兼容及有效共享、历史和评估消费者。
-下文相关入口/UI 保留承诺仅在该范围被接续，不整批退役 Scope Recap，也不改变原
-验收记录。具体第一批范围及实现证据见
+同日第二批决定进一步退役旧生成链和专用查看、保存、手动关联及气泡；当前共享
+provider身份、阅读/保存执行器、成果库与已有数据仍保留。下文旧实现契约由这一
+范围接续，原验收仍为历史证据。具体范围及实现证据见
 [Bounded Cleanup Spec](./pa-bounded-code-cleanup-product-spec.md) 与
 [B-189 Tracker](../../development/active/legacy-surface-cleanup/tracker.md)。
 

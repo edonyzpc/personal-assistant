@@ -8,15 +8,12 @@ export interface PageletFeatureIntegrationDependencies {
     releaseFeatureScope(expectedScope?: Component | null): void;
     isFeatureScopeCurrent(scope: object): boolean;
     syncDeepDiscoverIdentity(): void;
-    syncQuietRecallPolicy(): void;
     registerCommandsOnce(): void;
     registerFocusCommandOnce(): void;
     createOrchestrator(featureScope: Component): PageletOrchestrator;
     stopDeepDiscover(): void;
     disposeDeepDiscoverFeatureResources(): void;
     invalidateRetainedReviewLimiter(): void;
-    disposeScopeRecap(): void;
-    disposeQuietRecall(): void;
     createRuntime(): PaReviewRuntime | null;
     log(message: string, detail?: unknown): void;
 }
@@ -54,7 +51,6 @@ export class PageletFeatureIntegration {
             return;
         }
         this.dependencies.syncDeepDiscoverIdentity();
-        this.dependencies.syncQuietRecallPolicy();
         this.dependencies.registerCommandsOnce();
         this.dependencies.registerFocusCommandOnce();
 
@@ -93,16 +89,12 @@ export class PageletFeatureIntegration {
         this.dependencies.stopDeepDiscover();
         this.destroyOrchestratorAndRuntime();
         this.dependencies.invalidateRetainedReviewLimiter();
-        this.dependencies.disposeScopeRecap();
-        this.dependencies.disposeQuietRecall();
         this.dependencies.disposeDeepDiscoverFeatureResources();
     }
 
     destroyAfterUnloadDrains(): void {
         this.destroyUnloadedRuntime();
         this.dependencies.invalidateRetainedReviewLimiter();
-        this.dependencies.disposeScopeRecap();
-        this.dependencies.disposeQuietRecall();
         this.dependencies.disposeDeepDiscoverFeatureResources();
     }
 
@@ -112,8 +104,6 @@ export class PageletFeatureIntegration {
 
     finishUnloadAfterSharedService(): void {
         this.dependencies.invalidateRetainedReviewLimiter();
-        this.dependencies.disposeScopeRecap();
-        this.dependencies.disposeQuietRecall();
         this.dependencies.disposeDeepDiscoverFeatureResources();
     }
 

@@ -87,7 +87,6 @@ function host(): AiServiceHost {
             chatModelName: "test-model",
             policyModelName: "",
             embeddingModelName: "",
-            shareAnonymousCapabilityUsage: false,
             qwenThinkingEnabled: false,
             webSearchEnabled: false,
             memoryEnabled: false,

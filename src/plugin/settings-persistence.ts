@@ -30,7 +30,7 @@ import { pageletT } from "../locales/pagelet";
 export type SettingsPermissionPatch = Partial<Pick<PluginManagerSettings,
     | "memoryEnabled" | "memoryExtractionEnabled" | "memoryExtractionConsent"
     | "memoryExtractionIncludeVaultInsights" | "memoryApprovalPolicy"
-    | "webSearchEnabled" | "shareAnonymousCapabilityUsage" | "enableMetadataUpdating"
+    | "webSearchEnabled" | "enableMetadataUpdating"
     | "vssCacheExcludePath" | "metadataExcludePath"
 >> & {
     retrievalHabitProfile?: Partial<Pick<PluginManagerSettings["retrievalHabitProfile"], "enabled" | "state">>;
@@ -788,10 +788,6 @@ export class SettingsPersistence {
             if (this.settings.aiProvider === "ollama") {
                 this.settings.aiProvider = "";
                 delete this.settings.aiProviderPreset;
-                changed = true;
-            }
-            if (typeof this.settings.shareAnonymousCapabilityUsage !== "boolean") {
-                this.settings.shareAnonymousCapabilityUsage = false;
                 changed = true;
             }
             if (!this.settings.statisticsVaultId) {

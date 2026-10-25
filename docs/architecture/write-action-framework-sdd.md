@@ -1,5 +1,10 @@
 # Write Action Framework v1 — Software Design Document (SDD)
 
+> 2026-10-25：[DEC-075](../product/decisions/dec-075-legacy-surface-cleanup.md)
+> 第二批删除无当前消费者的旧 append-action 实现及专用测试。Agent/Chat 的
+> `vault_append` 与 Undo 继续由 Operations controller 执行；Quick Capture 共用路径
+> 校验和 Pagelet 正常保存执行器保留，不改变写权限或任何已有数据。
+
 > **Scoped successors (2026-10-05):** This document retains the v1 framework and
 > historical implementation rationale. Its future Operations audit plans in
 > §2.4/§6/§10 are superseded by [DEC-046](../product/decisions/dec-046-note-change-review-and-audit-retirement.md):

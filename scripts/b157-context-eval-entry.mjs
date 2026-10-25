@@ -298,7 +298,7 @@ function syntheticHost(original, syntheticApp, identity, record) {
     app: syntheticApp,
     settings: { debug: false, aiProvider: identity.provider, baseURL: identity.baseURL,
       chatModelName: identity.model, policyModelName: '', embeddingModelName: '',
-      qwenThinkingEnabled: identity.thinking, shareAnonymousCapabilityUsage: false,
+      qwenThinkingEnabled: identity.thinking,
       webSearchEnabled: false, memoryEnabled: true, licenseTier: original.settings.licenseTier,
       operationsProactiveSaveSuggestionsEnabled: false,
       retrievalOptimizationFlags: {}, statisticsVaultId: 'b157-synthetic' },

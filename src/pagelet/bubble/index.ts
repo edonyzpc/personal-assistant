@@ -13,22 +13,12 @@ export { BubbleView } from "./BubbleView";
 
 export {
     buildAgentInsightDeliveryContent,
-    buildQuickReviewContent,
-    buildWritingAssistContent,
-    buildDiscoveryContent,
-    buildNudgeContent,
-    buildEmptyContent,
     buildNeedsSetupContent,
     buildPreparingContent,
     buildReadyEmptyContent,
     buildIntentionallyQuietContent,
     buildContextLimitedContent,
-    buildPreparedRecapDeliveryContent,
-    buildRecallDeliveryContent,
-    buildRecallDeliveryStackContent,
 } from "./BubbleContent";
-export { quietRecallCandidateToDeliveryCandidate } from "./recall-card";
-export { scopeRecapToDeliveryCandidate } from "./recap-card";
 export { resolveBubbleExplanationState } from "./state-resolver";
 export type { BubbleStateContext } from "./state-resolver";
 
@@ -38,7 +28,6 @@ export type {
     BubbleFinding,
     BubbleContent,
     BubbleAction,
-    BubbleCard,
     BubbleCallbacks,
     BubbleQuickAccessCallbacks,
     BubbleStateCallbacks,

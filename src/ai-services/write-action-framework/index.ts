@@ -57,18 +57,6 @@ export type {
 } from "./preview-modal";
 
 export {
-    APPEND_CONTENT_MAX_CHARS,
-    buildAppendPreview,
-    buildBoundaryMarker,
-    executeAppendWrite,
-    rollbackAppend,
-} from "./append-action";
-export type {
-    AppendActionInput,
-    AppendActionResult,
-} from "./append-action";
-
-export {
     createActionExecutor,
     createSelfWriteRegistry,
     SELF_WRITE_WINDOW_MS,

@@ -2,55 +2,17 @@
  * B-118 Pagelet UI/UX Optimization — focused regression tests.
  *
  * Covers the key behaviors introduced by Slices B–F:
- *   - F-02: Recap Bubble content uses candidate.body as primary text
  *   - F-03: Settings defaults are owned by pagelet-settings.test.ts
  *   - F-06: Pet state convergence (settleForForegroundOwner)
  *   - F-07: Settings quietRecallMode migration
  *   - F-10: Provider first-use shared notification
  */
 
-import { buildPreparedRecapDeliveryContent } from "../src/pagelet/bubble/BubbleContent";
-import type { DeliveryCandidate } from "../src/pagelet/bubble/types";
 import {
     mergePageletSettings,
     PAGELET_DEFAULTS,
 } from "../src/settings/pagelet/index";
 import { LEARNING_DEFAULTS_VERSION, mergeLoadedSettings, mergeQuietRecallSettings } from "../src/settings";
-
-// ---------------------------------------------------------------------------
-// F-02: Recap Bubble Content
-// ---------------------------------------------------------------------------
-
-describe("F-02 Recap Bubble Content", () => {
-    function makeRecapCandidate(overrides: Partial<Omit<DeliveryCandidate, "kind">> = {}): DeliveryCandidate & { kind: "recap" } {
-        return {
-            kind: "recap" as const,
-            id: "recap-1",
-            title: "Weekly Changes",
-            body: "Project notes changed this week.",
-            whyNow: ["Recent activity in your vault"],
-            sourceRefs: [
-                { path: "notes/project.md", title: "Project Notes" },
-                { path: "notes/ideas.md", title: "Ideas" },
-            ],
-            preparedAt: new Date().toISOString(),
-            route: { surface: "tab" as const, payloadType: "scope-recap" },
-            ...overrides,
-        };
-    }
-
-    it("shows first source title when only one source exists", () => {
-        const candidate = makeRecapCandidate({
-            sourceRefs: [{ path: "notes/single.md", title: "Single Note" }],
-        });
-        const content = buildPreparedRecapDeliveryContent(candidate, {
-            onViewRecap: jest.fn(),
-            onLater: jest.fn(),
-        });
-
-        expect(content.findings[0]?.sourceTitle).toBe("Weekly Changes · Single Note");
-    });
-});
 
 // ---------------------------------------------------------------------------
 // F-07: Settings quietRecallMode

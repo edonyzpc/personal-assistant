@@ -9,6 +9,34 @@ Tracker: [Development Tracker](./tracker.md)
 
 ## Current Source Baseline
 
+第二批基线为 `315212f8`；Owner 已批准 DEC-075 第二批与 REQ/AC-07–14，以下补充
+设计由 GPT 承担，不把方法选择冒充新的用户决定。
+
+| 第二批决策 / 状态与效果 | Owner / 事实依据 | 保留边界 |
+| --- | --- | --- |
+| 退役旧生成及专用UI | 旧 integration、Detail/Tab 专用 payload 与 builders；无当前生产生成入口 | 当前 reading/AgentInsight、共享保存executor、历史数据和通用成果库 |
+| provider身份共享 | 旧 ScopeRecap 中的 provider 信息/身份仍被现行维护、回顾与首次调用通知使用 | 原算法小范围提取，保留授权fingerprint内容/来源约束，不新建框架 |
+| 退役命令、双Ctrl与管理 | 命令注册/DOM listener 是入口owner；范围由Owner明确批准 | QuickCapture/Records/发现命令/Pet，已安装插件主题状态 |
+| 去除专用事件与无效flag | 设置归一化、capability事件记录各自所有者 | 其他设置/调试/运行记录/维护actionLog，不清数据 |
+| 旧append与StatsStore | 当前Operations controller/StatsRepository已独立承载现行行为 | vault_append/undo、路径校验、采集同步/历史导入/shared helpers |
+| 旧bubble/preload | 当前coordinator独立构造AgentInsight/状态气泡，PreloadBudget无实例 | BubbleView共享显示/CSS、current budget、单条delivery receipt和混合测试 |
+
+所有删除覆盖对应专用类型/导出/文案/测试；不追逐其他 unused。三个writer独占模块，
+主控负责plugin整合与统一门。必要验证映射见Tracker，不新建Plan或验证框架。
+
+| Requirement / AC | 本节设计覆盖 |
+| --- | --- |
+| B-189/REQ-07 / B-189/AC-07 | 旧生成/专用UI及provider身份共享边界 |
+| B-189/REQ-08 / B-189/AC-08 | 双Ctrl listener退出，当前发现/Pet入口保持 |
+| B-189/REQ-09 / B-189/AC-09 | 匿名事件与设置专用链，真实执行/记录保持 |
+| B-189/REQ-10 / B-189/AC-10 | 外围命令及专用模块，Capture/Records/插件状态保持 |
+| B-189/REQ-11 / B-189/AC-11 | 三flag精确清退，actionLog/历史数据保持 |
+| B-189/REQ-12 / B-189/AC-12 | append旧实现与共享confinement分离 |
+| B-189/REQ-13 / B-189/AC-13 | StatsStore旧类与当前数据/工具分离 |
+| B-189/REQ-14 / B-189/AC-14 | old bubble/preload与单条当前显示/预算分离 |
+
+### 第一批基线
+
 只读基线 `058dd3dd`，下列为实施前事实；修改后结果由 Tracker 记录。
 
 - `src/settings/pagelet/index.ts` 定义并读取 `scopeRecapHighValueHints`、`quietRecallMode`，

@@ -42,16 +42,11 @@ jest.mock("../src/share-card/share-card-modal", () => ({
 jest.mock("../src/ai", () => ({ AssistantHelper: class {} }));
 jest.mock("../src/vss", () => ({ VSS: class {} }));
 jest.mock("../src/memory-manager", () => ({ MemoryManager: class { startAutoMaintenance() {} } }));
-jest.mock("../src/modal", () => ({ PluginControlModal: class {} }));
-jest.mock("../src/batch-modal", () => ({ BatchPluginControlModal: class {} }));
 jest.mock("../src/local-graph", () => ({ LocalGraph: class {} }));
-jest.mock("../src/plugin-manifest", () => ({ PluginsUpdater: class {} }));
-jest.mock("../src/theme-manifest", () => ({ ThemeUpdater: class {} }));
 
 import { createPluginHarness } from "./helpers/plugin-harness";
 import { hasDeprecatedSimpleSettingsFields, mergeLoadedSettings } from "../src/settings";
 import { MemoryUserProfileStore, type MemoryExtractionScheduler } from "../src/ai-services/memory-extraction";
-import type { QuietRecallCandidate, RetrievalHabitProfileRecordResult } from "../src/pa";
 
 const getCalloutApi = getApi as unknown as jest.Mock;
 
@@ -161,7 +156,6 @@ describe("B-143 T-13 settings-triggered Pagelet teardown", () => {
             reviewQueueStore: object;
             savedInsightStore: object;
             memoryGovernanceStore: object;
-            retrievalHabitProfileStore: object;
             syncPageletRuntime(): void;
         };
         const destroy = jest.fn();
@@ -169,7 +163,6 @@ describe("B-143 T-13 settings-triggered Pagelet teardown", () => {
         internals.reviewQueueStore = {};
         internals.savedInsightStore = {};
         internals.memoryGovernanceStore = {};
-        internals.retrievalHabitProfileStore = {};
         plugin.settings.pagelet.enabled = false;
 
         internals.syncPageletRuntime();
@@ -179,7 +172,6 @@ describe("B-143 T-13 settings-triggered Pagelet teardown", () => {
         expect(internals.reviewQueueStore).toBeNull();
         expect(internals.savedInsightStore).toBeNull();
         expect(internals.memoryGovernanceStore).toBeNull();
-        expect(internals.retrievalHabitProfileStore).toBeNull();
     });
 });
 
@@ -278,7 +270,6 @@ describe("B-135 default learning runtime", () => {
         createChatModel: unknown;
         pageletCostTracker: { record: jest.Mock };
         isDataBoundaryAllowedPath(path: string): boolean;
-        recordQuietRecallFeedback(candidate: QuietRecallCandidate, feedback: "view"): Promise<RetrievalHabitProfileRecordResult>;
     };
 
     it("starts without historical extraction, runs a new chat trigger, and cancels queued work on pause", async () => {
@@ -358,28 +349,6 @@ describe("B-135 default learning runtime", () => {
             await stopping;
             runtime.memoryExtractionScheduler?.dispose();
         }
-    });
-
-    it("records default local feedback and stops after the independent preference is saved off", async () => {
-        const { plugin, readPersisted } = createPluginHarness({ initialData: { aiProvider: "openai", statisticsVaultId: "habit-runtime" } });
-        const runtime = plugin as unknown as Runtime;
-        await plugin.loadSettings();
-        await runtime.migrateSettings();
-        runtime.settingsPersistence.notifySettingsChanged = jest.fn(async () => undefined);
-        runtime.isDataBoundaryAllowedPath = () => true;
-        const candidate: QuietRecallCandidate = { id: "recall", title: "Recall", summary: "Related source",
-            sourceRefs: [{ path: "notes/source.md", evidenceStrength: "medium" }], whyNow: [],
-            nextAction: "", relation: "related", score: 48, generatedAt: new Date().toISOString() };
-        expect((await runtime.recordQuietRecallFeedback(candidate, "view")).ok).toBe(true);
-        expect(plugin.settings.retrievalHabitProfile.state.aggregates.length).toBeGreaterThan(0);
-        expect(readPersisted()?.retrievalHabitProfile).toEqual(plugin.settings.retrievalHabitProfile);
-        const previous = JSON.stringify(readPersisted()?.retrievalHabitProfile);
-        await plugin.saveSettingsPermissions({ retrievalHabitProfile: { enabled: false } });
-        const snapshot = JSON.stringify(plugin.settings.retrievalHabitProfile.state);
-        expect(await runtime.recordQuietRecallFeedback(candidate, "view")).toEqual({ ok: false, reason: "disabled" });
-        expect(JSON.stringify(plugin.settings.retrievalHabitProfile.state)).toBe(snapshot);
-        expect(JSON.stringify(readPersisted()?.retrievalHabitProfile)).not.toBe(previous);
-        expect(plugin.settings.memoryExtractionEnabled).toBe(true);
     });
 });
 
@@ -1986,17 +1955,13 @@ describe("inline AI setup coordinator", () => {
         internals.reviewQueueStore = null;
         internals.savedInsightStore = null;
         internals.memoryGovernanceStore = null;
-        internals.retrievalHabitProfileStore = null;
         (internals.retainedReviewIntegration as { rateLimiter: unknown }).rateLimiter = null;
-        const disposeScopeRecap = jest.fn();
-        internals.scopeRecapIntegration = { dispose: disposeScopeRecap };
 
         (plugin as unknown as { destroyPageletRuntime(): void }).destroyPageletRuntime();
         (plugin as unknown as { destroyPageletRuntime(): void }).destroyPageletRuntime();
 
         expect(order).toEqual(["scope-unload", "orchestrator-destroy"]);
         expect(plugin.removeChild).toHaveBeenCalledTimes(1);
-        expect(disposeScopeRecap).toHaveBeenCalledTimes(2);
     });
 
     it("destroys a partially initialized Pagelet orchestrator after releasing its scope", async () => {
@@ -2038,7 +2003,6 @@ describe("inline AI setup coordinator", () => {
         });
         const internals = plugin as unknown as Record<string, unknown>;
         internals.syncPageletDeepDiscoverControllerIdentity = jest.fn();
-        internals.getQuietRecallEvaluationPolicyIdentity = jest.fn(() => "test-policy");
         internals.registerPageletCommandsOnce = jest.fn();
         internals.registerPageletFocusCommandOnce = jest.fn();
         internals.pageletOrchestrator = null;
@@ -2072,7 +2036,7 @@ describe("inline AI setup coordinator", () => {
             expect(addedChildren).toHaveLength(1);
             expect(order).toEqual(["release-scope", "destroy-orchestrator"]);
             expect(destroy).toHaveBeenCalledTimes(1);
-            expect(removeEventListener.mock.calls.filter(([type]) => type === "keydown")).toHaveLength(2);
+            expect(removeEventListener.mock.calls.filter(([type]) => type === "keydown")).toHaveLength(1);
             expect(plugin.log).toHaveBeenCalledWith(
                 "Failed to initialize Pagelet",
                 expect.objectContaining({ message: "partial initialization failed" }),
@@ -2130,7 +2094,6 @@ describe("inline AI setup coordinator", () => {
         });
         const internals = plugin as unknown as Record<string, unknown>;
         internals.syncPageletDeepDiscoverControllerIdentity = jest.fn();
-        internals.getQuietRecallEvaluationPolicyIdentity = jest.fn(() => "test-policy");
         internals.registerPageletCommandsOnce = jest.fn();
         internals.registerPageletFocusCommandOnce = jest.fn();
         internals.pageletOrchestrator = null;
@@ -2175,7 +2138,6 @@ describe("inline AI setup coordinator", () => {
             internals.reviewQueueStore = null;
             internals.savedInsightStore = null;
             internals.memoryGovernanceStore = null;
-            internals.retrievalHabitProfileStore = null;
             internals.pageletRuntime = null;
             internals.operationsService = null;
             (plugin as unknown as { destroyPageletRuntime(): void }).destroyPageletRuntime();

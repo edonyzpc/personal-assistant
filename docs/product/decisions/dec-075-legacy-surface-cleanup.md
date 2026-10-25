@@ -1,10 +1,10 @@
-# DEC-075 — 第一批旧入口与保留代码清理
+# DEC-075 — 旧入口与保留代码分批清理
 
 Decision ID: DEC-075
 Status: Accepted
 Updated: 2026-10-25
 Work item: B-189
-Authority: Owner 于 2026-10-25 在只读盘点后明确批准本记录列出的第一批实施，并接受所列旧命令 ID 删除后需重新绑定快捷键。批准不包含其他旧功能退役、历史数据清理、Git 提交、推送或发布。
+Authority: Owner 于 2026-10-25 在只读盘点和逐项讨论后，分别明确批准本记录的第一批及第二批实施，并接受所列旧命令退役。第二批不包含范围外功能退役、历史数据清理或新的 Git 提交、推送、发布授权。
 
 ## Context
 
@@ -47,6 +47,36 @@ Operations 会话接线。删除这些残留不授权缩减共享 Chat Operation
    不重做 provider、Memory、权限、存储或其他旧功能。
 
 ## Consequences
+
+### 第二批接续决定 — 2026-10-25
+
+Owner 逐项确认后明确授权实施以下第二批；本节接续第一批与 DEC-035 中对应的保留
+约定，不将旧决定改写成当时已经批准。设计、开发与验证全部由 GPT 完成。
+
+- 删除旧 Quiet Recall / Scope Recap 生成链及其专用查看、保存、手动关联；保留当前
+  Deep Discover、阅读与保存、成果交接、共享 SavedInsightStore 和已有笔记/结果数据。
+- 取消双击 Ctrl 发现入口，保留发现命令和 Pet 入口。
+- 删除匿名能力使用情况开关及专用事件记录链；保留调试日志、运行记录和统计同步。
+- 删除 startup-recording、update-plugins、update-themes、单个/批量插件启停命令及
+  PA 图标右键插件管理入口和专用实现；保留 Quick Capture、Records Preview、共用
+  设置、已安装插件/主题及当前启用状态，不改 Obsidian 的插件状态或快捷键文件。
+- 删除 weeklyReview.enabled、weeklyReview.preparedReviewEnabled 和
+  maintenanceReview.weeklyScanEnabled 三个无效设置；保留手动维护、action log、
+  已有笔记和回顾内容。被清退的开关值不保证降级恢复。
+- 删除旧 append-action 实现及专用测试；保留 Agent/Chat 的 vault_append、撤销、
+  Quick Capture、当前保存执行器和共享路径检查。
+- 删除旧 StatsStore 类及专用测试；保留同文件共享工具、当前统计采集/存储/界面、
+  同步、历史导入，不删除任何统计数据。
+- 删除旧 Pagelet 气泡、预加载预算残留、无消费者导出及专用测试；保留当前
+  Pet/AgentInsight/Pattern/Onboarding、共用渲染与样式、有效调用预算、阅读/保存及
+  PA Agent 能力。混合测试只移除旧用例，不整套删除。
+- Records Preview 与 free/paid mock tier 本轮明确保留。不增加新机制、数据清理或
+  兼容转发；提交、推送、发布和 closeout 仍须另行授权。
+
+源码已核实旧链与现行显示入口分离，但 provider 身份、共享保存、气泡呈现与类型
+仍有当前消费者，实施须保留或原语义提取。实际验证结论只由 Tracker 记录。
+
+### 第一批影响（历史边界）
 
 - 删除的命令不会自动重定向；已有快捷键需在 Obsidian 中绑定到保留命令。
   这项兼容变化已获批准，不再以旧 ID 保留条款阻挡实施。

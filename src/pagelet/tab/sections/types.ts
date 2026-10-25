@@ -3,8 +3,8 @@
 /**
  * Shared interface and types for extracted Tab section renderers.
  *
- * Each action-heavy section (Memory Governance, Maintenance Review,
- * Quiet Recall) implements TabSectionRenderer. TabView orchestrates
+ * Each action-heavy section (Memory Governance and Maintenance Review)
+ * implements TabSectionRenderer. TabView orchestrates
  * layout, scroll preservation, and shared async action state.
  */
 
@@ -78,26 +78,4 @@ export interface MaintenanceActionUiState {
     status: MaintenanceActionUiStatus;
     message: string;
     actionId?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Quiet Recall types (extracted from TabView)
-// ---------------------------------------------------------------------------
-
-export type QuietRecallSaveStatus = "saving" | "saved" | "failed";
-export type QuietRecallLinkStatus = "linking" | "linked" | "failed";
-
-export interface QuietRecallSaveState {
-    status: QuietRecallSaveStatus;
-    message: string;
-}
-
-export interface QuietRecallLinkState {
-    status: QuietRecallLinkStatus;
-    message: string;
-}
-
-export interface QuietRecallLinkResult {
-    ok: boolean;
-    message: string;
 }

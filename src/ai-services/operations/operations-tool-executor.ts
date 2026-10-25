@@ -271,10 +271,6 @@ async function prepareOperationsBatch(options: OperationsStagingToolExecutorOpti
             ...(input.hostParentBinding ? { hostParentBinding: input.hostParentBinding } : {}),
             ...(input.inputLineage ? { inputLineage: input.inputLineage } : {}),
             ...(input.taskSourceReadGuard ? { taskSourceReadGuard: input.taskSourceReadGuard } : {}) }, input.signal);
-        for (const call of actionCalls) {
-            const capability = options.registry.get(call.name);
-            if (capability) options.registry.recordCapabilityEvent({ capabilityName: call.name, providerId: capability.providerId, status: "invoked", durationMs: 0 });
-        }
         fillNonExecutingIntentResults(intent, actionCalls.map(call => call.id), toolResults);
     } catch (error) {
         for (const call of actionCalls) toolResults.set(call.id, {

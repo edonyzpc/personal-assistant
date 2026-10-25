@@ -234,15 +234,6 @@ export interface CapabilityProvider {
     execute?(name: string, input: unknown, context: AgentCapabilityContext): Promise<AgentCapabilityResult>;
 }
 
-export type CapabilityEventStatus = "invoked" | "failed" | "skipped" | "unavailable";
-
-export interface CapabilityUsageEvent {
-    capabilityName: string;
-    providerId: string;
-    status: CapabilityEventStatus;
-    durationMs: number;
-}
-
 export interface CapabilityDiagnostic {
     type: "duplicate" | "policy";
     capabilityName: string;

@@ -24,15 +24,12 @@ const createDependencies = () => {
         },
         isFeatureScopeCurrent: () => true,
         syncDeepDiscoverIdentity: () => order.push("sync-deep"),
-        syncQuietRecallPolicy: () => order.push("sync-recall"),
         registerCommandsOnce: () => order.push("register-commands"),
         registerFocusCommandOnce: () => order.push("register-focus"),
         createOrchestrator: () => orchestrator as never,
         stopDeepDiscover: () => order.push("stop-deep"),
         disposeDeepDiscoverFeatureResources: () => order.push("dispose-deep"),
         invalidateRetainedReviewLimiter: () => order.push("invalidate-review"),
-        disposeScopeRecap: () => order.push("dispose-recap"),
-        disposeQuietRecall: () => order.push("dispose-quiet"),
         createRuntime: () => runtime as never,
         log: jest.fn(),
     };
@@ -80,8 +77,6 @@ describe("PageletFeatureIntegration", () => {
             "destroy-orchestrator",
             "dispose-runtime",
             "invalidate-review",
-            "dispose-recap",
-            "dispose-quiet",
             "dispose-deep",
         ]);
     });
@@ -102,8 +97,6 @@ describe("PageletFeatureIntegration", () => {
             "destroy-orchestrator",
             "dispose-runtime",
             "invalidate-review",
-            "dispose-recap",
-            "dispose-quiet",
             "dispose-deep",
         ]);
     });

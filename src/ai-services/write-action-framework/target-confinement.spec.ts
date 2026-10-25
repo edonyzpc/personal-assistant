@@ -1,9 +1,11 @@
 import { describe, expect, it, jest } from "@jest/globals";
+import { TFile } from "obsidian";
 
 import {
     ConfinementConfigError,
     DEFAULT_MAX_PATH_LENGTH,
     validateAllowedRoots,
+    validateAppendConfinement,
     validateTargetConfinement,
     validateTargetConfinementSync,
     type ConfinementFsProbe,
@@ -16,6 +18,35 @@ const baseConfig: ConfinementConfig = {
     allowedExtensions: [".md"],
     maxPathLength: 200,
 };
+
+describe("validateAppendConfinement for current-note capture", () => {
+    function activeFile(path: string): TFile {
+        const FileCtor = TFile as unknown as { new(path: string): TFile };
+        return new FileCtor(path);
+    }
+
+    it("accepts a supplied Markdown file and rejects protected directories", () => {
+        const result = validateAppendConfinement(activeFile("notes/daily/2026-06-17.md"));
+        expect(result.valid).toBe(true);
+        if (result.valid) expect(result.file.path).toBe("notes/daily/2026-06-17.md");
+
+        const rejected = validateAppendConfinement(activeFile(".obsidian/plugins/evil.md"));
+        expect(rejected.valid).toBe(false);
+        if (!rejected.valid) expect(rejected.reason).toContain("protected directory");
+    });
+
+    it("rejects a non-Markdown active file", () => {
+        const result = validateAppendConfinement(activeFile("scripts/evil.js"));
+        expect(result.valid).toBe(false);
+        if (!result.valid) expect(result.reason).toContain("non-markdown");
+    });
+
+    it("rejects a missing active file", () => {
+        const result = validateAppendConfinement(null);
+        expect(result.valid).toBe(false);
+        if (!result.valid) expect(result.reason).toContain("No active file");
+    });
+});
 
 describe("general resource path confinement", () => {
     it("preserves long relative paths and text or emoji joiners without applying Writing limits", () => {

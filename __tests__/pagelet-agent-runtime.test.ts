@@ -315,7 +315,6 @@ function createHost(extraContents: Record<string, string> = {}): AiServiceHost {
             chatModelName: 'test-model',
             policyModelName: 'test-policy',
             embeddingModelName: 'test-embedding',
-            shareAnonymousCapabilityUsage: false,
             skillContextEnabled: false,
             enabledSkillIds: [],
             qwenThinkingEnabled: false,

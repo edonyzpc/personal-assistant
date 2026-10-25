@@ -57,7 +57,7 @@ function hostFor(evalCase: PaRuntimeEvalCase, isForcedSearchFailure: () => boole
     return {
         settings: {
             debug: false, aiProvider: "openai", baseURL: "https://b149-offline.invalid/v1", chatModelName: "b149-fixed-model",
-            policyModelName: "", embeddingModelName: "b149-fixed-embedding", shareAnonymousCapabilityUsage: false,
+            policyModelName: "", embeddingModelName: "b149-fixed-embedding",
             qwenThinkingEnabled: false, webSearchEnabled: Boolean(evalCase.webEvidence), memoryEnabled: false, licenseTier: "paid",
             operationsProactiveSaveSuggestionsEnabled: false,
             statisticsVaultId: "b149-synthetic", retrievalOptimizationFlags: {},

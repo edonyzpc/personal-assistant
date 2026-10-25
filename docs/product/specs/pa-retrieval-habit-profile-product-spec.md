@@ -2,6 +2,10 @@
 
 Updated: 2026-09-12
 
+2026-10-25 scoped successor：[DEC-075](../decisions/dec-075-legacy-surface-cleanup.md)
+第二批删除旧 Recall 候选的专用反馈/排序接线。现行共用排序工具、设置/本地存储及
+已有画像数据保留；本文历史 Recall 消费路径不要求恢复已退役生成链。
+
 ## Status
 
 | Field | Value |

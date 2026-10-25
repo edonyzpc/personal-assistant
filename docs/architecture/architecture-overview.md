@@ -579,7 +579,7 @@ graph TB
 | `EditorPlugin` | CodeMirror 扩展，实时字数统计 |
 | `StatsManager` | 数据聚合、趋势计算 |
 | `StatsRepository` | IndexedDB 存储后端 |
-| `StatsStore` | 内存缓存 + 快照 |
+| `stats-store.ts` helpers | 共享设备标识、路径与视图归一化；旧 StatsStore 类已按 DEC-075 退役 |
 | `StatsMigration` | 数据迁移 |
 | `StatsSync` | 跨设备同步 |
 | `Statistics.tsx` | React 仪表盘 (4 视图: Overview/Daily/Growth/Composition) |

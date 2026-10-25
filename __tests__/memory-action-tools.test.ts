@@ -20,7 +20,6 @@ function createHost(memoryActions?: MemoryActionPort): AiServiceHost {
             chatModelName: "chat-model",
             policyModelName: "policy-model",
             embeddingModelName: "embedding-model",
-            shareAnonymousCapabilityUsage: false,
             qwenThinkingEnabled: false,
             webSearchEnabled: false,
             licenseTier: "free",

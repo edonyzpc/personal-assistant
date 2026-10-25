@@ -808,7 +808,6 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
                     })),
                 })),
             },
-            weeklyReview: { ...DEFAULT_SETTINGS.weeklyReview },
             quietRecall: { ...DEFAULT_SETTINGS.quietRecall },
             memoryExtractionConsent: { ...DEFAULT_SETTINGS.memoryExtractionConsent },
             retrievalHabitProfile: {
@@ -1154,11 +1153,7 @@ describe('Statistics settings copy', () => {
     });
 });
 
-describe('PA Agent telemetry settings', () => {
-    it('keeps anonymous capability usage sharing disabled by default', () => {
-        expect(DEFAULT_SETTINGS.shareAnonymousCapabilityUsage).toBe(false);
-    });
-
+describe('PA Agent policy settings', () => {
     it('keeps the optional policy model unset by default', () => {
         expect(DEFAULT_SETTINGS.policyModelName).toBe('');
     });
@@ -1175,6 +1170,7 @@ describe('PA Agent telemetry settings', () => {
         expect(policyModel?.desc).toContain('Sends your request and explicit context to your AI provider');
         expect(policyModel?.desc).toContain('hidden vault content is not sent');
         expect(policyModel?.desc).toContain('Blank uses local fallback rules');
+        expect(getMockSettingRecords().some((record) => record.name === 'Share anonymous capability usage')).toBe(false);
     });
 
 });
@@ -1278,7 +1274,10 @@ describe('simple settings canonicalization', () => {
     it.each([true, false, undefined, 'invalid'])('ignores retired switches with value %p', (value) => {
         const loaded = {
             memoryAutoCheckBeforeChat: value, skillContextEnabled: value, enabledSkillIds: [], operationsAgentEnabled: value,
+            shareAnonymousCapabilityUsage: value,
             pagelet: { preloadEnabled: value, deepDiscoverEnabled: value },
+            weeklyReview: { enabled: value, preparedReviewEnabled: value },
+            maintenanceReview: { weeklyScanEnabled: value },
         };
         const merged = mergeLoadedSettings(loaded);
         expect(merged).toEqual(mergeLoadedSettings({}));
@@ -1289,14 +1288,19 @@ describe('simple settings canonicalization', () => {
     it('strips only exact retired keys without mutating or normalizing unrelated state', () => {
         const raw = {
             memoryAutoCheckBeforeChat: false, skillContextEnabled: false, enabledSkillIds: [], operationsAgentEnabled: false,
+            shareAnonymousCapabilityUsage: true,
             pagelet: { preloadEnabled: false, deepDiscoverEnabled: false,
                 backgroundDiscoveryEnabled: false, proactiveHints: false, preloadInterval: 42 },
+            weeklyReview: { enabled: false, preparedReviewEnabled: true, history: ['keep-weekly-data'] },
+            maintenanceReview: { weeklyScanEnabled: true, actionLog: [{ id: 'keep-history' }], futureField: 'keep' },
             memoryExtractionConsent: { state: 'paused', version: 1 },
             memoryExtractionEnabled: false, memoryAutoAcceptPaused: true,
             dataBoundary: { excludedFolders: ['private'] }, customFutureField: 'keep',
         };
         const expected = {
             pagelet: { backgroundDiscoveryEnabled: false, proactiveHints: false, preloadInterval: 42 },
+            weeklyReview: { history: raw.weeklyReview.history },
+            maintenanceReview: { actionLog: raw.maintenanceReview.actionLog, futureField: 'keep' },
             memoryExtractionConsent: raw.memoryExtractionConsent,
             memoryExtractionEnabled: false, memoryAutoAcceptPaused: true,
             dataBoundary: raw.dataBoundary, customFutureField: 'keep',
@@ -1305,6 +1309,8 @@ describe('simple settings canonicalization', () => {
         expect(canonical).toEqual(expected);
         expect(omitDeprecatedSimpleSettingsFields(canonical)).toEqual(expected);
         expect(raw.pagelet.preloadEnabled).toBe(false);
+        expect(raw.weeklyReview.enabled).toBe(false);
+        expect(raw.maintenanceReview.weeklyScanEnabled).toBe(true);
         expect(hasDeprecatedSimpleSettingsFields(raw)).toBe(true);
         expect(hasDeprecatedSimpleSettingsFields(canonical)).toBe(false);
         expect(mergeLoadedSettings(raw).pagelet.backgroundDiscoveryEnabled).toBe(false);
@@ -3597,16 +3603,15 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(mergeLoadedSettings({ contextPager: { enabled: false } }).contextPager.enabled).toBe(false);
     });
 
-    it('keeps Maintenance Review weekly scans disabled by default', () => {
-        expect(DEFAULT_SETTINGS.maintenanceReview.weeklyScanEnabled).toBe(false);
+    it('retires the unused weekly scan switch while preserving maintenance action history', () => {
+        expect(DEFAULT_SETTINGS.maintenanceReview).not.toHaveProperty('weeklyScanEnabled');
         expect(DEFAULT_SETTINGS.maintenanceReview.actionLog).toEqual([]);
-        expect(mergeMaintenanceReviewSettings(undefined).weeklyScanEnabled).toBe(false);
-        expect(mergeMaintenanceReviewSettings({ weeklyScanEnabled: 'yes' }).weeklyScanEnabled).toBe(false);
-        expect(mergeLoadedSettings({ maintenanceReview: { weeklyScanEnabled: true } }).maintenanceReview).toMatchObject({
-            weeklyScanEnabled: true,
-            actionLog: [],
-        });
+        expect(mergeMaintenanceReviewSettings(undefined)).toEqual({ actionLog: [] });
+        expect(mergeMaintenanceReviewSettings({ weeklyScanEnabled: 'yes' })).toEqual({ actionLog: [] });
+        expect(mergeLoadedSettings({ maintenanceReview: { weeklyScanEnabled: true } }).maintenanceReview)
+            .toEqual({ actionLog: [] });
         const merged = mergeMaintenanceReviewSettings({
+            weeklyScanEnabled: true,
             actionLog: [
                 {
                     id: 'act-1',
@@ -3648,11 +3653,8 @@ describe('Phase 3 IA reorder + provider UX', () => {
         });
     });
 
-    it('keeps Weekly Review manual-first and Quiet Recall bubble-off by default', () => {
-        expect(DEFAULT_SETTINGS.weeklyReview).toEqual({
-            enabled: true,
-            preparedReviewEnabled: false,
-        });
+    it('preserves Quiet Recall and feedback defaults without unused Weekly Review switches', () => {
+        expect(DEFAULT_SETTINGS).not.toHaveProperty('weeklyReview');
         expect(DEFAULT_SETTINGS.quietRecall).toEqual({
             enabled: true,
             bubbleNudgesEnabled: false,
@@ -3677,10 +3679,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
                 },
             },
         })).toMatchObject({
-            weeklyReview: {
-                enabled: false,
-                preparedReviewEnabled: true,
-            },
             quietRecall: {
                 enabled: false,
                 bubbleNudgesEnabled: true,
@@ -3712,10 +3710,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
                 },
             },
         })).toMatchObject({
-            weeklyReview: {
-                enabled: true,
-                preparedReviewEnabled: false,
-            },
             quietRecall: {
                 enabled: true,
                 bubbleNudgesEnabled: false,
@@ -4215,9 +4209,10 @@ describe('Phase 3 IA reorder + provider UX', () => {
         // after) the Advanced h2, not at the top.
         const headings = records.map((record) => record.name);
         const debugIdx = headings.indexOf('Debug');
-        const telemetryIdx = headings.indexOf('Share anonymous capability usage');
+        const statisticsSyncIdx = headings.indexOf(pluginT('plugin.settings.statistics.sync.name'));
         expect(debugIdx).toBeGreaterThan(0);
-        expect(telemetryIdx).toBeLessThan(debugIdx);
+        expect(statisticsSyncIdx).toBeGreaterThanOrEqual(0);
+        expect(statisticsSyncIdx).toBeLessThan(debugIdx);
     });
 
     it('fresh install shows the placeholder option and hides the provider config', () => {

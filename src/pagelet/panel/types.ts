@@ -16,7 +16,6 @@ import type {
     GraphDiscoveryRunResult,
     MaintenanceReviewRunResult,
     PatternDetectionResult,
-    QuietRecallRunResult,
     ReviewQueueItem,
     SavedInsight,
 } from "../../pa";
@@ -179,8 +178,6 @@ export interface PanelMaintenanceReviewState extends MaintenanceReviewRunResult 
     /** Routed ReviewQueue items (maintenance-domain) merged from the review queue. */
     routedItems?: ReviewQueueItem[];
 }
-
-export type PanelQuietRecallState = QuietRecallRunResult;
 export type PanelGraphDiscoveryState = GraphDiscoveryRunResult;
 export type PanelPatternDetectionState = PatternDetectionResult;
 
@@ -200,7 +197,6 @@ export interface PanelOpenExtra {
     maintenanceReview?: PanelMaintenanceReviewState;
     /** @deprecated Weekly Review decomposed (2026-07-02). Field kept for deserialization compat. */
     weeklyReview?: unknown;
-    quietRecall?: PanelQuietRecallState;
     graphDiscovery?: PanelGraphDiscoveryState;
     patternDetection?: PanelPatternDetectionState;
 }

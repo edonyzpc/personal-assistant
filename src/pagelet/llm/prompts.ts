@@ -118,49 +118,6 @@ function buildSystemPromptBase(language?: "zh" | "en"): string {
     ].join("\n");
 }
 
-// ---------------------------------------------------------------------------
-// Prompt builders
-// ---------------------------------------------------------------------------
-
-/**
- * **Background preparation** (fast/cheap): produce 2-3 one-sentence insights
- * from recently modified notes with minimal token usage.
- */
-export function buildPreloadPrompt(
-    noteContents: Array<{ path: string; content: string }>,
-    budget: { input: number; output: number },
-    language?: "zh" | "en",
-): PromptBuildResult {
-    const systemPrompt = [
-        buildSystemPromptBase(language),
-        "",
-        "SCENARIO: Background review preparation.",
-        "- Produce exactly 2-3 one-sentence insights. Be concise.",
-        "- Focus on the most interesting or actionable observations.",
-        "- Do NOT produce more than 3 findings.",
-        "",
-        STRUCTURED_OUTPUT_SCHEMA,
-    ].join("\n");
-
-    const buildUserPrompt = (notes: ReadonlyArray<{ path: string; content: string }>): string => [
-        `Analyze these ${noteContents.length} note(s) and produce 2-3 brief insights:`,
-        "",
-        formatNotes(notes),
-        "",
-        "Produce the JSON output now.",
-    ].join("\n");
-    const emptyNotes = noteContents.map(({ path }) => ({ path, content: "" }));
-    const fixedInputTokens = estimateTokens(`${systemPrompt}\n\n${buildUserPrompt(emptyNotes)}`);
-    // `estimateTokens` rounds each ASCII run up. Reserve a small per-note margin
-    // so composing separately-truncated contents can never exceed the envelope.
-    const compositionMargin = noteContents.length + 2;
-    const contentBudget = Math.max(0, budget.input - fixedInputTokens - compositionMargin);
-    const truncated = distributeNotesBudget(noteContents, contentBudget, 0);
-    const userPrompt = buildUserPrompt(truncated);
-
-    return { systemPrompt, userPrompt, maxOutputTokens: Math.min(budget.output, 512) };
-}
-
 /**
  * **Discovery**: find connections between the current note and a set of
  * related notes. Designed to surface links the user might not see.

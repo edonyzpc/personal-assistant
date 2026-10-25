@@ -12,7 +12,6 @@ import { getPageletUiLanguage, pageletT, type PageletLocale } from "../../locale
 import { isRecord } from "../../pa/helpers";
 import { getPlatformCrypto } from "../../platform-dom";
 import type { PageletReadingTarget } from "../../ai-services/pagelet-handoff";
-import { quietRecallGovernedClaimId } from "../../pa";
 import type { GeneratedReviewNote, WriteResult } from "../output/types";
 import { resolveRelatedMarkdownNote } from "../related-note";
 import { TabView } from "./TabView";
@@ -21,8 +20,6 @@ import type {
     MaintenanceMoveApplyResult,
     MaintenanceMoveUndoResult,
     MaintenanceProposal,
-    QuietRecallCandidate,
-    QuietRecallSaveResult,
     ReviewQueueItem,
 } from "../../pa";
 import type {
@@ -286,62 +283,6 @@ function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetail
                 })),
             };
         }
-        if (payload.extra.scopeRecap) {
-            const cloneRecapItem = (item: typeof payload.extra.scopeRecap.summary) => ({
-                ...item,
-                sourceRefs: item.sourceRefs.map((ref) => ({
-                    ...ref,
-                    whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
-                })),
-            });
-            copy.extra.scopeRecap = {
-                ...payload.extra.scopeRecap,
-                scope: {
-                    ...payload.extra.scopeRecap.scope,
-                    paths: payload.extra.scopeRecap.scope.paths ? [...payload.extra.scopeRecap.scope.paths] : undefined,
-                    tags: payload.extra.scopeRecap.scope.tags ? [...payload.extra.scopeRecap.scope.tags] : undefined,
-                },
-                sourceCoverage: { ...payload.extra.scopeRecap.sourceCoverage },
-                skippedSources: payload.extra.scopeRecap.skippedSources.map((s) => ({ ...s })),
-                summary: cloneRecapItem(payload.extra.scopeRecap.summary),
-                themes: payload.extra.scopeRecap.themes.map(cloneRecapItem),
-                tensions: payload.extra.scopeRecap.tensions.map(cloneRecapItem),
-                openQuestions: payload.extra.scopeRecap.openQuestions.map(cloneRecapItem),
-                nextReviewActions: payload.extra.scopeRecap.nextReviewActions.map(cloneRecapItem),
-                sourceRefs: payload.extra.scopeRecap.sourceRefs.map((ref) => ({
-                    ...ref,
-                    whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
-                })),
-            };
-        }
-        if (payload.extra.quietRecall) {
-            const cloneRecallCandidate = (candidate: typeof payload.extra.quietRecall.candidates[number]) => ({
-                ...candidate,
-                ...(candidate.context ? { context: { ...candidate.context } } : {}),
-                sourceRefs: candidate.sourceRefs.map((ref) => ({
-                    ...ref,
-                    whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
-                })),
-                whyNow: [...candidate.whyNow],
-            });
-            copy.extra.quietRecall = {
-                generatedAt: payload.extra.quietRecall.generatedAt,
-                currentPath: payload.extra.quietRecall.currentPath,
-                totalCount: payload.extra.quietRecall.totalCount,
-                candidates: payload.extra.quietRecall.candidates.map(cloneRecallCandidate),
-                ...(payload.extra.quietRecall.discoverCandidates ? {
-                    discoverCandidates: payload.extra.quietRecall.discoverCandidates.map(cloneRecallCandidate),
-                } : {}),
-                ...(payload.extra.quietRecall.evaluationDiagnostics ? {
-                    evaluationDiagnostics: {
-                        ...payload.extra.quietRecall.evaluationDiagnostics,
-                        attempts: payload.extra.quietRecall.evaluationDiagnostics.attempts.map((attempt) => ({
-                            ...attempt,
-                        })),
-                    },
-                } : {}),
-            };
-        }
     }
     if (payload.sourcePath) copy.sourcePath = payload.sourcePath;
     if (payload.summarySaveNote) copy.summarySaveNote = payload.summarySaveNote;
@@ -405,8 +346,6 @@ export class PageletDetailView extends ItemView {
         message: string;
         record?: ConfirmedMemoryRecord;
     }>;
-    private readonly onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>;
-    private readonly onLinkQuietRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<{ ok: boolean; message: string }>;
     private readonly memoryCallbacks: PageletMemoryLifecycleCallbacks;
     private renderer: TabView | null = null;
     private title: string;
@@ -432,8 +371,6 @@ export class PageletDetailView extends ItemView {
             message: string;
             record?: ConfirmedMemoryRecord;
         }>,
-        onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>,
-        onLinkQuietRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<{ ok: boolean; message: string }>,
         memoryCallbacks: PageletMemoryLifecycleCallbacks = {},
         onViewClosed?: (view: PageletDetailView) => void,
     ) {
@@ -445,8 +382,6 @@ export class PageletDetailView extends ItemView {
         this.onConfirmMemoryCandidate = onConfirmMemoryCandidate;
         this.onDismissMemoryCandidate = onDismissMemoryCandidate;
         this.onForgetConfirmedMemory = onForgetConfirmedMemory;
-        this.onSaveQuietRecallAsInsight = onSaveQuietRecallAsInsight;
-        this.onLinkQuietRecallCandidate = onLinkQuietRecallCandidate;
         this.memoryCallbacks = memoryCallbacks;
         this.onViewClosed = onViewClosed;
         this.locale = getLocale();
@@ -516,8 +451,6 @@ export class PageletDetailView extends ItemView {
                 : undefined,
             onOpenSource: this.memoryCallbacks.onOpenSource,
             onOpenMemorySettings: this.memoryCallbacks.onOpenMemorySettings,
-            onSaveQuietRecallAsInsight: this.onSaveQuietRecallAsInsight,
-            onLinkRecallCandidate: this.onLinkQuietRecallCandidate,
         });
         this.renderer.mount(this.contentEl);
         this.renderer.setDisplayed(this.isViewDisplayed());
@@ -709,20 +642,6 @@ export class PageletDetailView extends ItemView {
                 + (routedItems?.length ?? 0),
         };
         const extra = { ...(this.payloadOptions.extra ?? {}) };
-        if (!rehydratedExactContext && extra.quietRecall) {
-            const candidates = extra.quietRecall.candidates.filter((candidate) => (
-                candidate.context?.kind !== "governed_claim"
-            ));
-            if (candidates.length > 0) {
-                extra.quietRecall = {
-                    ...extra.quietRecall,
-                    candidates,
-                    totalCount: candidates.length,
-                };
-            } else {
-                delete extra.quietRecall;
-            }
-        }
         extra.memoryGovernance = memoryGovernance;
         this.payloadOptions.extra = extra;
         if (rehydratedExactContext) {
@@ -965,12 +884,6 @@ function inspectPayloadContextualMemory(
             }
         }
     }
-    for (const candidate of payload.extra?.quietRecall?.candidates ?? []) {
-        if (candidate.context?.kind !== "governed_claim") continue;
-        hasContextualSurface = true;
-        const claimId = quietRecallGovernedClaimId(candidate);
-        if (!claimId || !append(claimId)) return { kind: "invalid" };
-    }
     if (!hasContextualSurface) return { kind: "none" };
     return claimIds.length > 0
         ? { kind: "exact", claimIds }
@@ -1047,10 +960,8 @@ function normalizePageletDetailLayoutType(value: unknown): PageletDetailLayoutTy
 function normalizeTabEntryReason(value: unknown): TabEntryReason | undefined {
     return value === "panel-expand"
         || value === "maintenance"
-        || value === "quiet-recall"
         || value === "graph-discovery"
         || value === "pattern-detection"
-        || value === "scope-recap"
         || value === "default"
         ? value
         : undefined;

@@ -131,7 +131,7 @@
     // which may acquire credential-bearing fields in a later version.
     const settings = { debug: false, aiProvider: modelIdentity.provider, baseURL: modelIdentity.baseURL,
       chatModelName: modelIdentity.model, policyModelName: '', embeddingModelName: '',
-      shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false,
+      qwenThinkingEnabled: false,
       webSearchEnabled: Boolean(item.webEvidence), licenseTier: 'paid',
       // Model-visible Memory stays available for a bounded "answer-now" result.
       // The synthetic port below never opens an index or dispatches embeddings.

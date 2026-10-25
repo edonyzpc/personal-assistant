@@ -1203,16 +1203,9 @@ export function createWriteActionAwareToolExecutor(
                     },
                 };
             }
-            // Fix #2: action route MUST consult PolicyEngine.canExecute and
-            // emit CapabilityUsageEvent — same as the chat-runtime executor.
+            // Action routes retain the same policy admission as ordinary tools.
             const policyDecision = options.registry.canExecute(toolCall.name);
             if (!policyDecision.allowed) {
-                options.registry.recordCapabilityEvent({
-                    capabilityName: writeCapability.name,
-                    providerId: writeCapability.providerId,
-                    status: "skipped",
-                    durationMs: 0,
-                });
                 return {
                     outcome: "policy_rejected",
                     promptText: `Tool ${toolCall.name} was skipped by policy: ${policyDecision.reason ?? "policy rejected"}.`,
@@ -1262,18 +1255,11 @@ export function createWriteActionAwareToolExecutor(
                 signal: input.signal,
                 platform: options.platform ?? "desktop",
             };
-            const startedAt = Date.now();
             const agentResult = await options.actionExecutor.execute(
                 writeCapability,
                 preparedResult.input,
                 ctx,
             );
-            options.registry.recordCapabilityEvent({
-                capabilityName: writeCapability.name,
-                providerId: writeCapability.providerId,
-                status: agentResult.status === "ok" ? "invoked" : "failed",
-                durationMs: Math.max(0, Date.now() - startedAt),
-            });
             const chatToolResult = agentResultToChatToolResult(writeCapability.name, agentResult);
             const canonicalResult = chatToolResultToPaAgentToolExecutionResult(toolCall, chatToolResult);
             const augmentedMetadata = preparedResult.repaired
@@ -1353,10 +1339,6 @@ export class PaAgentRuntime {
                 platform: runtimePlatform,
                 ...effectivePolicyOptions,
             }),
-            telemetryEnabled: this.host.settings.shareAnonymousCapabilityUsage === true,
-            onCapabilityEvent: (event) => {
-                this.host.log("PA capability usage event", event);
-            },
         });
         // Per-runtime Write Action Framework wiring (SDD §5.2 + §5.3). Build
         // selfWriteRegistry + actionExecutor exactly once when writeAction is

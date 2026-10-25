@@ -70,8 +70,6 @@ import { ShareCardModal } from "../src/share-card/share-card-modal";
 import { NudgeOwner, type NudgeTicket } from "../src/pagelet/BubbleCoordinator";
 import type { PageletChatHandoffPreparationResult } from "../src/ai-services/pagelet-handoff";
 import type { OnboardingNudge } from "../src/pagelet/bubble/BubbleContent";
-import { quietRecallCandidateToDeliveryCandidate } from "../src/pagelet/bubble/recall-card";
-import { scopeRecapToDeliveryCandidate } from "../src/pagelet/bubble/recap-card";
 import type { DeliveryReceipt } from "../src/pagelet/attention";
 import {
     PAGELET_DEEP_DISCOVER_PIPELINE_VERSION,
@@ -84,16 +82,9 @@ import type { PageletDetailPayload } from "../src/pagelet/tab/types";
 import type {
     ConfirmedMemoryRecord,
     PatternDetectionResult,
-    QuietRecallBubbleNudge,
-    QuietRecallCandidate,
-    QuietRecallEvaluationDiagnostics,
     MaintenanceReviewRunResult,
     ReviewQueueItem,
     SavedInsight,
-    ScopeRecapLocalOverview,
-    ScopeRecapAttemptStatus,
-    ScopeRecapPreparationResult,
-    ScopeRecapRunResult,
 } from "../src/pa";
 
 type PanelOpen = (layout: PanelLayoutType, findings: PanelFinding[], extra?: PanelOpenExtra) => void;
@@ -121,10 +112,9 @@ function showOrchestratorBubble(
             showBubble(
                 bubbleView: unknown,
                 petView: unknown,
-                options: { entry: "quick-review" },
             ): void;
         };
-    }).bubbleCoordinator.showBubble(bubbleView, petView, { entry: "quick-review" });
+    }).bubbleCoordinator.showBubble(bubbleView, petView);
 }
 
 function persistPageletSettingUpdates(host: PageletHost) {
@@ -166,14 +156,6 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 proactiveHintsCooldown: 30,
                 proactiveHintsQuietHours: { enabled: false, start: "22:00", end: "08:00" },
                 backgroundDiscoveryEnabled: true,
-                scopeRecapPreparationEnabled: true,
-                scopeRecapBackgroundAuthorization: "authorized-v1",
-                scopeRecapAuthorizationContextId: "scope-recap-auth-test",
-                scopeRecapHighValueHints: true,
-                scopeRecapNudgeSuppressions: [],
-                scopeRecapLastAttempt: null,
-                quietRecallLastDiagnostics: null,
-                quietRecallLastAcceptedCount: 0,
                 outputLanguage: "auto",
                 temperature: 0.2,
                 foregroundPerHourCap: 999,
@@ -187,17 +169,11 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 onboardingShown: true,
                 maintenanceScanSuggested: false,
                 quickCaptureExplained: false,
-                quietRecallExplained: false,
                 quietAcknowledged: false,
                 pageletProviderFirstUseNotified: false,
             },
             contextPager: {
                 enabled: true,
-            },
-            quietRecall: {
-                enabled: true,
-                bubbleNudgesEnabled: false,
-                quietRecallMode: "off",
             },
             focusMode: false,
             confirmedMemoryCount: 0,
@@ -238,98 +214,6 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
             skippedSourceCount: 0,
         }),
         detectCrossNotePatterns: async () => null,
-        buildScopeRecapLocalOverview: async () => ({
-            kind: "local_scope_overview",
-            generatedAt: new Date().toISOString(),
-            scope: { kind: "current_note", paths: ["notes/current.md"] },
-            sourceSnapshotId: "scope-snapshot-test",
-            dataBoundarySnapshotId: "data_boundary:scope_recap",
-            sourceCoverage: {
-                totalSourceCount: 2,
-                includedSourceCount: 2,
-                skippedSourceCount: 0,
-                coverageRatio: 1,
-            },
-            includedSources: [
-                { path: "notes/current.md", title: "current", changed: false },
-                { path: "notes/related.md", title: "related", changed: false },
-            ],
-            skippedSources: [],
-        }),
-        isScopeRecapProviderConfigured: () => true,
-        getScopeRecapProviderInfo: () => ({
-            provider: "test",
-            model: "test",
-            endpoint: "https://example.test/v1",
-        }),
-        getScopeRecapAuthorizationContextId: () => "scope-recap-auth-test",
-        getScopeRecapDataBoundarySnapshotId: () => "data_boundary:scope_recap",
-        runScopeRecap: async () => {
-            const generatedAt = new Date().toISOString();
-            const sourceRefs = [
-                { path: "notes/current.md", evidenceStrength: "medium" as const },
-                { path: "notes/related.md", evidenceStrength: "medium" as const },
-            ];
-            const scope = { kind: "current_note" as const, paths: ["notes/current.md"] };
-            const localOverview = await host.buildScopeRecapLocalOverview();
-            const artifact = {
-                id: "recap-test",
-                scope,
-                sourceSnapshotId: "scope-snapshot-test",
-                generatedAt,
-                ttlDays: 30,
-                staleStatus: "fresh" as const,
-                sourceCoverage: localOverview.sourceCoverage,
-                skippedSources: [],
-                summary: {
-                    id: "recap-summary",
-                    section: "summary" as const,
-                    title: "Scope summary",
-                    summary: "Derived helper.",
-                    sourceRefs,
-                    generatedAt,
-                    generatedHelper: true as const,
-                    status: "candidate" as const,
-                },
-                themes: [{
-                    id: "recap-theme",
-                    section: "theme" as const,
-                    title: "Trust is becoming the shared design constraint",
-                    summary: "Both notes connect instant value with source-backed trust.",
-                    whyItMatters: "This shared constraint should decide which interaction ships next.",
-                    sourceRefs,
-                    generatedAt,
-                    generatedHelper: true as const,
-                    status: "candidate" as const,
-                }],
-                tensions: [],
-                openQuestions: [],
-                nextReviewActions: [],
-                sourceRefs,
-                dataBoundarySnapshotId: "data_boundary:scope_recap",
-            };
-            return {
-                status: "ready" as const,
-                artifact,
-                attempt: {
-                    attemptedAt: generatedAt,
-                    outcome: "success" as const,
-                    scope,
-                    sourceSnapshotId: "scope-snapshot-test",
-                    dataBoundarySnapshotId: "data_boundary:scope_recap",
-                    providerCallMade: true,
-                    includedSourceCount: 2,
-                },
-                localOverview,
-            };
-        },
-        saveQuietRecallAsInsight: async () => ({
-            ok: false,
-            reason: "not_configured",
-            message: "not configured",
-        }),
-        linkRecallCandidate: async () => ({ ok: false, message: "not configured" }),
-        recordQuietRecallFeedback: async () => ({ ok: false, reason: "disabled" }),
         getDeepDiscoverPolicyIdentity: () => "policy:v1",
         validateDeepDiscoverInsight: async () => true,
         isDeepDiscoverCommitSealCurrent: (seal) => (
@@ -971,7 +855,6 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         } as const));
         const host = makeHost({ runDeepDiscover });
         const legacyDiscovery = jest.spyOn(host, "discoverConnections");
-        const legacyRecap = jest.spyOn(host, "runScopeRecap");
         const orchestrator = new PageletOrchestrator(host);
         const callbacks = orchestrator.getCommandCallbacks();
 
@@ -992,7 +875,6 @@ describe("PageletOrchestrator Deep Discover migration", () => {
             });
         }
         expect(legacyDiscovery).not.toHaveBeenCalled();
-        expect(legacyRecap).not.toHaveBeenCalled();
         expect(Notice).toHaveBeenCalledTimes(1);
         expect(Notice).toHaveBeenCalledWith("No findings in this analysis.", 5000);
     });
@@ -2057,46 +1939,6 @@ describe("Pagelet Share Card action", () => {
         expect(focus).toHaveBeenCalledTimes(1);
         expect(view.editor.focus).not.toHaveBeenCalled();
     });
-});
-
-describe("PageletOrchestrator quick review command", () => {
-
-
-    it("shows ready-empty Bubble without a review-current launcher", async () => {
-        const host = makeHost();
-        host.settings.pagelet.proactiveHints = true;
-        const orchestrator = new PageletOrchestrator(host);
-        const bubbleView = {
-            show: jest.fn(() => { bubbleView.bubbleState = "visible"; }),
-            close: jest.fn(),
-            bubbleState: "hidden",
-        };
-
-        (orchestrator as unknown as {
-            petView: { rootEl: HTMLElement; stateMachine: { transition: jest.Mock } };
-            bubbleView: typeof bubbleView;
-        }).petView = {
-            rootEl: {} as HTMLElement,
-            stateMachine: { transition: jest.fn() },
-        };
-        (orchestrator as unknown as { bubbleView: typeof bubbleView }).bubbleView = bubbleView;
-
-        showOrchestratorBubble(
-            orchestrator,
-            bubbleView,
-            (orchestrator as unknown as { petView: unknown }).petView,
-        );
-        await flushAsyncWork();
-
-        const [content] = bubbleView.show.mock.calls[bubbleView.show.mock.calls.length - 1] as unknown as [{
-            type: string;
-            actions: Array<{ label: string; callback: () => void }>;
-        }, HTMLElement];
-        expect(content.type).toBe("ready-empty");
-        expect(content.actions.map((action) => action.label)).toEqual(["Find related old notes"]);
-    });
-
-
 });
 
 describe("PageletOrchestrator pet task visuals", () => {
@@ -3252,11 +3094,9 @@ describe("PageletOrchestrator detail expansion", () => {
         persistPageletSettingUpdates(host);
         const orchestrator = new PageletOrchestrator(host);
         const internals = orchestrator as unknown as {
-            preparedRecapNudgeFingerprint: string | null;
             patternDetectionNudgeAdmissionKey: string | null;
             onboardingNudgeAdmissionKey: string | null;
         };
-        internals.preparedRecapNudgeFingerprint = "recap-admission";
         internals.patternDetectionNudgeAdmissionKey = "pattern:admitted";
         internals.onboardingNudgeAdmissionKey = "onboarding:admitted";
 
@@ -3264,7 +3104,6 @@ describe("PageletOrchestrator detail expansion", () => {
 
         expect(internals.patternDetectionNudgeAdmissionKey).toBeNull();
         expect(internals.onboardingNudgeAdmissionKey).toBeNull();
-        expect(internals.preparedRecapNudgeFingerprint).toBe("recap-admission");
         orchestrator.destroy();
     });
 
@@ -3317,7 +3156,6 @@ describe("PageletOrchestrator detail expansion", () => {
     it("suppresses open-note proactive preparation in Focus Mode", async () => {
         const host = makeHost();
         host.settings.pagelet.proactiveHints = true;
-        host.settings.quietRecall.bubbleNudgesEnabled = true;
         host.settings.focusMode = true;
         const orchestrator = new PageletOrchestrator(host);
         const petView = {
@@ -3347,34 +3185,6 @@ describe("PageletOrchestrator detail expansion", () => {
         await flushAsyncWork();
 
         orchestrator.destroy();
-    });
-
-    it("runs unified discovery on double Ctrl but ignores a single Ctrl press", async () => {
-        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(async () => ({
-            status: "quiet",
-            reason: "no-insight",
-        } as const));
-        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
-        const host = makeHost({ runDeepDiscover, openPageletDetailView });
-        const orchestrator = new PageletOrchestrator(host);
-        const preventDefault = jest.fn();
-        const internals = orchestrator as unknown as {
-            handleQuietRecallShortcut(event: Partial<KeyboardEvent> & { preventDefault: () => void }): void;
-        };
-
-        internals.handleQuietRecallShortcut({ key: "Control", preventDefault });
-        await flushAsyncWork();
-        internals.handleQuietRecallShortcut({ key: "Control", preventDefault });
-        await flushAsyncWork();
-
-        expect(preventDefault).toHaveBeenCalledTimes(1);
-        expect(runDeepDiscover).toHaveBeenCalledTimes(1);
-        expect(runDeepDiscover).toHaveBeenCalledWith({
-            path: "notes/current.md",
-            triggerReason: "explicit",
-            force: true,
-        });
-        expect(openPageletDetailView).not.toHaveBeenCalled();
     });
 
 

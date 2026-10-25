@@ -453,156 +453,8 @@ body {
 	filter: drop-shadow(6px 6px 10px var(--status-bar-animate));
 }
 
-.plugin-switch-on-off-svg {
-	top: 0.24em;
-	position: relative;
-	margin-right: 4px;
-}
-
-.pa-batch-modal-title {
-	text-align: center;
-}
-
 .resize-popover-width {
 	--popover-width: var(--resize-popover-width);
-}
-
-.pa-plugin-suggestion-name {
-	color: var(--text-normal);
-}
-
-.plugin-update-svg {
-	position: relative;
-	margin-right: 4px;
-	align-self: center;
-}
-
-.progress-bar-notice .meter {
-	box-sizing: content-box;
-	height: 14px;
-	position: relative;
-	margin: 1px 0 1px 0;
-	background: rgb(122, 122, 122);
-	border-radius: 9px;
-	padding: 1px;
-	box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.3);
-	text-align: left;
-	font-family: "Courier New", "Comic Mono";
-	font-size: 13px;
-	font-style: oblique 40deg;
-	width: auto;
-}
-
-.progress-bar-notice .meter > span {
-	display: block;
-	height: 100%;
-	border-top-right-radius: 20px;
-	border-bottom-right-radius: 20px;
-	border-top-left-radius: 20px;
-	border-bottom-left-radius: 20px;
-	background-color: rgb(43, 194, 83);
-	background-image: linear-gradient(
-		center bottom,
-		rgb(43, 194, 83) 37%,
-		rgb(84, 240, 84) 69%
-	);
-	box-shadow: inset 0 2px 9px rgba(255, 255, 255, 0.3),
-		inset 0 -2px 6px rgba(0, 0, 0, 0.4);
-	position: relative;
-	overflow: hidden;
-	width: auto;
-}
-
-.progress-bar-notice .meter > span:after,
-.progress-bar-notice .animate > span > span {
-	content: "";
-	position: absolute;
-	top: 0;
-	left: 0;
-	bottom: 0;
-	right: 0;
-	background-image: linear-gradient(
-		-45deg,
-		rgba(255, 255, 255, 0.2) 25%,
-		transparent 25%,
-		transparent 50%,
-		rgba(255, 255, 255, 0.2) 50%,
-		rgba(255, 255, 255, 0.2) 75%,
-		transparent 75%,
-		transparent
-	);
-	z-index: 1;
-	background-size: 40px 40px;
-	animation: move 4s linear infinite;
-	border-top-right-radius: 20px;
-	border-bottom-right-radius: 20px;
-	border-top-left-radius: 20px;
-	border-bottom-left-radius: 20px;
-	overflow: hidden;
-	width: auto;
-}
-
-.progress-bar-notice .animate > span:after {
-	display: none;
-}
-
-@keyframes move {
-	0% {
-		background-position: 0 0;
-	}
-
-	100% {
-		background-position: 40px 40px;
-	}
-}
-
-.progress-bar-notice .orange > span {
-	background-image: linear-gradient(#f1a165, #f36d0a);
-}
-
-.progress-bar-notice .red > span {
-	background-image: linear-gradient(#f0a3a3, #f42323);
-}
-
-.progress-bar-notice .nostripes > span > span,
-.progress-bar-notice .nostripes > span::after {
-	background-image: none;
-}
-
-.progress-bar-grid {
-	display: grid;
-	grid-template-columns: 9fr 1fr;
-	gap: 0 8px;
-	margin-bottom: 8px;
-	width: 100%;
-}
-
-.progress-bar-number {
-	color: rgba(84, 240, 84, 0.69);
-	width: 41px;
-}
-
-.progress-bar-items-error {
-	color: red;
-}
-
-.progress-bar-notice {
-	max-width: 480px;
-	background-color: var(--pa-background-primary);
-}
-
-.progress-bar-items-grid {
-	display: grid;
-	grid-template-columns: 18px 9fr;
-	grid-template-rows: repeat(auto-fill, 37px);
-	gap: 0 8px;
-}
-
-.progress-bar-items-text {
-	color: var(--pa-text-normal);
-	display: inline-block;
-	height: 18px;
-	align-self: center;
 }
 
 .pa-notice-shell {
@@ -5275,82 +5127,6 @@ body.is-mobile .pa-settings-tab .setting-item.pa-setting-layout--compact .settin
 	overflow-wrap: anywhere;
 }
 
-.pa-pagelet-bubble-stack-nav {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	gap: 10px;
-	margin: -2px 42px 12px 0;
-}
-
-.pa-pagelet-bubble-stack-nav[hidden] {
-	display: none;
-}
-
-.pa-pagelet-bubble-stack-btn,
-.pa-pagelet-bubble-stack-dot {
-	border: 1px solid var(--background-modifier-border,#4a4a4a);
-	background: transparent;
-	color: var(--text-muted,#999);
-	cursor: pointer;
-}
-
-.pa-pagelet-bubble-stack-btn {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 26px;
-	height: 26px;
-	border-radius: 8px;
-	font-size: 18px;
-	line-height: 1;
-}
-
-.pa-pagelet-bubble-stack-btn:disabled {
-	opacity: .35;
-	cursor: default;
-}
-
-.pa-pagelet-bubble-stack-dots {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-}
-
-.pa-pagelet-bubble-stack-dot {
-	position: relative;
-	width: 28px;
-	height: 28px;
-	padding: 0;
-	border: 0;
-	border-radius: 50%;
-	background: transparent;
-}
-
-.pa-pagelet-bubble-stack-dot::before {
-	content: "";
-	position: absolute;
-	top: 50%;
-	left: 50%;
-	width: 8px;
-	height: 8px;
-	border: 1px solid var(--background-modifier-border,#4a4a4a);
-	border-radius: 50%;
-	background: var(--background-modifier-border,#4a4a4a);
-	transform: translate(-50%, -50%);
-}
-
-.pa-pagelet-bubble-stack-dot[aria-current=true]::before {
-	border-color: var(--interactive-accent,#7f6df2);
-	background: var(--interactive-accent,#7f6df2);
-}
-
-body.is-mobile .pa-pagelet-bubble-stack-btn,
-body.is-mobile .pa-pagelet-bubble-stack-dot {
-	min-width: 44px;
-	min-height: 44px;
-}
-
 .pa-pagelet-bubble-actions {
 	display: flex;
 	gap: 8px;
@@ -6218,50 +5994,6 @@ body > .tooltip {
 .pa-pagelet-panel-review-queue-action:hover {
 	border-color: var(--interactive-accent,#7c9eff);
 	color: var(--text-normal,#dcddde);
-}
-
-.pa-pagelet-panel-recall-title {
-	font-size: var(--font-ui-small);
-	font-weight: 600;
-	color: var(--text-normal,#dcddde);
-}
-
-.pa-pagelet-panel-recall-count {
-	font-size: calc(var(--font-text-size, 16px) * 0.6875);
-	color: var(--text-muted,#999);
-}
-
-.pa-pagelet-panel-recall-card {
-	padding: 10px;
-	border: 1px solid var(--background-modifier-border,#3a3a3a);
-	border-radius: 8px;
-	background: var(--background-secondary,#252525);
-}
-
-.pa-pagelet-panel-recall-card--candidate {
-	margin-top: 8px;
-}
-
-.pa-pagelet-panel-recall-card-title {
-	font-size: var(--font-ui-smaller);
-	font-weight: 600;
-	color: var(--text-normal,#dcddde);
-	overflow-wrap: anywhere;
-}
-
-.pa-pagelet-panel-recall-card-claim {
-	margin-top: 5px;
-	font-size: var(--font-ui-smaller);
-	line-height: 1.5;
-	color: var(--text-muted,#999);
-	overflow-wrap: anywhere;
-}
-
-.pa-pagelet-panel-recall-card-meta {
-	margin-top: 6px;
-	font-size: calc(var(--font-text-size, 16px) * 0.6875);
-	color: var(--text-faint,#666);
-	overflow-wrap: anywhere;
 }
 
 .pa-pagelet-panel-suggestion-card-host {
@@ -7524,7 +7256,6 @@ body.is-mobile .pa-pagelet-action-ring-item {
  * Anchor classes (no rules needed — do NOT add empty rule-sets):
  *   .pa-pagelet-tab-memory-governance
  *   .pa-pagelet-tab-maintenance-review
- *   .pa-pagelet-tab-quiet-recall
  *   .pa-pagelet-tab-graph-discovery
  *   .pa-pagelet-tab-pattern-detection
  *   .pa-pagelet-tab-saved-insights
@@ -7543,7 +7274,6 @@ body.is-mobile .pa-pagelet-action-ring-item {
  *   .pa-pagelet-tab-maintenance-proposals
  *   .pa-pagelet-tab-maintenance-card
  *   .pa-pagelet-tab-recall-empty
- *   .pa-pagelet-tab-recall-card
  *   .pa-pagelet-tab-graph-empty
  *   .pa-pagelet-tab-graph-overview-card
  *   .pa-pagelet-tab-graph-items
@@ -8199,16 +7929,6 @@ body.is-mobile .pa-pagelet-tab-memory-meta-row {
 	color: var(--text-muted,#999);
 	font-size: var(--font-ui-small);
 	line-height: 1.6;
-}
-
-.pa-pagelet-panel-quiet-recall {
-	margin: 12px 0 14px;
-	padding-bottom: 12px;
-	border-bottom: 1px solid var(--background-modifier-border,#3a3a3a);
-}
-
-.pa-pagelet-panel-recall-card {
-	border-left: 3px solid var(--text-accent,#7c9eff);
 }
 
 .pa-pagelet-tab-review-queue-callout-label {

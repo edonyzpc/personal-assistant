@@ -15,7 +15,6 @@ export type {
 } from "./types";
 
 export {
-    buildPreloadPrompt,
     buildDiscoveryPrompt,
 } from "./prompts";
 

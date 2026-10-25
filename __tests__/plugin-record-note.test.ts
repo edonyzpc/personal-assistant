@@ -51,10 +51,6 @@ const mockStatsManagerConstructor = jest.fn();
 const mockStatsRecalcTotals = jest.fn(async () => undefined);
 const mockCalloutModalConstructor = jest.fn();
 const mockCalloutModalOpen = jest.fn();
-const mockPluginsUpdaterConstructor = jest.fn((...args: unknown[]) => undefined);
-const mockPluginsUpdaterUpdate = jest.fn(async (_updater: unknown) => undefined);
-const mockThemeUpdaterInit = jest.fn(async (...args: unknown[]) => undefined);
-const mockThemeUpdaterUpdate = jest.fn(async (_updater: unknown) => undefined);
 jest.mock('obsidian', () => {
     class MockPlugin {
         app: unknown;
@@ -284,8 +280,6 @@ jest.mock('../src/memory-manager', () => ({
         prepareFromCommand() { }
     },
 }));
-jest.mock('../src/modal', () => ({ PluginControlModal: class { } }));
-jest.mock('../src/batch-modal', () => ({ BatchPluginControlModal: class { } }));
 jest.mock('../src/settings', () => {
     const actual = jest.requireActual<typeof import('../src/settings')>('../src/settings');
     return {
@@ -339,27 +333,6 @@ jest.mock('../src/utils', () => ({
     hasSecretValue: (value: string | null) => value !== null && value !== '',
     icons: {},
 }));
-jest.mock('../src/plugin-manifest', () => ({
-    PluginsUpdater: class {
-        constructor(...args: unknown[]) {
-            mockPluginsUpdaterConstructor(...args);
-        }
-        update() {
-            return mockPluginsUpdaterUpdate(this);
-        }
-    },
-}));
-jest.mock('../src/theme-manifest', () => ({
-    ThemeUpdater: class MockThemeUpdater {
-        static init(...args: unknown[]) {
-            return Promise.resolve(mockThemeUpdaterInit(...args))
-                .then(() => new MockThemeUpdater());
-        }
-        update() {
-            return mockThemeUpdaterUpdate(this);
-        }
-    },
-}));
 jest.mock('../src/callout', () => ({
     CalloutModal: class {
         constructor(...args: unknown[]) {
@@ -397,8 +370,6 @@ import {
 } from '../src/plugin';
 import { SourceAccess } from '../src/plugin/source-access';
 import { VaultEventBridge } from '../src/plugin/vault-event-bridge';
-import { QuietRecallPluginIntegration } from '../src/pagelet/plugin-quiet-recall';
-import { ScopeRecapPluginIntegration } from '../src/pagelet/plugin-scope-recap';
 import { DeepDiscoverPluginIntegration } from '../src/pagelet/plugin-deep-discover';
 import { RetainedReviewPluginIntegration } from '../src/pagelet/plugin-review-actions';
 import { PageletFeatureIntegration } from '../src/pagelet/plugin-integration';
@@ -407,14 +378,10 @@ import { RecordActions } from '../src/plugin/record-actions';
 import { MetadataUpdater } from '../src/plugin/metadata-updater';
 import { StatsPluginIntegration } from '../src/stats/plugin-integration';
 import { pluginField } from '../src/stats/editor-plugin';
-import { PluginsUpdater } from '../src/plugin-manifest';
-import { ThemeUpdater } from '../src/theme-manifest';
-import { createPluginUpdaterAction, createThemeUpdaterAction } from '../src/plugin/update-actions';
 import { ShareCardActions } from '../src/plugin/share-card-actions';
 import { ShareCardModal, closeAllShareCardModals } from '../src/share-card/share-card-modal';
 import { getPluginUiLanguage, pluginT } from '../src/locales/plugin';
 import { QuickCapturePluginIntegration } from '../src/capture/plugin-integration';
-import { confirmUserAction } from '../src/confirm';
 import {
     AttentionAwareDeliveryStore,
     DELIVERY_FINGERPRINT_VERSION,
@@ -431,11 +398,9 @@ import type { PageletReadingTarget } from '../src/ai-services/pagelet-handoff';
 import { createProviderRequestScope } from '../src/ai-services/obsidian-fetch';
 import type {
     ConfirmedMemoryRecord,
-    QuietRecallCandidate,
     ReviewQueueCreateInput,
     ReviewQueueItem,
 } from '../src/pa';
-import { addPaRelatedLink } from '../src/pa/frontmatter-link';
 import { installChatPluginIntegration } from './helpers/plugin-harness';
 import { OperationsReviewRouter } from '../src/chat/operations-review/OperationsReviewRouter';
 import {
@@ -537,93 +502,6 @@ const installPluginShellOwners = (plugin: any) => { // eslint-disable-line @type
         isRecentPageletSelfWrite: (path) => plugin.pageletRuntime?.isRecentSelfWrite(path) === true,
         scheduleMemoryStatus: () => plugin.memoryStatusNotifier.schedule(),
     });
-    plugin.quietRecallIntegration = new QuietRecallPluginIntegration({
-        app: {
-            get workspace() { return plugin.app.workspace; },
-            get vault() { return plugin.app.vault; },
-            get metadataCache() { return plugin.app.metadataCache; },
-        },
-        source: plugin.sourceAccess,
-        getSettings: () => ({
-            provider: plugin.settings?.aiProvider ?? '',
-            providerPreset: plugin.settings?.aiProviderPreset ?? null,
-            model: plugin.settings?.chatModelName ?? '',
-            embeddingModel: plugin.settings?.embeddingModelName ?? '',
-            endpoint: plugin.settings?.baseURL ?? '',
-            quietRecall: plugin.settings?.quietRecall ?? { enabled: false },
-            pagelet: plugin.settings?.pagelet ?? {
-                enabled: false,
-                temperature: 0.2,
-                maxOutputTokens: 2000,
-                outputLanguage: 'auto',
-                reviewsFolder: '.pagelet',
-                excludedFolders: [],
-                excludedTags: [],
-                excludedPatterns: [],
-            },
-            retrievalHabitProfile: plugin.settings?.retrievalHabitProfile ?? { enabled: false, state: { aggregates: [] } },
-            savedInsights: plugin.settings?.savedInsights?.items ?? [],
-        }),
-        getLocale: () => plugin.getPageletLocale(),
-        getDataBoundaryFingerprint: () => plugin.getMemoryDataBoundaryFingerprint(),
-        isRuntimeCurrent: () => plugin.unloading !== true,
-        isMemorySearchReady: () => plugin.isPageletMemorySearchReady(),
-        findRelatedNotes: (activePath, contents, excludedPaths, options) => plugin.findPageletRelatedNotes(
-            activePath,
-            contents,
-            excludedPaths,
-            options,
-        ),
-        getGraphDiscoveryBacklinkMap: () => plugin.buildGraphDiscoveryBacklinkMap(),
-        getResolvedOutgoingLinks: (path) => plugin.getResolvedOutgoingLinks(path),
-        getGraphDiscoveryLinks: (file) => plugin.getGraphDiscoveryLinks(file),
-        createRateLimitStorage: () => plugin.createPageletRateLimitStorage(
-            'quiet-recall',
-            plugin.pageletVaultStorageScope(),
-        ),
-        getVaultStorageScope: () => plugin.pageletVaultStorageScope(),
-        getRateLimitStorageKey: (scope) => plugin.pageletRateLimitStorageKey('quiet-recall', scope),
-        listSavedInsights: () => plugin.listSavedInsights(),
-        createSavedInsight: (input) => plugin.getSavedInsightStore().create(input),
-        confirmLink: (input) => confirmUserAction(plugin.app, input),
-        addRelatedLink: (currentPath, candidatePath) => addPaRelatedLink(
-            plugin.app,
-            currentPath,
-            candidatePath,
-        ),
-        recordFeedback: (candidate, feedback) => plugin.getRetrievalHabitProfileStore()
-            .recordRecallFeedback(candidate, feedback),
-        log: (message, detail) => plugin.log(message, detail),
-    });
-    plugin.scopeRecapIntegration = new ScopeRecapPluginIntegration({
-        app: {
-            get workspace() { return plugin.app.workspace; },
-            get vault() { return plugin.app.vault; },
-        },
-        source: plugin.sourceAccess,
-        getSettings: () => ({
-            provider: plugin.settings?.aiProvider ?? '',
-            providerPreset: plugin.settings?.aiProviderPreset ?? null,
-            model: plugin.settings?.chatModelName ?? '',
-            embeddingModel: plugin.settings?.embeddingModelName ?? '',
-            endpoint: plugin.settings?.baseURL ?? '',
-            pagelet: plugin.settings?.pagelet ?? {},
-            mergedPagelet: plugin.getPageletSettingsWithDataBoundary?.()
-                ?? plugin.sourceAccess.getPageletSettingsWithDataBoundary(),
-        }),
-        getDataBoundaryFingerprint: () => plugin.getMemoryDataBoundaryFingerprint(),
-        isRuntimeCurrent: () => plugin.unloading !== true,
-        getProviderCallAdmission: () => plugin.getPageletProviderCallAdmission(),
-        getCostTracker: () => plugin.pageletCostTracker,
-        createRateLimitStorage: () => plugin.createPageletRateLimitStorage(
-            'scope-recap',
-            plugin.pageletVaultStorageScope(),
-        ),
-        getVaultStorageScope: () => plugin.pageletVaultStorageScope(),
-        getRateLimitStorageKey: (scope) => plugin.pageletRateLimitStorageKey('scope-recap', scope),
-        createModel: (temperature, options) => plugin.createChatModel(temperature, options),
-        log: (message, detail) => plugin.log(message, detail),
-    });
     plugin.deepDiscoverIntegration = new DeepDiscoverPluginIntegration({
         app: {
             get vault() { return plugin.app.vault; },
@@ -715,7 +593,6 @@ const installPluginShellOwners = (plugin: any) => { // eslint-disable-line @type
         releaseFeatureScope: (expectedScope) => plugin.releasePageletFeatureScope(expectedScope),
         isFeatureScopeCurrent: (scope) => plugin.isPageletFeatureScopeCurrent(scope),
         syncDeepDiscoverIdentity: () => plugin.syncPageletDeepDiscoverControllerIdentity(),
-        syncQuietRecallPolicy: () => plugin.quietRecallIntegration.syncPolicyIdentity(),
         registerCommandsOnce: () => plugin.registerPageletCommandsOnce(),
         registerFocusCommandOnce: () => plugin.registerPageletFocusCommandOnce(),
         createOrchestrator: (featureScope) => new PageletOrchestrator(
@@ -724,8 +601,6 @@ const installPluginShellOwners = (plugin: any) => { // eslint-disable-line @type
         stopDeepDiscover: () => plugin.deepDiscoverIntegration.resetForFeatureDisable(),
         disposeDeepDiscoverFeatureResources: () => plugin.deepDiscoverIntegration.disposeFeature(),
         invalidateRetainedReviewLimiter: () => plugin.retainedReviewIntegration.invalidateLimiter(),
-        disposeScopeRecap: () => plugin.scopeRecapIntegration.dispose(),
-        disposeQuietRecall: () => plugin.quietRecallIntegration.dispose(),
         createRuntime: () => null,
         log: (message, detail) => plugin.log(message, detail),
     });
@@ -821,8 +696,6 @@ describe('Plugin source and vault-event shell integration', () => {
         const internals = plugin as unknown as Record<string, unknown>;
         expect(internals.sourceAccess).toBeInstanceOf(SourceAccess);
         expect(internals.vaultEventBridge).toBeInstanceOf(VaultEventBridge);
-        expect(internals.quietRecallIntegration).toBeInstanceOf(QuietRecallPluginIntegration);
-        expect(internals.scopeRecapIntegration).toBeInstanceOf(ScopeRecapPluginIntegration);
         expect(internals.deepDiscoverIntegration).toBeInstanceOf(DeepDiscoverPluginIntegration);
 
         plugin.settings = {
@@ -981,7 +854,6 @@ const memorySettings = {
     policyModelName: '',
     featuredImageModel: 'wan2.7-image',
     numFeaturedImages: 1,
-    shareAnonymousCapabilityUsage: false,
     skillContextEnabled: true,
     enabledSkillIds: mockBundledSkillIds,
     statisticsVaultId: 'vault-id',
@@ -1024,8 +896,6 @@ const createPluginHarness = ({
     plugin.log = jest.fn();
     plugin.recordActions = new RecordActions({
         app: plugin.app,
-        getSettings: () => plugin.settings,
-        log: (...args: unknown[]) => plugin.log(args[0] as string, ...args.slice(1)),
     });
 
     return { plugin, vault, openFile, createdFiles, secretStorage };
@@ -1124,40 +994,6 @@ describe('Memory vault event dispatch', () => {
         } finally {
             nowSpy.mockRestore();
         }
-    });
-});
-
-describe('record note creation', () => {
-    it('creates root-level record notes without trying to create the vault root folder', async () => {
-        const { plugin, vault, openFile, createdFiles } = createPluginHarness();
-
-        await plugin.createNewNote('.', '2026-05-01');
-
-        expect(vault.createFolder).not.toHaveBeenCalled();
-        expect(vault.create).toHaveBeenCalledWith('2026-05-01.md', expect.stringContaining('title: "2026-05-01"'));
-        expect(openFile).toHaveBeenCalledWith(createdFiles[0]);
-    });
-
-    it('does not recreate an existing target folder when metadata lookup misses it', async () => {
-        const { plugin, vault } = createPluginHarness({
-            existingFolders: new Set(['9.src']),
-        });
-
-        await plugin.createNewNote('9.src', '2026-05-01');
-
-        expect(vault.adapter.exists).toHaveBeenCalledWith('9.src');
-        expect(vault.createFolder).not.toHaveBeenCalled();
-        expect(vault.create).toHaveBeenCalledWith('9.src/2026-05-01.md', expect.stringContaining('title: "2026-05-01"'));
-    });
-
-    it('opens an existing record note instead of creating it again', async () => {
-        const existingFile = createTFile('2026-05-01.md');
-        const { plugin, vault, openFile } = createPluginHarness({ existingFile });
-
-        await plugin.createNewNote('.', '2026-05-01');
-
-        expect(vault.create).not.toHaveBeenCalled();
-        expect(openFile).toHaveBeenCalledWith(existingFile);
     });
 });
 
@@ -1317,8 +1153,6 @@ describe('plugin startup view registration', () => {
         };
         plugin.recordActions = new RecordActions({
             app: plugin.app,
-            getSettings: () => plugin.settings,
-            log: (...args: unknown[]) => plugin.log(args[0] as string, ...args.slice(1)),
         });
         plugin.loadSettings = jest.fn(async () => undefined);
         plugin.cleanupLegacyMobileDebugLog = jest.fn(() => new Promise<void>(() => undefined));
@@ -1353,10 +1187,6 @@ describe('plugin startup view registration', () => {
             applyOptionsToOpenGraphs: jest.fn(async () => undefined),
         };
         plugin.localGraphIntegration = localGraphIntegration;
-        plugin.updateActions = {
-            updatePlugins: createPluginUpdaterAction(() => new PluginsUpdater(plugin.app, plugin)),
-            updateThemes: createThemeUpdaterAction(() => ThemeUpdater.init(plugin.app, plugin)),
-        };
         const aiActions = {
             summarize: jest.fn(async (..._args: unknown[]) => undefined),
             checkFeaturedImage: jest.fn((_checking: boolean, ..._args: unknown[]) => true),
@@ -1415,10 +1245,6 @@ describe('plugin startup view registration', () => {
         mockShareCardModalOpen.mockClear();
         mockCalloutModalConstructor.mockClear();
         mockCalloutModalOpen.mockClear();
-        mockPluginsUpdaterConstructor.mockClear();
-        mockPluginsUpdaterUpdate.mockClear();
-        mockThemeUpdaterInit.mockClear();
-        mockThemeUpdaterUpdate.mockClear();
 
         expect(pluginFieldInit).not.toHaveBeenCalled();
 
@@ -1464,35 +1290,21 @@ describe('plugin startup view registration', () => {
             expect(registerView).toHaveBeenCalledTimes(6);
             const commandIds = plugin.addCommand.mock.calls
                 .map(([command]: [RegisteredPluginCommand]) => command.id);
-            expect(commandIds.indexOf('startup-recording')).toBe(0);
-            expect(commandIds.indexOf('pa-quick-capture')).toBe(1);
+            expect(commandIds).not.toEqual(expect.arrayContaining([
+                'startup-recording', 'update-plugins', 'update-themes',
+                'switch-on-or-off-plugin', 'batch-switch-on-or-off-plugins',
+            ]));
+            expect(commandIds.indexOf('pa-quick-capture')).toBe(0);
             expect(commandIds).toContain('open-agent-debug-history');
             expect(commandIds.indexOf('preview-records')).toBeLessThan(commandIds.indexOf('show-statistics'));
-            const updatePluginsIndex = commandIds.indexOf('update-plugins');
-            const updateThemesIndex = commandIds.indexOf('update-themes');
-            const updateMetadataIndex = commandIds.indexOf('update-metadata');
+            expect(commandIds).toContain('update-metadata');
             const locale = getPluginUiLanguage();
-            expect(getRegisteredCommand(plugin, 'update-plugins')?.name)
-                .toBe(pluginT('plugin.command.updatePlugins', locale));
-            expect(getRegisteredCommand(plugin, 'update-themes')?.name)
-                .toBe(pluginT('plugin.command.updateThemes', locale));
-            expect(updatePluginsIndex).toBeGreaterThanOrEqual(0);
-            expect(updateThemesIndex).toBe(updatePluginsIndex + 1);
-            expect(updateMetadataIndex).toBe(updateThemesIndex + 1);
             expect(getRegisteredCommand(plugin, 'ai-assistant-summary')?.name)
                 .toBe(pluginT('plugin.command.aiSummary', locale));
             expect(getRegisteredCommand(plugin, 'ai-assistant-featured-images')?.name)
                 .toBe(pluginT('plugin.command.aiFeaturedImages', locale));
             expect(commandIds.indexOf('ai-assistant-summary'))
                 .toBeLessThan(commandIds.indexOf('ai-assistant-featured-images'));
-            expect(mockPluginsUpdaterConstructor).not.toHaveBeenCalled();
-            expect(mockThemeUpdaterInit).not.toHaveBeenCalled();
-            await getRegisteredCommand(plugin, 'update-plugins')?.callback?.();
-            await getRegisteredCommand(plugin, 'update-themes')?.callback?.();
-            expect(mockPluginsUpdaterConstructor).toHaveBeenCalledWith(plugin.app, plugin);
-            expect(mockPluginsUpdaterUpdate).toHaveBeenCalledTimes(1);
-            expect(mockThemeUpdaterInit).toHaveBeenCalledWith(plugin.app, plugin);
-            expect(mockThemeUpdaterUpdate).toHaveBeenCalledTimes(1);
             const summaryEditor = { getSelection: () => '', getValue: () => '' };
             const summaryView = {} as MarkdownFileInfo;
             await getRegisteredCommand(plugin, 'ai-assistant-summary')?.editorCallback?.(summaryEditor, summaryView);
@@ -1957,7 +1769,6 @@ describe('Memory governance plugin bootstrap', () => {
             policyModelName: '',
             featuredImageModel: 'wan2.7-image',
             numFeaturedImages: 1,
-            shareAnonymousCapabilityUsage: false,
             skillContextEnabled: true,
             enabledSkillIds: mockBundledSkillIds,
             statisticsVaultId: 'statistics-vault-secret',
@@ -7206,671 +7017,6 @@ describe('Memory governance plugin bootstrap', () => {
     });
 });
 
-describe('Scope Recap production adapter data boundary', () => {
-    function createScopeRecapGuardHarness() {
-        let alphaContent = 'Alpha commits to shipping the feature.';
-        const notes = () => [{
-            path: 'Projects/PA/Alpha.md',
-            title: 'Alpha',
-            content: alphaContent,
-        }, {
-            path: 'Projects/PA/Beta.md',
-            title: 'Beta',
-            content: 'Beta records a pause decision for the same feature.',
-        }];
-        const invoke = jest.fn(async (_prompt: string): Promise<unknown> => JSON.stringify([{
-            title: 'The plan and pause decision now conflict',
-            summary: 'Alpha commits to ship while Beta records a pause for the same feature.',
-            whyItMatters: 'The owner should resolve the conflict before the next release step.',
-            sourceNoteTitles: ['Alpha', 'Beta'],
-            section: 'tension',
-        }]));
-        let reserveImpl: () => Promise<
-            { ok: true } | { ok: false; reason: 'hr-cap' }
-        > = async () => ({ ok: true as const });
-        const reserve = jest.fn(() => reserveImpl());
-        const reserveIf = jest.fn(async (canCommit: () => boolean | PromiseLike<boolean>) => {
-            const decision = await reserve();
-            if (!decision.ok) return decision;
-            return await canCommit()
-                ? decision
-                : { ok: false as const, reason: 'condition' as const };
-        });
-        const leaseCommit = jest.fn();
-        const leaseRollback = jest.fn(async () => undefined);
-        const reserveLeaseIf = jest.fn(async (
-            canCommit: () => boolean | PromiseLike<boolean>,
-        ) => {
-            const decision = await reserve();
-            if (!decision.ok) return decision;
-            if (!await canCommit()) {
-                return { ok: false as const, reason: 'condition' as const };
-            }
-            return {
-                ok: true as const,
-                reservation: { commit: leaseCommit, rollback: leaseRollback },
-            };
-        });
-        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        installPluginShellOwners(plugin);
-        plugin.unloading = false;
-        plugin.settings = {
-            aiProvider: 'openai',
-            chatModelName: 'gpt-4o-mini',
-            baseURL: 'https://api.openai.com/v1',
-            pagelet: {
-                enabled: true,
-                temperature: 0.2,
-                maxOutputTokens: 2_000,
-                scopeRecapBackgroundAuthorization: 'pending',
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: null,
-                pageletProviderFirstUseNotified: false,
-            },
-        };
-        plugin.saveSettings = jest.fn(async () => undefined);
-        plugin.scopeRecapIntegration.collectScopeRecapSourceNotes = jest.fn(async () => notes());
-        plugin.scopeRecapIntegration.scopeRecapBuildOptions = jest.fn((currentNotes: Array<{ path: string }>) => ({
-            now: new Date('2026-07-18T12:00:00.000Z'),
-            scope: {
-                kind: 'folder',
-                label: 'Projects/PA',
-                paths: currentNotes.map((note: { path: string }) => note.path),
-            },
-            isPathAllowed: jest.fn(() => true),
-            dataBoundarySnapshotId: 'data_boundary:test',
-        }));
-        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:test');
-        plugin.scopeRecapIntegration.getScopeRecapAuthorizationContextId = jest.fn(() => 'scope-recap-auth:test');
-        plugin.createChatModel = jest.fn(async () => ({ invoke }));
-        plugin.scopeRecapIntegration.getRateLimiter = jest.fn(() => ({
-            reserve,
-            reserveIf,
-            reserveLeaseIf,
-        }));
-        plugin.pageletCostTracker = {
-            record: jest.fn(() => ({
-                inputTokens: 100,
-                outputTokens: 20,
-                estimatedCost: 0.001,
-                currency: 'USD',
-                pricingKnown: true,
-            })),
-        };
-        plugin.log = jest.fn();
-        return {
-            plugin,
-            invoke,
-            reserve,
-            reserveLeaseIf,
-            leaseCommit,
-            leaseRollback,
-            setAlphaContent(value: string) { alphaContent = value; },
-            setReserve(fn: () => Promise<{ ok: true } | { ok: false; reason: 'hr-cap' }>) {
-                reserveImpl = fn;
-            },
-        };
-    }
-
-    it('shows the shared notice only at the first actual Recap invocation and keeps the run non-blocking', async () => {
-        mockNoticeMessages.length = 0;
-        const harness = createScopeRecapGuardHarness();
-
-        const first = await harness.plugin.runScopeRecap({ mode: 'background' });
-        const second = await harness.plugin.runScopeRecap({ mode: 'background' });
-
-        expect(first.status).toBe('ready');
-        expect(second.status).toBe('ready');
-        expect(harness.invoke).toHaveBeenCalledTimes(2);
-        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
-        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(true);
-        expect(harness.plugin.saveSettings).toHaveBeenCalledTimes(1);
-    });
-
-    it('does not show or persist the shared notice when Recap is blocked before invocation', async () => {
-        mockNoticeMessages.length = 0;
-        const harness = createScopeRecapGuardHarness();
-        harness.setReserve(async () => ({ ok: false, reason: 'hr-cap' }));
-
-        const result = await harness.plugin.runScopeRecap({ mode: 'background' });
-
-        expect(result.status).toBe('no_reliable_insight');
-        expect(harness.invoke).not.toHaveBeenCalled();
-        expect(mockNoticeMessages).toEqual([]);
-        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
-        expect(harness.plugin.saveSettings).not.toHaveBeenCalled();
-    });
-
-            it('does not read or send Pagelet- or Data Boundary-excluded sources', async () => {
-        const createScopeFile = (path: string, mtime: number) => {
-            const file = createTFileWithStat(path, { mtime, size: 100 }) as TFile & { basename: string };
-            file.basename = file.name.replace(/\.md$/i, '');
-            return file;
-        };
-        const activeFile = createScopeFile('Projects/PA/Current.md', 4_000);
-        const allowedFile = createScopeFile('Projects/PA/Allowed.md', 3_000);
-        const pageletExcludedFile = createScopeFile('Projects/PA/pagelet-secret.md', 2_000);
-        const boundaryExcludedFile = createScopeFile('Projects/PA/boundary-secret.md', 1_000);
-        const files = [activeFile, allowedFile, pageletExcludedFile, boundaryExcludedFile];
-        const contents = new Map<string, string>([
-            [activeFile.path, '# Current\n\nShould we keep Redis for the next release?'],
-            [allowedFile.path, '# Allowed\n\nALLOWED-DECISION-EVIDENCE supports keeping Redis.'],
-            [pageletExcludedFile.path, '# Pagelet secret\n\nPAGELET-SECRET-PAYLOAD'],
-            [boundaryExcludedFile.path, '# Boundary secret\n\nBOUNDARY-SECRET-PAYLOAD'],
-        ]);
-        const cachedRead = jest.fn(async (file: TFile) => contents.get(file.path) ?? '');
-        const invoke = jest.fn(async (_prompt: string) => JSON.stringify([{
-            title: 'Redis release decision needs confirmation',
-            summary: 'Current asks whether to keep Redis while Allowed records supporting release evidence.',
-            whyItMatters: 'The release owner should confirm that the older benchmark still applies before shipping.',
-            sourceNoteTitles: ['Current', 'Allowed'],
-            section: 'open_question',
-        }]));
-        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        installPluginShellOwners(plugin);
-        plugin.settings = {
-            aiProvider: 'openai',
-            chatModelName: 'gpt-4o-mini',
-            pagelet: {
-                enabled: true,
-                temperature: 0.2,
-                maxOutputTokens: 2_000,
-                reviewsFolder: '.pagelet',
-                excludedFolders: [],
-                excludedTags: [],
-                excludedPatterns: ['pagelet-secret'],
-                scopeRecapBackgroundAuthorization: 'authorized-v1',
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: 'scope-recap-auth:test',
-            },
-            dataBoundary: {
-                excludedFolders: [],
-                excludedTags: ['boundary-private'],
-                generatedNotePolicy: 'include-generated',
-                providerDisclosureReasons: [],
-                cleanupGroups: [],
-            },
-        };
-        plugin.app = {
-            workspace: { getActiveFile: jest.fn(() => activeFile) },
-            vault: {
-                configDir: '.obsidian',
-                getMarkdownFiles: jest.fn(() => files),
-                getAbstractFileByPath: jest.fn((path: string) => files.find((file) => file.path === path) ?? null),
-                cachedRead,
-            },
-            metadataCache: {
-                getFileCache: jest.fn((file: TFile) => (
-                    file.path === boundaryExcludedFile.path
-                        ? { tags: [{ tag: '#boundary-private' }] }
-                        : null
-                )),
-            },
-        };
-        plugin.createChatModel = jest.fn(async () => ({ invoke }));
-        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:test');
-        plugin.scopeRecapIntegration.getScopeRecapAuthorizationContextId = jest.fn(() => 'scope-recap-auth:test');
-        plugin.scopeRecapIntegration.getRateLimiter = jest.fn(() => ({
-            reserve: jest.fn(async () => ({ ok: true as const })),
-            reserveLeaseIf: jest.fn(async (canCommit: () => boolean | PromiseLike<boolean>) => (
-                await canCommit()
-                    ? {
-                        ok: true as const,
-                        reservation: {
-                            commit: jest.fn(),
-                            rollback: jest.fn(async () => undefined),
-                        },
-                    }
-                    : { ok: false as const, reason: 'condition' as const }
-            )),
-        }));
-        plugin.pageletCostTracker = {
-            record: jest.fn(() => ({
-                inputTokens: 100,
-                outputTokens: 20,
-                estimatedCost: 0.001,
-                currency: 'USD',
-            })),
-        };
-        plugin.log = jest.fn();
-
-        const result = await plugin.runScopeRecap({ mode: 'background' });
-        const prompt = invoke.mock.calls[0]?.[0] as string;
-
-        expect(result.status).toBe('ready');
-        expect(cachedRead.mock.calls.map(([file]) => file.path)).toEqual([
-            activeFile.path,
-            allowedFile.path,
-            activeFile.path,
-            allowedFile.path,
-            activeFile.path,
-            allowedFile.path,
-            activeFile.path,
-            allowedFile.path,
-        ]);
-        expect(prompt).toContain('ALLOWED-DECISION-EVIDENCE');
-        expect(prompt).not.toContain('PAGELET-SECRET-PAYLOAD');
-        expect(prompt).not.toContain('BOUNDARY-SECRET-PAYLOAD');
-        expect(prompt).not.toContain('pagelet-secret');
-        expect(prompt).not.toContain('boundary-secret');
-    });
-
-    it('counts the full folder and applies the 12-source provider cap after Data Boundary filtering', async () => {
-        const now = Date.now();
-        const makeFile = (path: string, mtime: number) => {
-            const file = createTFileWithStat(path, { mtime, size: 100 }) as TFile & { basename: string };
-            file.basename = file.name.replace(/\.md$/i, '');
-            return file;
-        };
-        const activeFile = makeFile('Projects/PA/Current.md', now);
-        const allowedFiles = Array.from({ length: 13 }, (_, index) => makeFile(
-            `Projects/PA/Allowed-${String(index + 1).padStart(2, '0')}.md`,
-            now - (index + 1) * 1_000,
-        ));
-        const excludedFiles = [
-            makeFile('Projects/PA/Private-01.md', now + 2_000),
-            makeFile('Projects/PA/Private-02.md', now + 1_000),
-        ];
-        const files = [activeFile, ...allowedFiles, ...excludedFiles];
-        const contents = new Map(files.map((file) => [
-            file.path,
-            `${file.basename.toUpperCase()}-EVIDENCE`,
-        ]));
-        const cachedRead = jest.fn(async (file: TFile) => contents.get(file.path) ?? '');
-        const invoke = jest.fn(async (_prompt: string) => JSON.stringify([{
-            title: 'Current and Allowed 01 identify a release tension',
-            summary: 'The current note and Allowed 01 record conflicting release direction.',
-            whyItMatters: 'The owner should resolve this before the release advances.',
-            sourceNoteTitles: ['Current', 'Allowed-01'],
-            section: 'tension',
-        }]));
-        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        installPluginShellOwners(plugin);
-        plugin.unloading = false;
-        plugin.settings = {
-            aiProvider: 'openai',
-            chatModelName: 'gpt-4o-mini',
-            pagelet: {
-                enabled: true,
-                temperature: 0.2,
-                maxOutputTokens: 2_000,
-                reviewsFolder: '.pagelet',
-                excludedFolders: [],
-                excludedTags: [],
-                excludedPatterns: [],
-                scopeRecapBackgroundAuthorization: 'authorized-v1',
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: 'scope-recap-auth:test',
-            },
-            dataBoundary: {
-                excludedFolders: [],
-                excludedTags: ['boundary-private'],
-                generatedNotePolicy: 'include-generated',
-                providerDisclosureReasons: [],
-                cleanupGroups: [],
-            },
-        };
-        plugin.app = {
-            workspace: { getActiveFile: jest.fn(() => activeFile) },
-            vault: {
-                configDir: '.obsidian',
-                getMarkdownFiles: jest.fn(() => files),
-                getAbstractFileByPath: jest.fn((path: string) => files.find((file) => file.path === path) ?? null),
-                cachedRead,
-            },
-            metadataCache: {
-                getFileCache: jest.fn((file: TFile) => (
-                    excludedFiles.includes(file as typeof excludedFiles[number])
-                        ? { tags: [{ tag: '#boundary-private' }] }
-                        : null
-                )),
-            },
-        };
-        plugin.createChatModel = jest.fn(async () => ({ invoke }));
-        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:test');
-        plugin.scopeRecapIntegration.getScopeRecapAuthorizationContextId = jest.fn(() => 'scope-recap-auth:test');
-        plugin.scopeRecapIntegration.getRateLimiter = jest.fn(() => ({
-            reserve: jest.fn(async () => ({ ok: true as const })),
-            reserveLeaseIf: jest.fn(async (canCommit: () => boolean | PromiseLike<boolean>) => (
-                await canCommit()
-                    ? {
-                        ok: true as const,
-                        reservation: {
-                            commit: jest.fn(),
-                            rollback: jest.fn(async () => undefined),
-                        },
-                    }
-                    : { ok: false as const, reason: 'condition' as const }
-            )),
-        }));
-        plugin.pageletCostTracker = {
-            record: jest.fn(() => ({
-                inputTokens: 100,
-                outputTokens: 20,
-                estimatedCost: 0.001,
-                currency: 'USD',
-                pricingKnown: true,
-            })),
-        };
-        plugin.log = jest.fn();
-
-        const result = await plugin.runScopeRecap({ mode: 'background' });
-        const prompt = invoke.mock.calls[0]?.[0] as string;
-
-        expect(result.status).toBe('ready');
-        expect(result.localOverview.sourceCoverage).toEqual({
-            totalSourceCount: 16,
-            includedSourceCount: 12,
-            skippedSourceCount: 4,
-            coverageRatio: 0.75,
-        });
-        expect(result.localOverview.skippedSources).toEqual(expect.arrayContaining([
-            expect.objectContaining({ reason: 'data_boundary', count: 2 }),
-            expect.objectContaining({ reason: 'out_of_scope', count: 2 }),
-        ]));
-        if (result.status === 'ready') {
-            expect(result.artifact.sourceRefs).toHaveLength(12);
-        }
-        expect(cachedRead).toHaveBeenCalledTimes(48);
-        const readPaths = new Set(cachedRead.mock.calls.map(([file]) => file.path));
-        expect(readPaths).toEqual(new Set([
-            activeFile.path,
-            ...allowedFiles.slice(0, 11).map((file) => file.path),
-        ]));
-        expect(prompt).toContain('ALLOWED-11-EVIDENCE');
-        expect(prompt).not.toContain('ALLOWED-12-EVIDENCE');
-        expect(prompt).not.toContain('ALLOWED-13-EVIDENCE');
-        expect(prompt).not.toContain('PRIVATE-01-EVIDENCE');
-        expect(prompt).not.toContain('PRIVATE-02-EVIDENCE');
-    });
-
-    it.each([
-        'expectedSourceSnapshotId',
-        'expectedDataBoundarySnapshotId',
-        'expectedAuthorizationContextId',
-    ] as const)('does not initialize a model or invoke the provider when %s drifts', async (driftField) => {
-        const notes = [{
-            path: 'Projects/PA/Alpha.md',
-            title: 'Alpha',
-            content: 'Alpha commits to shipping the feature.',
-        }, {
-            path: 'Projects/PA/Beta.md',
-            title: 'Beta',
-            content: 'Beta records a pause decision for the same feature.',
-        }];
-        const invoke = jest.fn(async () => '[]');
-        const createChatModel = jest.fn(async () => ({ invoke }));
-        const reserve = jest.fn(async () => ({ ok: true as const }));
-        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        installPluginShellOwners(plugin);
-        plugin.settings = {
-            aiProvider: 'openai',
-            chatModelName: 'gpt-4o-mini',
-            pagelet: {
-                enabled: true,
-                temperature: 0.2,
-                maxOutputTokens: 2_000,
-                scopeRecapBackgroundAuthorization: 'authorized-v1',
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: 'scope-recap-auth:current',
-            },
-        };
-        plugin.scopeRecapIntegration.collectScopeRecapSourceNotes = jest.fn(async () => notes);
-        plugin.scopeRecapIntegration.scopeRecapBuildOptions = jest.fn(() => ({
-            now: new Date('2026-07-18T12:00:00.000Z'),
-            scope: {
-                kind: 'folder',
-                label: 'Projects/PA',
-                paths: notes.map((note) => note.path),
-            },
-            isPathAllowed: jest.fn(() => true),
-            dataBoundarySnapshotId: 'data_boundary:current',
-        }));
-        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:current');
-        plugin.scopeRecapIntegration.getScopeRecapAuthorizationContextId = jest.fn(() => 'scope-recap-auth:current');
-        plugin.createChatModel = createChatModel;
-        plugin.scopeRecapIntegration.getRateLimiter = jest.fn(() => ({
-            reserve,
-            reserveLeaseIf: jest.fn(async (canCommit: () => boolean | PromiseLike<boolean>) => {
-                if (!await canCommit()) {
-                    return { ok: false as const, reason: 'condition' as const };
-                }
-                const decision = await reserve();
-                return decision.ok
-                    ? {
-                        ok: true as const,
-                        reservation: {
-                            commit: jest.fn(),
-                            rollback: jest.fn(async () => undefined),
-                        },
-                    }
-                    : decision;
-            }),
-        }));
-        plugin.pageletCostTracker = { record: jest.fn() };
-        plugin.log = jest.fn();
-
-        const overview = await plugin.buildScopeRecapLocalOverview();
-        const expected = {
-            expectedSourceSnapshotId: overview.sourceSnapshotId,
-            expectedDataBoundarySnapshotId: 'data_boundary:current',
-            expectedAuthorizationContextId: 'scope-recap-auth:current',
-        };
-        expected[driftField] = `${expected[driftField]}:stale`;
-
-        const result = await plugin.runScopeRecap({ mode: 'background', ...expected });
-
-        expect(result.status).toBe('no_reliable_insight');
-        expect(result.attempt.providerCallMade).toBe(false);
-        expect(createChatModel).not.toHaveBeenCalled();
-        expect(reserve).not.toHaveBeenCalled();
-        expect(invoke).not.toHaveBeenCalled();
-        expect(plugin.pageletCostTracker.record).not.toHaveBeenCalled();
-    });
-
-    it.each([
-        ['background preparation disabled', (plugin: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-            plugin.settings.pagelet.scopeRecapPreparationEnabled = false;
-        }],
-        ['plugin unload started', (plugin: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-            plugin.unloading = true;
-        }],
-    ] as const)('rechecks %s after limiter wait and makes no provider call', async (_label, mutate) => {
-        const harness = createScopeRecapGuardHarness();
-        let markReserveEntered = (): void => undefined;
-        const reserveEntered = new Promise<void>((resolve) => { markReserveEntered = resolve; });
-        let releaseReserve = (): void => undefined;
-        const reserveGate = new Promise<void>((resolve) => { releaseReserve = resolve; });
-        harness.setReserve(async () => {
-            markReserveEntered();
-            await reserveGate;
-            return { ok: true as const };
-        });
-
-        const running = harness.plugin.runScopeRecap({ mode: 'background' });
-        await reserveEntered;
-        mutate(harness.plugin);
-        releaseReserve();
-        const result = await running;
-
-        expect(result.status).toBe('no_reliable_insight');
-        expect(result.attempt.providerCallMade).toBe(false);
-        expect(harness.invoke).not.toHaveBeenCalled();
-        expect(harness.plugin.pageletCostTracker.record).not.toHaveBeenCalled();
-    });
-
-    it('rechecks the complete source snapshot after limiter wait and makes no provider call when content changed', async () => {
-        const harness = createScopeRecapGuardHarness();
-        let markReserveEntered = (): void => undefined;
-        const reserveEntered = new Promise<void>((resolve) => { markReserveEntered = resolve; });
-        let releaseReserve = (): void => undefined;
-        const reserveGate = new Promise<void>((resolve) => { releaseReserve = resolve; });
-        harness.setReserve(async () => {
-            markReserveEntered();
-            await reserveGate;
-            return { ok: true as const };
-        });
-
-        const running = harness.plugin.runScopeRecap({ mode: 'background' });
-        await reserveEntered;
-        harness.setAlphaContent('Alpha now cancels the release instead.');
-        releaseReserve();
-        const result = await running;
-
-        expect(result.status).toBe('no_reliable_insight');
-        expect(result.attempt.providerCallMade).toBe(false);
-        expect(harness.invoke).not.toHaveBeenCalled();
-        expect(harness.plugin.scopeRecapIntegration.collectScopeRecapSourceNotes).toHaveBeenCalledTimes(3);
-    });
-
-    it('rolls back a provisional Recap slot when the source drifts after reservation', async () => {
-        mockNoticeMessages.length = 0;
-        const harness = createScopeRecapGuardHarness();
-        harness.reserveLeaseIf.mockImplementationOnce(async (canCommit) => {
-            expect(await canCommit()).toBe(true);
-            harness.setAlphaContent('Alpha changes after the provisional slot is persisted.');
-            return {
-                ok: true as const,
-                reservation: {
-                    commit: harness.leaseCommit,
-                    rollback: harness.leaseRollback,
-                },
-            };
-        });
-
-        const result = await harness.plugin.runScopeRecap({ mode: 'background' });
-
-        expect(result.status).toBe('no_reliable_insight');
-        expect(result.attempt.providerCallMade).toBe(false);
-        expect(harness.leaseRollback).toHaveBeenCalledTimes(1);
-        expect(harness.leaseCommit).not.toHaveBeenCalled();
-        expect(harness.invoke).not.toHaveBeenCalled();
-        expect(mockNoticeMessages).toEqual([]);
-        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
-    });
-
-    it('attributes Recap cost to the provider/model snapshot captured at call start', async () => {
-        const harness = createScopeRecapGuardHarness();
-        harness.invoke.mockImplementationOnce(async () => {
-            harness.plugin.settings.aiProvider = 'qwen';
-            harness.plugin.settings.chatModelName = 'later-model';
-            return JSON.stringify([{
-                title: 'The plan and pause decision now conflict',
-                summary: 'Alpha commits to ship while Beta records a pause for the same feature.',
-                whyItMatters: 'The owner should resolve the conflict before the next release step.',
-                sourceNoteTitles: ['Alpha', 'Beta'],
-                section: 'tension',
-            }]);
-        });
-
-        const result = await harness.plugin.runScopeRecap({ mode: 'background' });
-
-        expect(result.status).toBe('ready');
-        expect(harness.plugin.pageletCostTracker.record).toHaveBeenCalledWith(expect.objectContaining({
-            feature: 'scope-recap',
-            provider: 'openai',
-            model: 'gpt-4o-mini',
-        }));
-    });
-
-    it('disables DashScope thinking for the bounded Recap JSON request', async () => {
-        const harness = createScopeRecapGuardHarness();
-        harness.plugin.settings.aiProvider = 'qwen';
-        harness.plugin.settings.chatModelName = 'deepseek-v4-flash';
-        harness.plugin.settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-
-        const result = await harness.plugin.runScopeRecap({ mode: 'background' });
-
-        expect(result.status).toBe('ready');
-        expect(harness.plugin.createChatModel).toHaveBeenCalledWith(0.2, {
-            maxTokens: 1_000,
-            qwenRequestOptions: { enableThinking: false },
-        });
-    });
-
-    it('classifies an empty final answer as empty without retrying reasoning content', async () => {
-        const harness = createScopeRecapGuardHarness();
-        harness.invoke.mockResolvedValueOnce({
-            content: '',
-            additional_kwargs: { reasoning_content: 'Provider reasoning is not the final answer.' },
-        });
-
-        const result = await harness.plugin.runScopeRecap({ mode: 'background' });
-
-        expect(result).toEqual(expect.objectContaining({
-            status: 'no_reliable_insight',
-            artifact: null,
-            attempt: expect.objectContaining({
-                outcome: 'empty',
-                providerCallMade: true,
-            }),
-        }));
-        expect(harness.reserve).toHaveBeenCalledTimes(1);
-        expect(harness.invoke).toHaveBeenCalledTimes(1);
-        expect(harness.plugin.pageletCostTracker.record).toHaveBeenCalledWith(expect.objectContaining({
-            feature: 'scope-recap',
-            outcome: 'empty',
-            outputTokens: 0,
-        }));
-    });
-
-    it('keeps non-empty invalid JSON classified as malformed', async () => {
-        const harness = createScopeRecapGuardHarness();
-        harness.invoke.mockResolvedValueOnce({ content: 'not json' });
-
-        const result = await harness.plugin.runScopeRecap({ mode: 'background' });
-
-        expect(result).toEqual(expect.objectContaining({
-            status: 'no_reliable_insight',
-            artifact: null,
-            attempt: expect.objectContaining({
-                outcome: 'malformed',
-                providerCallMade: true,
-            }),
-        }));
-        expect(harness.reserve).toHaveBeenCalledTimes(1);
-        expect(harness.invoke).toHaveBeenCalledTimes(1);
-        expect(harness.plugin.pageletCostTracker.record).toHaveBeenCalledWith(expect.objectContaining({
-            feature: 'scope-recap',
-            outcome: 'malformed',
-        }));
-    });
-
-    it.each([
-        ['endpoint', (settings: Record<string, unknown>) => {
-            settings.baseURL = 'https://gateway.example.test/v2';
-        }],
-        ['provider preset', (settings: Record<string, unknown>) => {
-            settings.aiProviderPreset = 'custom';
-        }],
-        ['embedding model', (settings: Record<string, unknown>) => {
-            settings.embeddingModelName = 'text-embedding-4-large';
-        }],
-    ] as const)('changes the Recap authorization context when the %s changes', (_label, mutate) => {
-        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        installPluginShellOwners(plugin);
-        plugin.settings = {
-            aiProvider: 'openai',
-            aiProviderPreset: 'openai',
-            chatModelName: 'gpt-4o-mini',
-            embeddingModelName: 'text-embedding-3-small',
-            baseURL: 'https://api.openai.com/v1/',
-        };
-        plugin.getPageletSettingsWithDataBoundary = jest.fn(() => ({
-            excludedFolders: [],
-            excludedTags: [],
-            excludedPatterns: [],
-            reviewsFolder: '.pagelet',
-        }));
-        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:current');
-        const initial = plugin.getScopeRecapAuthorizationContextId();
-
-        mutate(plugin.settings);
-
-        expect(plugin.getScopeRecapAuthorizationContextId()).not.toBe(initial);
-    });
-});
-
 describe('Pagelet onboarding nudge production', () => {
     const createOnboardingHarness = (noteCount = 0) => {
         const setOnboardingNudge = jest.fn();
@@ -8003,7 +7149,7 @@ describe('Pagelet Discover provider first-use admission', () => {
         };
         plugin.createChatModel = jest.fn(async () => ({ invoke }));
         plugin.pageletCostTracker = { record: jest.fn() };
-        plugin.getScopeRecapAuthorizationContextId = jest.fn(() => providerPolicyIdentity);
+        plugin.getPageletProviderAuthorizationContextId = jest.fn(() => providerPolicyIdentity);
         plugin.reservePageletRateLimitSlot = jest.fn(async () => ({
             commit: jest.fn(),
             rollback: jest.fn(async () => undefined),
@@ -8749,10 +7895,9 @@ describe('Pagelet Deep Discover scheduler identity lifecycle', () => {
 });
 
 describe('Pagelet production rate-limit storage', () => {
-    const buckets = ['scope-recap', 'quiet-recall'] as const;
+    const buckets = ['deep-discover'] as const;
     const featureCaps = [
-        { bucket: 'scope-recap' as const, hourly: 2, daily: 10 },
-        { bucket: 'quiet-recall' as const, hourly: 10, daily: 50 },
+        { bucket: 'deep-discover' as const, hourly: 12, daily: 36 },
     ];
 
     function createRateLimitHarness() {
@@ -8767,8 +7912,6 @@ describe('Pagelet production rate-limit storage', () => {
                 },
             },
         };
-        plugin.scopeRecapIntegration.rateLimiter = null;
-        plugin.quietRecallIntegration.rateLimiter = null;
         plugin.deepDiscoverIntegration.rateLimiter = null;
         return plugin;
     }
@@ -9023,7 +8166,7 @@ describe('Pagelet production rate-limit storage', () => {
             const plugin = createRateLimitHarness();
             delete plugin.app.vault.adapter.getBasePath;
 
-            await expect(getLimiter(plugin, bucket).reserve()).rejects.toThrow(
+            await expect(getLimiter(plugin).reserve()).rejects.toThrow(
                 `${bucket} rate-limit vault identity unavailable`,
             );
             expect(localStorage.storage.getItem).not.toHaveBeenCalled();
@@ -9074,11 +8217,8 @@ describe('Pagelet production rate-limit storage', () => {
 
     function getLimiter(
         plugin: any, // eslint-disable-line @typescript-eslint/no-explicit-any
-        bucket: typeof buckets[number],
     ) {
-        return bucket === 'scope-recap'
-            ? plugin.getScopeRecapRateLimiter()
-            : plugin.getQuietRecallRateLimiter();
+        return plugin.getDeepDiscoverRateLimiter();
     }
 
     it.each(featureCaps)(
@@ -9088,7 +8228,7 @@ describe('Pagelet production rate-limit storage', () => {
             jest.setSystemTime(new Date(2026, 6, 18, 8, 0, 0));
             const localStorage = installMockWindowLocalStorage();
             try {
-                const limiter = getLimiter(createRateLimitHarness(), bucket);
+                const limiter = getLimiter(createRateLimitHarness());
                 for (let call = 0; call < hourly; call += 1) {
                     await expect(limiter.reserve()).resolves.toEqual({ ok: true });
                 }
@@ -9116,7 +8256,7 @@ describe('Pagelet production rate-limit storage', () => {
             jest.setSystemTime(new Date(2026, 6, 18, 8, 0, 0));
             const localStorage = installMockWindowLocalStorage();
             try {
-                const limiter = getLimiter(createRateLimitHarness(), bucket);
+                const limiter = getLimiter(createRateLimitHarness());
                 const batches = daily / hourly;
                 for (let batch = 0; batch < batches; batch += 1) {
                     for (let call = 0; call < hourly; call += 1) {
@@ -9145,7 +8285,7 @@ describe('Pagelet production rate-limit storage', () => {
         const unavailable = installUnavailablePlatformLocalStorage();
         try {
             const plugin = createRateLimitHarness();
-            await expect(getLimiter(plugin, bucket).reserve()).rejects.toThrow(
+            await expect(getLimiter(plugin).reserve()).rejects.toThrow(
                 `${bucket} rate-limit storage unavailable`,
             );
         } finally {
@@ -9160,7 +8300,7 @@ describe('Pagelet production rate-limit storage', () => {
             const key = plugin.pageletRateLimitStorageKey(bucket);
             localStorage.storage.setItem(key, '{not-json');
 
-            await expect(getLimiter(plugin, bucket).reserve()).rejects.toBeInstanceOf(SyntaxError);
+            await expect(getLimiter(plugin).reserve()).rejects.toBeInstanceOf(SyntaxError);
         } finally {
             localStorage.restore();
         }
@@ -9177,7 +8317,7 @@ describe('Pagelet production rate-limit storage', () => {
                 dailyResetAt: Date.now() + 86_400_000,
             }));
 
-            await expect(getLimiter(plugin, bucket).reserve()).rejects.toThrow(
+            await expect(getLimiter(plugin).reserve()).rejects.toThrow(
                 `${bucket} rate-limit state is malformed`,
             );
         } finally {
@@ -9193,246 +8333,10 @@ describe('Pagelet production rate-limit storage', () => {
                 throw new Error('storage quota denied');
             });
 
-            await expect(getLimiter(plugin, bucket).reserve()).rejects.toThrow('storage quota denied');
+            await expect(getLimiter(plugin).reserve()).rejects.toThrow('storage quota denied');
         } finally {
             localStorage.restore();
         }
-    });
-
-    it('does not invoke the Scope Recap provider when its persisted limiter cannot load', async () => {
-        const unavailable = installUnavailablePlatformLocalStorage();
-        try {
-            const invoke = jest.fn(async () => '[]');
-            const plugin = createRateLimitHarness();
-            plugin.settings = {
-                aiProvider: 'openai',
-                chatModelName: 'gpt-4o-mini',
-                pagelet: {
-                    enabled: true,
-                    temperature: 0.2,
-                    maxOutputTokens: 2_000,
-                    scopeRecapBackgroundAuthorization: 'authorized-v1',
-                    scopeRecapPreparationEnabled: true,
-                    scopeRecapAuthorizationContextId: 'scope-recap-auth:test',
-                },
-            };
-            plugin.scopeRecapIntegration.collectScopeRecapSourceNotes = jest.fn(async () => [
-                {
-                    path: 'Projects/PA/Alpha.md',
-                    title: 'Alpha',
-                    content: 'Alpha commits to shipping the feature.',
-                },
-                {
-                    path: 'Projects/PA/Beta.md',
-                    title: 'Beta',
-                    content: 'Beta records a pause decision for the same feature.',
-                },
-            ]);
-            plugin.scopeRecapIntegration.scopeRecapBuildOptions = jest.fn(() => ({
-                now: new Date('2026-07-18T12:00:00.000Z'),
-                scope: {
-                    kind: 'folder',
-                    label: 'Projects/PA',
-                    paths: ['Projects/PA/Alpha.md', 'Projects/PA/Beta.md'],
-                },
-                isPathAllowed: jest.fn(() => true),
-                dataBoundarySnapshotId: 'data_boundary:test',
-            }));
-            plugin.createChatModel = jest.fn(async () => ({ invoke }));
-            plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:test');
-            plugin.scopeRecapIntegration.getScopeRecapAuthorizationContextId = jest.fn(() => 'scope-recap-auth:test');
-            plugin.pageletCostTracker = { record: jest.fn() };
-            plugin.log = jest.fn();
-
-            const result = await plugin.runScopeRecap({ mode: 'background' });
-
-            expect(result.status).toBe('no_reliable_insight');
-            expect(result.attempt).toEqual(expect.objectContaining({
-                outcome: 'budget_blocked',
-                providerCallMade: false,
-            }));
-            expect(invoke).not.toHaveBeenCalled();
-            expect(plugin.pageletCostTracker.record).not.toHaveBeenCalled();
-        } finally {
-            unavailable.restore();
-        }
-    });
-});
-
-describe('Quiet Recall user-safe feedback', () => {
-    const candidate: QuietRecallCandidate = {
-        id: 'quiet-recall-safe-feedback',
-        title: 'Related note',
-        summary: 'A related note may matter now.',
-        sourceRefs: [{ path: 'notes/related.md', evidenceStrength: 'medium' }],
-        whyNow: ['Related to the current note.'],
-        nextAction: 'Compare the notes.',
-        relation: 'related',
-        score: 80,
-        generatedAt: '2026-07-10T08:00:00.000Z',
-    };
-
-    it('does not expose internal link failure codes', async () => {
-        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        installPluginShellOwners(plugin);
-        plugin.app = {
-            vault: { getAbstractFileByPath: jest.fn(() => null) },
-        };
-        plugin.getPageletLocale = jest.fn(() => 'en');
-
-        const result = await plugin.linkRecallCandidate('notes/current.md', 'notes/related.md');
-
-        expect(result).toEqual({
-            ok: false,
-            message: 'One of these notes is no longer available. Open the notes and try again.',
-        });
-        expect(result.message).not.toContain('file-not-found');
-    });
-
-    it('previews both note paths and writes nothing when linking is cancelled', async () => {
-        const MockTFile = TFile as unknown as new (path: string) => TFile;
-        const currentFile = new MockTFile('notes/current.md');
-        const relatedFile = new MockTFile('notes/related.md');
-        const processFrontMatter = jest.fn();
-        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        installPluginShellOwners(plugin);
-        plugin.app = {
-            vault: {
-                getAbstractFileByPath: jest.fn((path: string) => (
-                    path === currentFile.path ? currentFile : path === relatedFile.path ? relatedFile : null
-                )),
-            },
-            fileManager: { processFrontMatter },
-        };
-        plugin.getPageletLocale = jest.fn(() => 'en');
-        plugin.isDataBoundaryAllowedPath = jest.fn(() => true);
-        jest.mocked(confirmUserAction).mockClear();
-
-        const result = await plugin.linkRecallCandidate(currentFile.path, relatedFile.path);
-
-        expect(result).toEqual({ ok: false, message: 'No links were added.' });
-        expect(processFrontMatter).not.toHaveBeenCalled();
-        expect(confirmUserAction).toHaveBeenCalledWith(plugin.app, expect.objectContaining({
-            title: 'Link these two notes?',
-            confirmText: 'Link notes',
-            message: expect.stringMatching(/notes\/current\.md[\s\S]*notes\/related\.md[\s\S]*Properties[\s\S]*bodies will stay unchanged/),
-        }));
-    });
-
-    it('rejects a normalized self-link before confirmation or frontmatter writes', async () => {
-        const getAbstractFileByPath = jest.fn();
-        const processFrontMatter = jest.fn();
-        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        installPluginShellOwners(plugin);
-        plugin.app = {
-            vault: { getAbstractFileByPath },
-            fileManager: { processFrontMatter },
-        };
-        plugin.getPageletLocale = jest.fn(() => 'zh');
-        plugin.isDataBoundaryAllowedPath = jest.fn(() => true);
-        jest.mocked(confirmUserAction).mockClear();
-
-        const result = await plugin.linkRecallCandidate('notes/current.md', './notes/current.md');
-
-        expect(result).toEqual({
-            ok: false,
-            message: '这条回忆暂时没有另一篇可关联的笔记。',
-        });
-        expect(getAbstractFileByPath).not.toHaveBeenCalled();
-        expect(confirmUserAction).not.toHaveBeenCalled();
-        expect(processFrontMatter).not.toHaveBeenCalled();
-    });
-
-    it('uses calm Chinese property copy while keeping the exact pa-related key', async () => {
-        const MockTFile = TFile as unknown as new (path: string) => TFile;
-        const currentFile = new MockTFile('notes/current.md');
-        const relatedFile = new MockTFile('notes/related.md');
-        const processFrontMatter = jest.fn();
-        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        installPluginShellOwners(plugin);
-        plugin.app = {
-            vault: {
-                getAbstractFileByPath: jest.fn((path: string) => (
-                    path === currentFile.path ? currentFile : path === relatedFile.path ? relatedFile : null
-                )),
-            },
-            fileManager: { processFrontMatter },
-        };
-        plugin.getPageletLocale = jest.fn(() => 'zh');
-        plugin.isDataBoundaryAllowedPath = jest.fn(() => true);
-        jest.mocked(confirmUserAction).mockClear();
-
-        await plugin.linkRecallCandidate(currentFile.path, relatedFile.path);
-
-        const options = jest.mocked(confirmUserAction).mock.calls[0]?.[1];
-        expect(options?.message).toContain('两篇笔记的属性');
-        expect(options?.message).toContain('pa-related');
-        expect(options?.message).not.toContain('Properties');
-        expect(processFrontMatter).not.toHaveBeenCalled();
-    });
-
-    it('adds bidirectional Properties only after link confirmation', async () => {
-        const globalObj = globalThis as typeof globalThis & { __paConfirmDecision?: boolean };
-        globalObj.__paConfirmDecision = true;
-        try {
-            const MockTFile = TFile as unknown as new (path: string) => TFile;
-            const currentFile = new MockTFile('notes/current.md');
-            const relatedFile = new MockTFile('notes/related.md');
-            const frontmatters = new Map<string, Record<string, unknown>>();
-            const processFrontMatter = jest.fn(async (
-                file: TFile,
-                update: (frontmatter: Record<string, unknown>) => void,
-            ) => {
-                const frontmatter = frontmatters.get(file.path) ?? {};
-                update(frontmatter);
-                frontmatters.set(file.path, frontmatter);
-            });
-            const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        installPluginShellOwners(plugin);
-            plugin.app = {
-                vault: {
-                    getAbstractFileByPath: jest.fn((path: string) => (
-                        path === currentFile.path ? currentFile : path === relatedFile.path ? relatedFile : null
-                    )),
-                },
-                fileManager: { processFrontMatter },
-            };
-            plugin.getPageletLocale = jest.fn(() => 'en');
-            plugin.isDataBoundaryAllowedPath = jest.fn(() => true);
-            plugin.quietRecallIntegration.recordQuietRecallFeedback = jest.fn(async () => undefined);
-
-            const result = await plugin.linkRecallCandidate(currentFile.path, relatedFile.path);
-
-            expect(result).toEqual({ ok: true, message: 'Linked' });
-            expect(processFrontMatter).toHaveBeenCalledTimes(2);
-            expect(frontmatters.get(currentFile.path)).toEqual({
-                'pa-related': ['[[notes/related.md]]'],
-            });
-            expect(frontmatters.get(relatedFile.path)).toEqual({
-                'pa-related': ['[[notes/current.md]]'],
-            });
-        } finally {
-            delete globalObj.__paConfirmDecision;
-        }
-    });
-
-    it('does not expose Saved Insight persistence reasons', async () => {
-        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        installPluginShellOwners(plugin);
-        plugin.settings = { quietRecall: { enabled: true } };
-        plugin.getPageletLocale = jest.fn(() => 'en');
-        plugin.getSavedInsightStore = jest.fn(() => ({
-            create: jest.fn(async () => ({ ok: false, reason: 'private_internal_store_reason' })),
-        }));
-
-        const result = await plugin.saveQuietRecallAsInsight(candidate);
-
-        expect(result).toMatchObject({
-            ok: false,
-            reason: 'private_internal_store_reason',
-            message: 'Could not save this recall as an insight. Try again.',
-        });
-        expect(result.message).not.toContain('private_internal_store_reason');
     });
 });
 
@@ -11786,7 +10690,7 @@ describe('settings migration', () => {
         expect(plugin.settings.qwenThinkingEnabled).toBe(false);
         expect(plugin.settings.webSearchEnabled).toBe(false);
         expect(plugin.settings.policyModelName).toBe('');
-        expect(plugin.settings.shareAnonymousCapabilityUsage).toBe(false);
+        expect(plugin.settings).not.toHaveProperty('shareAnonymousCapabilityUsage');
         expect(plugin.settings).not.toHaveProperty('skillContextEnabled');
         expect(plugin.settings).not.toHaveProperty('enabledSkillIds');
         expect(plugin.settings.statisticsVaultId).toEqual(expect.any(String));
@@ -11863,7 +10767,6 @@ describe('settings migration', () => {
             policyModelName: '',
             featuredImageModel: 'wan2.7-image',
             numFeaturedImages: 1,
-            shareAnonymousCapabilityUsage: false,
             skillContextEnabled: true,
             enabledSkillIds: mockBundledSkillIds,
             statisticsVaultId: 'vault-id',
@@ -11897,7 +10800,6 @@ describe('settings migration', () => {
             policyModelName: '',
             featuredImageModel: 'wan2.7-image',
             numFeaturedImages: 1,
-            shareAnonymousCapabilityUsage: false,
             skillContextEnabled: true,
             enabledSkillIds: mockBundledSkillIds,
             statisticsVaultId: 'vault-id',
@@ -11929,7 +10831,6 @@ describe('settings migration', () => {
             policyModelName: '',
             featuredImageModel: 'wan2.7-image',
             numFeaturedImages: 1,
-            shareAnonymousCapabilityUsage: false,
             skillContextEnabled: true,
             enabledSkillIds: mockBundledSkillIds,
             statisticsVaultId: 'vault-id',
@@ -11963,7 +10864,6 @@ describe('settings migration', () => {
             policyModelName: '',
             featuredImageModel: 'wan2.7-image',
             numFeaturedImages: 99,
-            shareAnonymousCapabilityUsage: false,
             skillContextEnabled: true,
             enabledSkillIds: mockBundledSkillIds,
             statisticsVaultId: 'vault-id',

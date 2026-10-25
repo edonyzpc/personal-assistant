@@ -55,7 +55,7 @@ describe("explicit insight action port", () => {
             settings: {
                 debug: false, aiProvider: "test", baseURL: "https://provider.invalid",
                 chatModelName: "test", policyModelName: "test", embeddingModelName: "test",
-                shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false, webSearchEnabled: false,
+                qwenThinkingEnabled: false, webSearchEnabled: false,
                 licenseTier: "free", memoryEnabled: false,
                 operationsProactiveSaveSuggestionsEnabled: false, operationsAuditIncludeContent: false,
                 operationsAuditRetentionDays: 30, statisticsVaultId: "test",

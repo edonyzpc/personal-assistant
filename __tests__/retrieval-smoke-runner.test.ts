@@ -2785,9 +2785,6 @@ describe("B-125 retrieval app-smoke fixture", () => {
         ["technical observability", (settings: Record<string, unknown>) => {
             settings.debug = true;
         }],
-        ["capability telemetry privacy", (settings: Record<string, unknown>) => {
-            settings.shareAnonymousCapabilityUsage = true;
-        }],
         ["provider token scope", (settings: Record<string, unknown>) => {
             settings.statisticsVaultId = "changed-vault";
         }],
@@ -11901,7 +11898,6 @@ function createRunnerContext(
         memoryManager: {},
         settings: {
             debug: false,
-            shareAnonymousCapabilityUsage: false,
             retrievalOptimizationFlags: flags,
             dataBoundary: {
                 excludedFolders,

@@ -6,7 +6,6 @@ import {
     type RetrievalLane,
 } from "./contracts";
 import { normalizeVaultPath, stableHash, isRecord, uniqueStrings } from "./helpers";
-import type { QuietRecallCandidate } from "./quiet-recall";
 
 export const RETRIEVAL_HABIT_FEEDBACK_KINDS = [
     "view",
@@ -232,22 +231,6 @@ export function normalizeRetrievalHabitProfileSettings(value: unknown): Retrieva
     };
 }
 
-function strongestEvidenceStrength(sourceRefs: readonly PersistedSourceRef[]): EvidenceStrength | "unknown" {
-    const ranks: Record<EvidenceStrength | "unknown", number> = {
-        unknown: 0,
-        weak: 1,
-        conflicting: 2,
-        medium: 3,
-        strong: 4,
-    };
-    let best: EvidenceStrength | "unknown" = "unknown";
-    for (const ref of sourceRefs) {
-        const strength = ref.evidenceStrength ?? "unknown";
-        if (ranks[strength] > ranks[best]) best = strength;
-    }
-    return best;
-}
-
 function sourceSignalKey(ref: PersistedSourceRef): { key: string; sourceId?: string } {
     const sourceId = safeSourceId(ref.sourceId);
     if (sourceId) {
@@ -258,42 +241,6 @@ function sourceSignalKey(ref: PersistedSourceRef): { key: string; sourceId?: str
     return {
         key: `source:${stableHash(normalizeVaultPath(ref.path))}`,
     };
-}
-
-function aggregateSignalKeysForCandidate(candidate: QuietRecallCandidate): Array<{
-    key: string;
-    signal: RetrievalHabitSignalKind;
-    sourceId?: string;
-}> {
-    const signals: Array<{ key: string; signal: RetrievalHabitSignalKind; sourceId?: string }> = [
-        { key: `relation:${candidate.relation}`, signal: "quiet_recall_relation" },
-        { key: `strength:${strongestEvidenceStrength(candidate.sourceRefs)}`, signal: "quiet_recall_strength" },
-    ];
-    for (const ref of candidate.sourceRefs) {
-        const source = sourceSignalKey(ref);
-        signals.push({
-            ...source,
-            signal: "quiet_recall_source",
-        });
-    }
-    return signals;
-}
-
-function exactCandidateSignal(candidate: QuietRecallCandidate): RetrievalHabitSignalInput {
-    return {
-        key: `candidate:${stableHash(candidate.id)}`,
-        signal: "quiet_recall_candidate",
-    };
-}
-
-function scoringSignalKeysForCandidate(candidate: QuietRecallCandidate): RetrievalHabitSignalInput[] {
-    return [exactCandidateSignal(candidate), ...aggregateSignalKeysForCandidate(candidate)];
-}
-
-function candidateSourceRefsAreSafe(candidate: QuietRecallCandidate): boolean {
-    if (candidate.sourceRefs.length === 0) return false;
-    if (hasForbiddenPersistedTextFields(candidate.sourceRefs)) return false;
-    return candidate.sourceRefs.every((ref) => validateSourceRefPathShape(ref).ok);
 }
 
 function feedbackWeight(counts: Partial<Record<RetrievalHabitFeedbackKind, number>>): number {
@@ -411,16 +358,6 @@ export class RetrievalHabitProfileStore {
         };
     }
 
-    async recordRecallFeedback(
-        candidate: QuietRecallCandidate,
-        feedback: RetrievalHabitFeedbackKind,
-    ): Promise<RetrievalHabitProfileRecordResult> {
-        const signals = feedback === "dismiss"
-            ? [exactCandidateSignal(candidate)]
-            : aggregateSignalKeysForCandidate(candidate);
-        return this.recordSignals(signals, feedback, candidate.sourceRefs);
-    }
-
     async recordSignals(
         signals: readonly RetrievalHabitSignalInput[],
         feedback: RetrievalHabitFeedbackKind,
@@ -498,50 +435,6 @@ export class RetrievalHabitProfileStore {
         await this.options.persist?.(this.options.settings);
         return this.snapshot();
     }
-}
-
-export function applyRetrievalHabitProfileToRecallCandidates(
-    candidates: readonly QuietRecallCandidate[],
-    settings: RetrievalHabitProfileSettings,
-    options: { now?: Date | (() => Date) } = {},
-): QuietRecallCandidate[] {
-    const normalized = normalizeRetrievalHabitProfileSettings(settings);
-    if (!normalized.enabled || normalized.state.aggregates.length === 0) {
-        return candidates.map((candidate) => ({
-            ...candidate,
-            sourceRefs: candidate.sourceRefs.map((ref) => ({ ...ref })),
-            whyNow: [...candidate.whyNow],
-        }));
-    }
-
-    const now = nowDate(options.now);
-
-    return candidates
-        .map((candidate) => {
-            const habitBonus = candidateSourceRefsAreSafe(candidate)
-                ? scoreBonusForSignals(scoringSignalKeysForCandidate(candidate), normalized, now)
-                : 0;
-            const scaledHabitBonus = scaleHabitBonusForScore(candidate.score, habitBonus);
-            const whyNow = habitBonus > 0
-                ? uniqueStrings([...candidate.whyNow, RETRIEVAL_HABIT_WHY_SHOWN])
-                : [...candidate.whyNow];
-            return {
-                value: {
-                    ...candidate,
-                    sourceRefs: candidate.sourceRefs.map((ref) => ({ ...ref })),
-                    whyNow,
-                    score: candidate.score + scaledHabitBonus,
-                },
-                title: candidate.title,
-                score: candidate.score,
-                habitBonus: scaledHabitBonus,
-                evidenceStrength: strongestEvidenceStrength(candidate.sourceRefs),
-            };
-        })
-        .sort((left, right) => {
-            return compareWithWeakHabitBonus(left, right);
-        })
-        .map((entry) => entry.value);
 }
 
 export function applyRetrievalHabitProfileToEvidence<T extends RetrievalHabitEvidenceInput>(

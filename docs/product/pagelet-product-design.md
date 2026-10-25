@@ -3,7 +3,9 @@
 > 2026-10-25 局部清理契约：[DEC-075](./decisions/dec-075-legacy-surface-cleanup.md) /
 > [Bounded Cleanup Spec](./specs/pa-bounded-code-cleanup-product-spec.md) 退役指定的七个旧命令、
 > 两个回顾设置 UI、无效每周扫描设置跳转及 Pagelet 专用自动关联链；保留发现、阅读、
-> 保存、完整 Chat 交接、共享 Operations 和历史数据。旧命令快捷键需重绑。
+> 保存、完整 Chat 交接、共享 Operations 和历史数据。第二批进一步退役旧 Recall/Recap
+> 生成与专用查看/保存/关联、双 Ctrl、旧气泡卡片栈和 PreloadBudget 残留；当前 Pet、
+> Agent Insight/状态气泡、共享布局/动画/触摸、实际预算及数据保持。旧命令快捷键需重绑。
 > 这是已批准范围，实施和验证只由 [B-189 Tracker](../development/active/legacy-surface-cleanup/tracker.md) 记录。
 
 > 2026-10-17 当前 Detail UI 契约：[DEC-067](./decisions/dec-067-pagelet-note-detail-tabs.md) /
@@ -773,8 +775,9 @@ Quiet Recall contract.
 Current automatic Deep Discover uses the existing note-trigger scheduler and
 controller with source-boundary admission. The old generic recent-seven-day
 `PreloadEngine`/`ChangeDetector` producer is retired under DEC-035; its settings
-compatibility does not imply that this timer still runs. Shared Quiet Recall,
-Scope Recap, ScopeResolver and foreground budget contracts remain intact.
+compatibility does not imply that this timer still runs. DEC-075 batch two
+retires the old Quiet Recall/Scope Recap services and unused PreloadBudget.
+ScopeResolver, current call admission and effective budgets remain intact.
 
 ### Future Time-range Recap Scope
 
@@ -1118,9 +1121,9 @@ Top-level Pagelet settings group inside PA settings:
 - The old generic preparation timer, cache and selected-range controls are
   retired. Remaining legacy settings are read for compatibility; they do not
   provide a current generic polling/preparation feature.
-- Shared Quiet Recall/Scope Recap services remain available internally; their
-  historical producer contracts are not current command routes. Retiring old UI
-  is not permission to broaden sources, send excluded notes or bypass source admission.
+- DEC-075 batch two retires the old Quiet Recall/Scope Recap services and their
+  dedicated UI. Shared provider identity, current reading/save and stored data
+  remain. This does not broaden sources, send excluded notes or bypass admission.
 
 **Storage** — [PRESERVED]
 - Review notes folder (default `.pagelet/`; configurable in advanced).

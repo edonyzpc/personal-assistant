@@ -21,38 +21,6 @@ export interface DeliveryReceipt {
     fingerprint: string;
 }
 
-export interface RecallDeliveryReceiptInput {
-    locale?: string | null;
-    title?: string | null;
-    body?: string | null;
-    whyNow?: string | readonly string[] | null;
-    excerpt?: string | readonly string[] | null;
-    currentSourceIdentity?: string | null;
-    recalledSourceIdentities?: readonly string[] | null;
-}
-
-export interface StructuredRecapScopeIdentity {
-    kind?: string | null;
-    label?: string | null;
-    paths?: readonly string[] | null;
-    tags?: readonly string[] | null;
-}
-
-export type RecapScopeIdentity =
-    | string
-    | StructuredRecapScopeIdentity
-    | null
-    | undefined;
-
-export interface RecapDeliveryReceiptInput {
-    locale?: string | null;
-    title?: string | null;
-    body?: string | null;
-    whyItMatters?: string | readonly string[] | null;
-    scopeIdentity?: RecapScopeIdentity;
-    sourceIdentities?: readonly string[] | null;
-}
-
 export interface ReviewDeliveryReceiptInput {
     /** Stable Deep Discover insight identity; optional for legacy review callers. */
     insightId?: string | null;

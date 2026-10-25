@@ -3,32 +3,10 @@ import { describe, expect, it, jest } from "@jest/globals";
 import {
     RetrievalHabitProfileStore,
     applyRetrievalHabitProfileToEvidence,
-    applyRetrievalHabitProfileToRecallCandidates,
     normalizeRetrievalHabitProfileSettings,
-    type QuietRecallCandidate,
     type RetrievalHabitEvidenceInput,
     type RetrievalHabitProfileSettings,
 } from "../src/pa";
-
-function makeCandidate(overrides: Partial<QuietRecallCandidate> = {}): QuietRecallCandidate {
-    return {
-        id: "qr-ins-alpha",
-        title: "Recall: Alpha",
-        summary: "Small weekly rituals help old project context stay usable.",
-        sourceInsightId: "ins-alpha",
-        sourceRefs: [{
-            path: "Projects/Alpha.md",
-            evidenceStrength: "medium",
-            sourceId: "data_boundary:allowed_by_policy",
-        }],
-        whyNow: ["Source appears near the current note in Memory search."],
-        nextAction: "Open the source note and decide whether the connection still matters.",
-        relation: "related",
-        score: 48,
-        generatedAt: "2026-06-29T12:00:00.000Z",
-        ...overrides,
-    };
-}
 
 describe("RetrievalHabitProfileStore", () => {
     it("does not collect feedback while disabled", async () => {
@@ -39,101 +17,11 @@ describe("RetrievalHabitProfileStore", () => {
         };
         const store = new RetrievalHabitProfileStore({ settings, persist });
 
-        const result = await store.recordRecallFeedback(makeCandidate(), "dismiss");
+        const result = await store.recordSignals([{ signal: "retrieval_lane", key: "lane:structure" }], "dismiss");
 
         expect(result).toEqual({ ok: false, reason: "disabled" });
         expect(settings.state.aggregates).toEqual([]);
         expect(persist).not.toHaveBeenCalled();
-    });
-
-    it("keeps dismiss as a weak exact-candidate signal without source or relation generalization", async () => {
-        const settings: RetrievalHabitProfileSettings = {
-            enabled: true,
-            state: { aggregates: [] },
-        };
-        const recordedAt = new Date("2026-06-29T12:00:00.000Z");
-        const store = new RetrievalHabitProfileStore({
-            settings,
-            now: recordedAt,
-        });
-        const dismissed = makeCandidate({
-            id: "qr-ins-dismissed",
-            title: "Recall: Dismissed",
-            score: 48,
-        });
-        const similar = makeCandidate({
-            id: "qr-ins-similar",
-            title: "Recall: Similar",
-            score: 48,
-        });
-
-        const result = await store.recordRecallFeedback(dismissed, "dismiss");
-
-        expect(result.ok).toBe(true);
-        expect(settings.state.aggregates).toHaveLength(1);
-        expect(settings.state.aggregates[0]).toEqual(expect.objectContaining({
-            signal: "quiet_recall_candidate",
-            key: expect.stringMatching(/^candidate:[0-9a-f]{8}$/),
-            counts: { dismiss: 1 },
-        }));
-        expect(settings.state.aggregates).not.toEqual(expect.arrayContaining([
-            expect.objectContaining({ signal: "quiet_recall_relation" }),
-            expect.objectContaining({ signal: "quiet_recall_source" }),
-            expect.objectContaining({ signal: "quiet_recall_strength" }),
-        ]));
-        expect(JSON.stringify(settings.state)).not.toContain(dismissed.id);
-
-        const ranked = applyRetrievalHabitProfileToRecallCandidates([dismissed, similar], settings, { now: recordedAt });
-        expect(ranked[0].id).toBe(similar.id);
-        expect(ranked.find((candidate) => candidate.id === similar.id)?.score).toBe(similar.score);
-        expect(ranked.find((candidate) => candidate.id === dismissed.id)?.score).toBeLessThan(dismissed.score);
-    });
-
-    it("stores enabled recall feedback as aggregate-only local signals", async () => {
-        const settings: RetrievalHabitProfileSettings = {
-            enabled: true,
-            state: { aggregates: [] },
-        };
-        const store = new RetrievalHabitProfileStore({
-            settings,
-            now: new Date("2026-06-29T12:00:00.000Z"),
-        });
-
-        const result = await store.recordRecallFeedback(makeCandidate(), "view");
-
-        expect(result.ok).toBe(true);
-        expect(settings.state.aggregates).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                key: "relation:related",
-                signal: "quiet_recall_relation",
-                counts: { view: 1 },
-                windowStart: "2026-06-29",
-                windowDays: 1,
-            }),
-            expect.objectContaining({
-                signal: "quiet_recall_source",
-                key: expect.stringMatching(/^source:[0-9a-f]{8}$/),
-                counts: { view: 1 },
-                windowStart: "2026-06-29",
-            }),
-            expect.objectContaining({
-                key: "strength:medium",
-                signal: "quiet_recall_strength",
-                counts: { view: 1 },
-                windowStart: "2026-06-29",
-            }),
-        ]));
-        expect(settings.state.aggregates).not.toEqual(expect.arrayContaining([
-            expect.objectContaining({ signal: "quiet_recall_candidate" }),
-        ]));
-        const serialized = JSON.stringify(settings.state);
-        expect(serialized).not.toContain("Projects/Alpha.md");
-        expect(serialized).not.toContain("Recall: Alpha");
-        expect(serialized).not.toContain("Small weekly rituals");
-        expect(serialized).not.toContain("data_boundary:allowed_by_policy");
-        expect(serialized).not.toContain("query");
-        expect(serialized).not.toContain("providerOutput");
-        expect(serialized).not.toContain("sensitive");
     });
 
     it("keeps only 90 days of aggregate buckets and decays older local signals", async () => {
@@ -165,7 +53,7 @@ describe("RetrievalHabitProfileStore", () => {
             now: new Date("2026-06-29T12:00:00.000Z"),
         });
 
-        await store.recordRecallFeedback(makeCandidate(), "view");
+        await store.recordSignals([{ signal: "quiet_recall_relation", key: "relation:related" }], "view");
 
         expect(settings.state.aggregates).not.toEqual(expect.arrayContaining([
             expect.objectContaining({ windowStart: "2026-03-30" }),
@@ -186,9 +74,9 @@ describe("RetrievalHabitProfileStore", () => {
             isSourceAllowed: (ref) => !ref.path.startsWith("Private/"),
         });
 
-        const result = await store.recordRecallFeedback(makeCandidate({
-            sourceRefs: [{ path: "Private/Alpha.md", evidenceStrength: "strong" }],
-        }), "not_relevant");
+        const result = await store.recordSignals([{ signal: "retrieval_lane", key: "lane:structure" }], "not_relevant", [
+            { path: "Private/Alpha.md", evidenceStrength: "strong" },
+        ]);
 
         expect(result).toEqual({ ok: false, reason: "excluded_scope" });
         expect(settings.state.aggregates).toEqual([]);
@@ -216,66 +104,6 @@ describe("RetrievalHabitProfileStore", () => {
         const serialized = JSON.stringify(settings.state);
         expect(serialized).not.toContain("Private/Raw Query");
         expect(serialized).not.toContain("raw provider text");
-    });
-
-    it("uses aggregate feedback only as weak local near-tie ranking influence", async () => {
-        const settings: RetrievalHabitProfileSettings = {
-            enabled: true,
-            state: { aggregates: [] },
-        };
-        const store = new RetrievalHabitProfileStore({
-            settings,
-            now: new Date("2026-06-29T12:00:00.000Z"),
-        });
-        const accepted = makeCandidate({
-            id: "qr-ins-accepted",
-            title: "Recall: Accepted",
-            sourceInsightId: "ins-accepted",
-            relation: "related",
-            score: 42.6,
-        });
-        const neutral = makeCandidate({
-            id: "qr-ins-neutral",
-            title: "Recall: Neutral",
-            sourceInsightId: "ins-neutral",
-            relation: "far",
-            sourceRefs: [{ path: "Archive/Neutral.md", evidenceStrength: "strong" }],
-            score: 42,
-        });
-        const farBetter = makeCandidate({
-            id: "qr-ins-far-better",
-            title: "Recall: Far Better",
-            sourceInsightId: "ins-far-better",
-            relation: "far",
-            sourceRefs: [{ path: "Archive/Far Better.md", evidenceStrength: "medium" }],
-            score: 46,
-        });
-
-        const now = new Date("2026-06-29T12:00:00.000Z");
-        await store.recordRecallFeedback(accepted, "accept");
-        const influenced = applyRetrievalHabitProfileToRecallCandidates([neutral, accepted], settings, { now });
-
-        expect(influenced[0].id).toBe("qr-ins-neutral");
-        expect(influenced[0].sourceRefs[0].evidenceStrength).toBe("strong");
-
-        const nearTie = applyRetrievalHabitProfileToRecallCandidates([
-            { ...neutral, sourceRefs: [{ path: "Archive/Neutral.md", evidenceStrength: "medium" }], score: 42.9 },
-            accepted,
-        ], settings, { now });
-        expect(nearTie[0].id).toBe("qr-ins-accepted");
-        expect(nearTie[0].score - accepted.score).toBeLessThanOrEqual(0.75);
-        expect(nearTie[0].whyNow).toContain("Shown slightly higher by local recall preferences.");
-
-        const outsideTieWindow = applyRetrievalHabitProfileToRecallCandidates([farBetter, accepted], settings, { now });
-        expect(outsideTieWindow[0].id).toBe("qr-ins-far-better");
-
-        await store.clear();
-        const cleared = applyRetrievalHabitProfileToRecallCandidates([neutral, accepted], settings, { now });
-        expect(cleared[0].id).toBe("qr-ins-neutral");
-
-        settings.enabled = false;
-        await store.recordRecallFeedback(accepted, "accept");
-        expect(settings.state.aggregates).toEqual([]);
     });
 
     it("applies the same weak ceiling to generic retrieval evidence", async () => {

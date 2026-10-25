@@ -185,7 +185,7 @@ describe('Ghost action continuity (controlled Ghost responses and recorded model
         const selection = { schemaVersion: 1 as const, scope: 'notes' as const, selectionId: 'b157-initial-selection', userMessageId: 'b157-initial-user' };
         const host = { app: f.app, settings: { aiProvider: 'qwen', chatModelName: 'qwen3.6-plus',
             baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', memoryEnabled: false,
-            operationsProactiveSaveSuggestionsEnabled: false, shareAnonymousCapabilityUsage: false },
+            operationsProactiveSaveSuggestionsEnabled: false },
             isOperationsAgentEnabled: true, log: () => {}, getAPIToken: async () => 'synthetic-placeholder',
             getMemoryEvidenceEpoch: () => 'b157-synthetic-epoch', getMemoryExtractionPromptContext: () => undefined };
         const providerInputs: unknown[] = [];

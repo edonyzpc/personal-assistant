@@ -40,8 +40,6 @@ import {
     type MaintenanceMoveApplyResult,
     type MaintenanceMoveUndoResult,
     type MaintenanceProposal,
-    type QuietRecallCandidate,
-    type QuietRecallSaveResult,
     type ReviewQueueItem,
 } from "../../pa";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
@@ -59,15 +57,11 @@ import type {
     MemoryCandidateActionState,
     MemoryCandidateActionResult,
     MemoryRecordActionResult,
-    QuietRecallLinkState,
-    QuietRecallLinkResult,
-    QuietRecallSaveState,
     TabSectionCallbacks,
     TabSectionRenderer,
 } from "./sections/types";
 import { MemoryGovernanceSection } from "./sections/MemoryGovernanceSection";
 import { MaintenanceReviewSection } from "./sections/MaintenanceReviewSection";
-import { QuietRecallSection } from "./sections/QuietRecallSection";
 import { PageletNativeMarkdown } from "../native-markdown";
 import { ReadingPositionController, type ReadingSnapshot } from "../../ui/reading-position";
 import { pageletReadingAnchors, pageletReadingPosition, pageletReadingSnapshot, renderSimpleMarkdownPreview } from "../panel/PanelLayouts";
@@ -93,8 +87,6 @@ export interface TabViewOptions {
     onOpenMemorySettings?: (targetId?: string) => void;
     /** @deprecated Use onForget. Kept while the plugin host migrates. */
     onForgetConfirmedMemory?: (record: ConfirmedMemoryRecord) => Promise<MemoryCandidateActionResult>;
-    onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>;
-    onLinkRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<QuietRecallLinkResult>;
 }
 
 type TabOpenOptions = Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason" | "deliveryTarget" | "reading">;
@@ -104,7 +96,6 @@ let tabLabelSequence = 0;
 
 const ENTRY_REASON_TO_PRIMARY_SECTION: Partial<Record<TabEntryReason, string>> = {
     "maintenance": "maintenance",
-    "quiet-recall": "quiet-recall",
     "graph-discovery": "graph-discovery",
     "pattern-detection": "pattern-detection",
 };
@@ -155,8 +146,6 @@ export class TabView {
     private readonly dismissedPatternIds = new Set<string>();
     private readonly memoryCandidateActionState = new Map<string, MemoryCandidateActionState>();
     private readonly maintenanceActionState = new Map<string, MaintenanceActionUiState>();
-    private readonly quietRecallSaveState = new Map<string, QuietRecallSaveState>();
-    private readonly quietRecallLinkState = new Map<string, QuietRecallLinkState>();
     private memoryDigestDeferred = false;
     private actionStateGeneration = 0;
     private disposed = false;
@@ -340,8 +329,6 @@ export class TabView {
         if (resetExpansion) this.ui.getState().setSectionsExpanded(false);
         this.memoryCandidateActionState.clear();
         this.maintenanceActionState.clear();
-        this.quietRecallSaveState.clear();
-        this.quietRecallLinkState.clear();
     }
 
     private createSectionCallbacks(): TabSectionCallbacks {
@@ -658,25 +645,6 @@ export class TabView {
                     onApply: this.options.onApplyMaintenanceProposal,
                     onUndo: this.options.onUndoMaintenanceAction,
                 }, sectionCallbacks, this.maintenanceActionState)) },
-            { id: "quiet-recall", labelKey: "pagelet.tab.recall.title", render: () => this.renderExtractedSection(
-                options.extra?.quietRecall,
-                (data) => new QuietRecallSection(this.locale, data, {
-                    onSave: this.options.onSaveQuietRecallAsInsight,
-                    onLink: this.options.onLinkRecallCandidate,
-                    onOpenSource: this.options.onOpenSource,
-                    onOpenMemorySettings: this.options.onOpenMemorySettings,
-                }, sectionCallbacks, options.sourcePath, this.quietRecallSaveState, this.quietRecallLinkState),
-                (renderer) => {
-                    const target = options.deliveryTarget;
-                    if (
-                        target?.kind === "quiet-recall"
-                        && renderer instanceof QuietRecallSection
-                        && renderer.hasRenderedCandidate(target.candidateId)
-                    ) {
-                        this.commitDeliveryTarget(target);
-                    }
-                },
-            ) },
             { id: "graph-discovery", labelKey: "pagelet.tab.graphDiscovery.title", render: () => this.renderGraphDiscoveryContent(options.extra?.graphDiscovery) },
             { id: "pattern-detection", labelKey: "pagelet.tab.patterns.title", render: () => this.renderPatternDetectionContent(options.extra?.patternDetection) },
             { id: "saved-insights", labelKey: "pagelet.tab.savedInsights.title", render: () => this.renderSavedInsightContent(options.extra?.savedInsights, true) },

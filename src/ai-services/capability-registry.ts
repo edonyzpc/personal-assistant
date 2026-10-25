@@ -5,14 +5,12 @@ import {
     type AgentPlatformSupport,
     type CapabilityDiagnostic,
     type CapabilityProvider,
-    type CapabilityUsageEvent,
     type PrepareCapabilityArgumentsContext,
     type PrepareCapabilityArgumentsResult,
     type ProviderLoadContext,
     type ProviderLoadResult,
 } from "./capability-types";
 import type {
-    ChatToolName,
     ChatToolProviderSchema,
     ChatToolProviderSchemaExportResult,
     ChatToolRegistryDefinition,
@@ -31,8 +29,6 @@ import type { ChatWritingRequest } from "./chat-types";
 
 export interface CapabilityRegistryOptions {
     policyEngine?: PolicyEngine;
-    telemetryEnabled?: boolean;
-    onCapabilityEvent?: (event: CapabilityUsageEvent) => void;
 }
 
 export interface CapabilityExportFilter {
@@ -46,21 +42,9 @@ export class CapabilityRegistry {
     private readonly capabilities = new Map<string, AgentCapability>();
     private readonly diagnostics: CapabilityDiagnostic[] = [];
     private readonly policyEngine: PolicyEngine;
-    private telemetryEnabled: boolean;
-    private onCapabilityEvent?: (event: CapabilityUsageEvent) => void;
 
     constructor(options: CapabilityRegistryOptions = {}) {
         this.policyEngine = options.policyEngine ?? new PolicyEngine();
-        this.telemetryEnabled = options.telemetryEnabled ?? false;
-        this.onCapabilityEvent = options.onCapabilityEvent;
-    }
-
-    setTelemetryEnabled(enabled: boolean): void {
-        this.telemetryEnabled = enabled;
-    }
-
-    setCapabilityEventHandler(handler: ((event: CapabilityUsageEvent) => void) | undefined): void {
-        this.onCapabilityEvent = handler;
     }
 
     register(capability: AgentCapability): boolean {
@@ -224,18 +208,6 @@ export class CapabilityRegistry {
     }
 
     /**
-     * Public wrapper around the private telemetry emitter. The Write Action
-     * Framework wrapper records `invoked`/`failed`/`skipped` events for the
-     * action route here so chat-runtime + framework telemetry stay coherent.
-     * Telemetry gating (the `telemetryEnabled` flag) is preserved inside the
-     * private emitter — callers should always invoke this and let the registry
-     * decide whether to forward to the handler.
-     */
-    recordCapabilityEvent(event: CapabilityUsageEvent): void {
-        this.emitCapabilityEvent(event);
-    }
-
-    /**
      * Pre-validation pipeline for PA executor.
      * Delegates to capability.prepareAndValidate when defined; otherwise passes through.
      * PA executor converts { ok: false } to schema_invalid outcome BEFORE registry.execute,
@@ -263,27 +235,14 @@ export class CapabilityRegistry {
         input: unknown,
         context: AgentCapabilityContext,
     ): Promise<ChatToolResult<unknown>> {
-        const started = Date.now();
         const capability = this.get(name);
         if (!capability) {
-            this.emitCapabilityEvent({
-                capabilityName: normalizeCapabilityEventName(name),
-                providerId: "unknown",
-                status: "unavailable",
-                durationMs: elapsedMs(started),
-            });
             context.host.log("Capability is not registered", { capability: name });
             return createCapabilityFailureResult(name, "unregistered capability", "Skipped an unavailable read-only tool.");
         }
 
         const decision = this.policyEngine.canExecute(capability);
         if (!decision.allowed) {
-            this.emitCapabilityEvent({
-                capabilityName: capability.name,
-                providerId: capability.providerId,
-                status: "skipped",
-                durationMs: elapsedMs(started),
-            });
             context.host.log("Capability rejected by policy", {
                 capability: capability.name,
                 reason: decision.reason,
@@ -295,24 +254,8 @@ export class CapabilityRegistry {
             );
         }
 
-        try {
-            const result = await capability.execute(input, context);
-            this.emitCapabilityEvent({
-                capabilityName: capability.name,
-                providerId: capability.providerId,
-                status: result.status === "ok" ? "invoked" : "unavailable",
-                durationMs: elapsedMs(started),
-            });
-            return agentResultToChatToolResult(capability.name, result);
-        } catch (error) {
-            this.emitCapabilityEvent({
-                capabilityName: capability.name,
-                providerId: capability.providerId,
-                status: "failed",
-                durationMs: elapsedMs(started),
-            });
-            throw error;
-        }
+        const result = await capability.execute(input, context);
+        return agentResultToChatToolResult(capability.name, result);
     }
 
     private listCapabilitiesForExport(filter?: CapabilityExportFilter): AgentCapability[] {
@@ -323,11 +266,6 @@ export class CapabilityRegistry {
                 || (capability.kind === "action" && filter?.includeActions === true)
             ))
             .filter((capability) => isCapabilityAllowedForExport(capability.name, filter));
-    }
-
-    private emitCapabilityEvent(event: CapabilityUsageEvent): void {
-        if (!this.telemetryEnabled) return;
-        this.onCapabilityEvent?.({ ...event });
     }
 }
 
@@ -377,14 +315,6 @@ function createCapabilityFailureResult(
         sources: [],
         error,
     };
-}
-
-function elapsedMs(started: number): number {
-    return Math.max(0, Date.now() - started);
-}
-
-function normalizeCapabilityEventName(name: string): ChatToolName {
-    return name as ChatToolName;
 }
 
 function isPlatformSupported(support: AgentPlatformSupport, platform: ProviderLoadContext["platform"]): boolean {

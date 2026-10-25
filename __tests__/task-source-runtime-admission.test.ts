@@ -50,7 +50,7 @@ function createScenario(change: 'unchanged' | 'revoked' | 'ordinary-edit' | 'bat
     if (change === 'ordinary-edit') mockOrdinaryEdit = () => { mockAuthority += 1; };
     const host = { settings: { debug: false, aiProvider: 'openai', baseURL: 'https://source-admission.invalid/v1',
         chatModelName: 'fixed-model', policyModelName: '', embeddingModelName: 'fixed-embedding',
-        shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false, webSearchEnabled: false,
+        qwenThinkingEnabled: false, webSearchEnabled: false,
         memoryEnabled: false, licenseTier: 'paid',
         operationsProactiveSaveSuggestionsEnabled: false, operationsAuditIncludeContent: false,
         operationsAuditRetentionDays: 30, statisticsVaultId: 'synthetic-source-admission', retrievalOptimizationFlags: {} },

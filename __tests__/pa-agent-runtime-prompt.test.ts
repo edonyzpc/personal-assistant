@@ -1702,7 +1702,7 @@ function createPromptHost(): AiServiceHost {
         settings: {
             debug: false, aiProvider: "qwen", baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
             chatModelName: "qwen3.6-plus", policyModelName: "", embeddingModelName: "b149-fixed-embedding",
-            shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false, webSearchEnabled: false,
+            qwenThinkingEnabled: false, webSearchEnabled: false,
             memoryEnabled: false, licenseTier: "paid",
             operationsProactiveSaveSuggestionsEnabled: false, operationsAuditIncludeContent: false,
             operationsAuditRetentionDays: 30, statisticsVaultId: "b149-synthetic", retrievalOptimizationFlags: {},

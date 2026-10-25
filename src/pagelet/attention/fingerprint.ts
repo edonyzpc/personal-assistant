@@ -5,9 +5,6 @@ import {
     DELIVERY_FINGERPRINT_VERSION,
     type DeliveryKind,
     type DeliveryReceipt,
-    type RecallDeliveryReceiptInput,
-    type RecapDeliveryReceiptInput,
-    type RecapScopeIdentity,
     type ReviewDeliveryReceiptInput,
 } from "./types";
 
@@ -69,28 +66,6 @@ function uniqueSorted(values: readonly string[]): string[] {
     return [...new Set(values)].sort(compareCanonicalStrings);
 }
 
-function serializeScopeIdentity(scope: RecapScopeIdentity): string {
-    if (typeof scope === "string" && normalizeText(scope).length > 0) return serializeFields([
-        ["type", "string"],
-        ["value", normalizeText(scope)],
-    ]);
-
-    const structured = typeof scope === "object" && scope !== null ? scope : {};
-    const paths = uniqueSorted((structured.paths ?? [])
-        .map((path) => normalizeSourceIdentity(path))
-        .filter((path) => path.length > 0));
-    const tags = uniqueSorted((structured.tags ?? [])
-        .map((tag) => normalizeText(tag).replace(/^#+/, "").toLowerCase())
-        .filter((tag) => tag.length > 0));
-    return serializeFields([
-        ["type", "structured"],
-        ["kind", normalizeText(structured.kind).toLowerCase()],
-        ["label", normalizeText(structured.label)],
-        ["paths", serializeList(paths)],
-        ["tags", serializeList(tags)],
-    ]);
-}
-
 function buildReceipt(kind: DeliveryKind, fields: readonly CanonicalField[]): DeliveryReceipt {
     const canonical = serializeFields([
         ["version", String(DELIVERY_FINGERPRINT_VERSION)],
@@ -104,36 +79,6 @@ function buildReceipt(kind: DeliveryKind, fields: readonly CanonicalField[]): De
         kind,
         fingerprint: `v${DELIVERY_FINGERPRINT_VERSION}:${kind}:${left}${right}`,
     };
-}
-
-export function buildRecallDeliveryReceipt(
-    input: RecallDeliveryReceiptInput,
-): DeliveryReceipt {
-    return buildReceipt("recall", [
-        ["locale", normalizeLocale(input.locale)],
-        ["title", normalizeText(input.title)],
-        ["body", normalizeText(input.body)],
-        ["whyNow", serializeList(normalizeTextList(input.whyNow))],
-        ["excerpt", serializeList(normalizeTextList(input.excerpt))],
-        ["currentSourceIdentity", normalizeSourceIdentity(input.currentSourceIdentity)],
-        [
-            "recalledSourceIdentities",
-            serializeList(normalizeSourceIdentities(input.recalledSourceIdentities)),
-        ],
-    ]);
-}
-
-export function buildRecapDeliveryReceipt(
-    input: RecapDeliveryReceiptInput,
-): DeliveryReceipt {
-    return buildReceipt("recap", [
-        ["locale", normalizeLocale(input.locale)],
-        ["title", normalizeText(input.title)],
-        ["body", normalizeText(input.body)],
-        ["whyItMatters", serializeList(normalizeTextList(input.whyItMatters))],
-        ["scopeIdentity", serializeScopeIdentity(input.scopeIdentity)],
-        ["sourceIdentities", serializeList(normalizeSourceIdentities(input.sourceIdentities))],
-    ]);
 }
 
 export function buildReviewDeliveryReceipt(

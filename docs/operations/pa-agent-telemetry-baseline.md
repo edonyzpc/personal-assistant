@@ -2,6 +2,12 @@
 
 Date: 2026-05-24
 
+Status: Retired by [DEC-075](../product/decisions/dec-075-legacy-surface-cleanup.md),
+2026-10-25. The anonymous capability-usage setting and its dedicated event chain
+are removed. Debug logs, Agent run history and statistics synchronization remain.
+The sections below describe the historical v1 plan; they are not current runtime
+behavior, collection instructions or a release gate.
+
 ## Scope
 
 PA Agent v1 telemetry is an opt-in, local capability-usage event hook. It is not an upload pipeline and does not collect prompts, note text, observations, source snippets, vault paths, file paths, URLs, API keys, or model outputs.

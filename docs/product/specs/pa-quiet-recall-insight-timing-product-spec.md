@@ -10,8 +10,9 @@ Authority: Quiet Recall 的候选、触发、质量、成本、数据、交付�
 
 2026-10-25 scoped successor：[DEC-075](../decisions/dec-075-legacy-surface-cleanup.md)
 退役 Quiet Recall 命令与“相关回顾”设置 UI，保留 `quietRecallMode` 的旧值读取与
-兼容，以及有效共享、历史和评估消费者。下文旧命令路由/UI 不构成恢复要求，不以此
-整批删除 Recall 或改写原验收。具体范围及实施证据见
+兼容。同日第二批进一步退役旧 Recall 生成、专用查看/保存/手动关联和旧气泡；保留
+当前 Agent Insight、共享来源/成果库、历史数据与诊断元数据。下文旧链不构成恢复
+要求，原验收保留为历史证据。具体范围及实施证据见
 [Bounded Cleanup Spec](./pa-bounded-code-cleanup-product-spec.md) 与
 [B-189 Tracker](../../development/active/legacy-surface-cleanup/tracker.md)。
 

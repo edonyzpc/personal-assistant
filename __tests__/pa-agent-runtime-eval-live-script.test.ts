@@ -72,7 +72,7 @@ function harness(vaultName = "test", stagedCases = casesJson, fixtureGate?: Prom
     } });
     const settings = { debug: false, aiProvider: "qwen", baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         chatModelName: "deepseek-v4-pro", policyModelName: "", embeddingModelName: "b149-synthetic",
-        shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false, webSearchEnabled: true,
+        qwenThinkingEnabled: false, webSearchEnabled: true,
         memoryEnabled: true, licenseTier: "paid",
         operationsProactiveSaveSuggestionsEnabled: false, operationsAuditIncludeContent: false,
         operationsAuditRetentionDays: 30, statisticsVaultId: "b149-test", retrievalOptimizationFlags: {},

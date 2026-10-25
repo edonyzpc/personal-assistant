@@ -42,37 +42,12 @@ import type {
     GraphDiscoveryRunResult,
     MaintenanceReviewRunResult,
     PatternDetectionResult,
-    QuietRecallCandidate,
-    QuietRecallEvaluationDiagnostics,
-    QuietRecallSaveResult,
-    RetrievalHabitFeedbackKind,
-    RetrievalHabitProfileRecordResult,
-    RecapLlmInsight,
     ReviewQueueCreateInput,
     ReviewQueueItem,
     ReviewQueueListFilter,
     ReviewQueueResult,
-    ReviewQueueScope,
     SavedInsight,
-    ScopeRecapLocalOverview,
-    ScopeRecapAttemptStatus,
-    ScopeRecapPreparationResult,
 } from "../pa";
-
-export interface PageletFeatureRateLimitUsage {
-    hourlyUsed: number;
-    hourlyCap: number;
-    hourlyRemaining: number;
-    dailyUsed: number;
-    dailyCap: number;
-    dailyRemaining: number;
-    dailyResetAt: number;
-}
-
-export interface PageletFeatureRateLimitStatus {
-    scopeRecap: PageletFeatureRateLimitUsage;
-    quietRecall: PageletFeatureRateLimitUsage;
-}
 
 export interface PageletDeepDiscoverUsage {
     runs: number;
@@ -105,18 +80,6 @@ export interface PageletHost {
                 end: string;
             };
             backgroundDiscoveryEnabled: boolean;
-            scopeRecapPreparationEnabled: boolean;
-            scopeRecapBackgroundAuthorization: "pending" | "authorized-v1" | "declined-v1";
-            scopeRecapAuthorizationContextId: string | null;
-            scopeRecapHighValueHints: boolean;
-            scopeRecapNudgeSuppressions: Array<{
-                fingerprint: string;
-                shownAt: number;
-                snoozedUntil?: number;
-            }>;
-            scopeRecapLastAttempt: ScopeRecapAttemptStatus | null;
-            quietRecallLastDiagnostics: QuietRecallEvaluationDiagnostics | null;
-            quietRecallLastAcceptedCount: number;
             outputLanguage: "auto" | "zh" | "en";
             temperature: number;
             foregroundPerHourCap: number;
@@ -130,19 +93,11 @@ export interface PageletHost {
             onboardingShown: boolean;
             maintenanceScanSuggested: boolean;
             quickCaptureExplained: boolean;
-            quietRecallExplained: boolean;
             quietAcknowledged: boolean;
             pageletProviderFirstUseNotified: boolean;
         };
         contextPager: {
             enabled: boolean;
-        };
-        quietRecall: {
-            enabled: boolean;
-            /** @deprecated Use quietRecallMode instead. */
-            bubbleNudgesEnabled: boolean;
-            /** SG-01: Off/On two-tier. */
-            quietRecallMode: "off" | "on";
         };
         focusMode: boolean;
         confirmedMemoryCount: number;
@@ -297,50 +252,6 @@ export interface PageletHost {
 
     /** Run local structure-based cross-note pattern detection. */
     detectCrossNotePatterns(): Promise<PatternDetectionResult | null>;
-
-    /** Build local, explanation-only scope facts without a provider call. */
-    buildScopeRecapLocalOverview(): Promise<ScopeRecapLocalOverview>;
-
-    /** Whether the configured provider can currently run Scope Recap. */
-    isScopeRecapProviderConfigured(): boolean;
-
-    /** Current provider/model labels for the first-run disclosure. */
-    getScopeRecapProviderInfo(): { provider: string; model: string; endpoint: string };
-
-    /** Hashed provider/model/policy envelope covered by Recap authorization. */
-    getScopeRecapAuthorizationContextId(): string;
-
-    /** Content-free usage diagnostics for the independent Recap/Recall call guards. */
-    getPageletFeatureRateLimitStatus?(): Promise<PageletFeatureRateLimitStatus>;
-
-    /** Current Data Boundary fingerprint used to invalidate derived Recaps. */
-    getScopeRecapDataBoundarySnapshotId(): string;
-
-    /** Run one bounded Scope Recap provider attempt. */
-    runScopeRecap(options: {
-        mode: "background" | "foreground-retry";
-        expectedSourceSnapshotId?: string;
-        expectedDataBoundarySnapshotId?: string;
-        expectedAuthorizationContextId?: string;
-    }): Promise<ScopeRecapPreparationResult>;
-
-    /** Generate LLM-backed insights for scope recap note digests. */
-    generateRecapInsights?(input: {
-        scope: ReviewQueueScope;
-        noteDigests: Array<{ title: string; digest: string; tags: string[] }>;
-    }): Promise<RecapLlmInsight[] | null>;
-
-    /** Save a quiet recall candidate into the Saved Insight ledger. */
-    saveQuietRecallAsInsight(candidate: QuietRecallCandidate): Promise<QuietRecallSaveResult>;
-
-    /** Add a frontmatter relationship between the source note and a Quiet Recall candidate. */
-    linkRecallCandidate(currentPath: string, candidatePath: string): Promise<{ ok: boolean; message: string }>;
-
-    /** Record local aggregate-only Quiet Recall feedback when the profile is enabled. */
-    recordQuietRecallFeedback(
-        candidate: QuietRecallCandidate,
-        feedback: RetrievalHabitFeedbackKind,
-    ): Promise<RetrievalHabitProfileRecordResult>;
 
     /** List local Saved Insights for the Pagelet detail ledger. */
     listSavedInsights(): SavedInsight[];

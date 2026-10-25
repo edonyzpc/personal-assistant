@@ -422,9 +422,6 @@ export class PanelView {
         if ((layoutType === "review" || layoutType === "current") && this.currentExtra?.reviewQueue?.items.length) {
             body.appendChild(this.renderReviewQueueSection(this.currentExtra.reviewQueue.items));
         }
-        if ((layoutType === "review" || layoutType === "current") && this.currentExtra?.quietRecall) {
-            body.appendChild(this.renderQuietRecallSection(this.currentExtra.quietRecall));
-        }
 
         const contentEl = createHtmlElement("div");
         contentEl.className = "pa-pagelet-panel-content-region";
@@ -866,57 +863,6 @@ export class PanelView {
             list.appendChild(card);
         }
         section.appendChild(list);
-        return section;
-    }
-
-    private renderQuietRecallSection(quietRecall: NonNullable<PanelOpenExtra["quietRecall"]>): HTMLElement {
-        const section = createHtmlElement("section");
-        section.className = "pa-pagelet-panel-quiet-recall";
-        section.setAttribute("aria-label", pageletT("pagelet.panel.recall.title", this.getLocale()));
-
-        const title = createHtmlElement("h4");
-        title.className = "pa-pagelet-panel-recall-title";
-        title.textContent = pageletT("pagelet.panel.recall.title", this.getLocale());
-        section.appendChild(title);
-
-        const count = createHtmlElement("div");
-        count.className = "pa-pagelet-panel-recall-count";
-        count.textContent = pageletT("pagelet.panel.recall.summary", this.getLocale(), { count: quietRecall.totalCount });
-        section.appendChild(count);
-
-        if (quietRecall.candidates.length === 0) {
-            const empty = createHtmlElement("div");
-            empty.className = "pa-pagelet-panel-recall-card";
-            empty.textContent = pageletT("pagelet.panel.recall.empty", this.getLocale());
-            section.appendChild(empty);
-            return section;
-        }
-
-        for (const candidate of quietRecall.candidates.slice(0, 3)) {
-            const card = createHtmlElement("div");
-            card.className = "pa-pagelet-panel-recall-card pa-pagelet-panel-recall-card--candidate";
-
-            const cardTitle = createHtmlElement("div");
-            cardTitle.className = "pa-pagelet-panel-recall-card-title";
-            cardTitle.textContent = candidate.title;
-            card.appendChild(cardTitle);
-
-            const claim = createHtmlElement("div");
-            claim.className = "pa-pagelet-panel-recall-card-claim";
-            claim.textContent = candidate.summary;
-            card.appendChild(claim);
-
-            const meta = createHtmlElement("div");
-            meta.className = "pa-pagelet-panel-recall-card-meta";
-            meta.textContent = [
-                pageletT(`pagelet.panel.recall.relation.${candidate.relation}`, this.getLocale()),
-                candidate.sourceRefs[0]?.path,
-            ].filter(Boolean).join(" · ");
-            card.appendChild(meta);
-
-            section.appendChild(card);
-        }
-
         return section;
     }
 

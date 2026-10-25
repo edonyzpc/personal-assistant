@@ -87,7 +87,6 @@ const makeRuntimeHost = (overrides: {
             chatModelName: "deepseek-v4-pro",
             policyModelName: overrides.policyModelName ?? "",
             embeddingModelName: "text-embedding-v4",
-            shareAnonymousCapabilityUsage: false,
             skillContextEnabled: false,
             enabledSkillIds: [],
             qwenThinkingEnabled: false,

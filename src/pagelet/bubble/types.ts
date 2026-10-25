@@ -7,7 +7,7 @@ import type { DeliveryReceipt } from "../attention/types";
  * Pagelet — Bubble component types.
  *
  * The Bubble is a lightweight speech bubble that appears near the Pet
- * character, showing quick review findings and action buttons.
+ * character, showing findings and action buttons.
  */
 
 /** Bubble visibility state */
@@ -16,8 +16,6 @@ export type BubbleState = "hidden" | "visible";
 /** Content type determines which scenario's content to render */
 export type BubbleContentType =
     | "review-delivery"
-    | "recall-delivery"
-    | "recap-delivery"
     | "pattern-delivery"
     | "bridge-hint"
     | "needs-setup"
@@ -25,9 +23,6 @@ export type BubbleContentType =
     | "ready-empty"
     | "intentionally-quiet"
     | "context-limited"
-    | "quick-review"
-    | "writing-assist"
-    | "discovery"
     | "nudge"
     | "empty";
 
@@ -78,15 +73,6 @@ export interface BubbleContextAction {
     callback: () => void;
 }
 
-export interface BubbleCard {
-    id: string;
-    findings: BubbleFinding[];
-    actions: BubbleAction[];
-    inlineHint?: InlineContextHint;
-    /** Receipt for this card only; hidden stack cards must not be submitted. */
-    deliveryReceipt?: DeliveryReceipt;
-}
-
 /** A single finding item displayed in the Bubble */
 export interface BubbleFinding {
     text: string;
@@ -100,9 +86,8 @@ export interface BubbleContent {
     findings: BubbleFinding[];
     actions: BubbleAction[];
     inlineHint?: InlineContextHint;
-    /** Receipt for non-stack content; stack cards carry their own receipt. */
+    /** Receipt for the content actually visible in this Bubble. */
     deliveryReceipt?: DeliveryReceipt;
-    cards?: BubbleCard[];
     contextAction?: BubbleContextAction;
 }
 
@@ -142,7 +127,7 @@ export interface BubbleViewOptions {
     getLocale?: () => PageletLocale;
     /** Single lifecycle seam invoked once whenever a visible Bubble closes. */
     onClose?: () => void;
-    /** Commit only the currently visible content/card delivery receipt. */
+    /** Commit only the currently visible content delivery receipt. */
     onDeliveryVisible?: (receipt: DeliveryReceipt) => void;
     /**
      * F-09: Return the active Markdown leaf's content bounds for desktop

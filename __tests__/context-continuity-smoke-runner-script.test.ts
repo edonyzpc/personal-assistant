@@ -258,7 +258,7 @@ describe('context continuity synthetic runner', () => {
             aiProvider: 'custom', chatModelName: 'synthetic-model', baseURL: 'https://private-endpoint.invalid/v1',
             policyModelName: '',
             memoryEnabled: true, webSearchEnabled: false,
-            operationsAuditRetentionDays: 30, licenseTier: 'paid', shareAnonymousCapabilityUsage: false,
+            operationsAuditRetentionDays: 30, licenseTier: 'paid',
         };
         const host: any = {
             settings, log: () => undefined, isOperationsAgentEnabled: true,

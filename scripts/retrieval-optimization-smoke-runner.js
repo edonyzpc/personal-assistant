@@ -878,7 +878,7 @@
   // runtime bookkeeping while the feature is disabled, but becomes measured
   // ranking input and is therefore frozen whenever enabled=true.
   const RETRIEVAL_EXECUTION_SETTING_KEYS = Object.freeze([
-    "debug", "shareAnonymousCapabilityUsage",
+    "debug",
     "aiProvider", "aiProviderPreset", "baseURL",
     "chatModelName", "policyModelName", "embeddingModelName",
     "statisticsVaultId",

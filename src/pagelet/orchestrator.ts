@@ -116,7 +116,6 @@ export class PageletOrchestrator {
     private currentPanelLayout: PanelLayoutType | null = null;
     private preservePanelSessionOnClose = false;
     private readonly handleEscape: (e: KeyboardEvent) => void;
-    private readonly handleQuietRecallShortcut: (e: KeyboardEvent) => void;
     private readonly proactiveHints: ProactiveHints;
     private readonly researchManager: ResearchManager;
     private escapeListenerDocument: Document | null = null;
@@ -158,7 +157,6 @@ export class PageletOrchestrator {
     get hasActiveOnboardingNudge(): boolean { return this.onboardingNudge !== null; }
     private patternDetectionNudge: PatternDetectionResult | null = null;
     private patternDetectionNudgeAdmissionKey: string | null = null;
-    private lastQuietRecallCtrlKeydownAt = 0;
     private foregroundRouteToken = 0;
     private backgroundDiscoveryEnabled: boolean;
     private backgroundDiscoveryEpoch = 0;
@@ -172,7 +170,6 @@ export class PageletOrchestrator {
     private static readonly IDLE_TIMEOUT_MS = 10 * 60 * 1000;
     /** 5 s debounce for note-activity detection (vault modify events). */
     private static readonly ACTIVITY_DEBOUNCE_MS = 5_000;
-    private static readonly QUIET_RECALL_DOUBLE_CTRL_MS = 300;
 
     constructor(private readonly host: PageletHost) {
         const s = host.settings.pagelet;
@@ -223,9 +220,6 @@ export class PageletOrchestrator {
             ),
             onNudgePresented: (ticket) => this.handleNudgePresented(ticket),
             isDeliverySeen: (receipt) => this.attentionStore.isSeen(receipt),
-            isExplanationAcknowledged: (kind, copyVersion) => (
-                this.attentionStore.isExplanationAcknowledged(kind, copyVersion)
-            ),
             onExplanationVisible: (kind, copyVersion) => {
                 this.attentionStore.acknowledgeExplanation(kind, copyVersion);
             },
@@ -256,18 +250,6 @@ export class PageletOrchestrator {
                 this.panelView.close();
                 return;
             }
-        };
-        this.handleQuietRecallShortcut = (e: KeyboardEvent) => {
-            if (e.key !== "Control" || e.repeat || e.metaKey || e.altKey || e.shiftKey) return;
-            if (this.host.settings.focusMode || !this.host.settings.pagelet.enabled) return;
-            const now = Date.now();
-            if (now - this.lastQuietRecallCtrlKeydownAt <= PageletOrchestrator.QUIET_RECALL_DOUBLE_CTRL_MS) {
-                this.lastQuietRecallCtrlKeydownAt = 0;
-                e.preventDefault();
-                void this.runExplicitDeepDiscover();
-                return;
-            }
-            this.lastQuietRecallCtrlKeydownAt = now;
         };
     }
 
@@ -342,7 +324,6 @@ export class PageletOrchestrator {
         // 1c. Escape handler (Panel > Bubble priority)
         this.escapeListenerDocument = getPlatformDocument();
         this.escapeListenerDocument.addEventListener("keydown", this.handleEscape, true);
-        this.escapeListenerDocument.addEventListener("keydown", this.handleQuietRecallShortcut, true);
 
         // 2. Workspace event: re-mount Pet when the active leaf changes
         this.host.registerEvent(
@@ -426,7 +407,6 @@ export class PageletOrchestrator {
         for (const timer of this.activeForegroundTimers) clearTimeout(timer);
         this.activeForegroundTimers.clear();
         this.escapeListenerDocument?.removeEventListener("keydown", this.handleEscape, true);
-        this.escapeListenerDocument?.removeEventListener("keydown", this.handleQuietRecallShortcut, true);
         this.escapeListenerDocument = null;
         this.host.cancelDeepDiscover?.();
         this.unsubscribeReadingActivity?.();
@@ -2358,53 +2338,9 @@ export class PageletOrchestrator {
         }
     }
 
-    /**
-     * F-07 / SG-01: simplified to check quietRecallMode === "on".
-     * Quality gate, quiet hours, Focus Mode, per-candidate-once remain.
-     */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /**
-     * F-05 / SG-02: View opens Tab with existing candidates. Does NOT re-run provider.
-     */
-
-
-
-
-
-
-    /**
-     * F-05 / SG-04: Later = enter Review Queue instead of 24h snooze.
-     */
-
-
     /** Expand Bubble -> Panel. */
     private handleExpandPanel(type?: string): void {
         const requestedType = type === "writing" ? "current" : type;
-        if (requestedType === "prepared") {
-            // The generic preparation cache is retired; keep the stable Bubble
-            // action honest instead of opening an empty result panel.
-            new Notice(this.t("pagelet.preload.status.noCachedFindings"), 4000);
-            return;
-        }
 
         this.bubbleView?.close();
         const isKnownLayout = requestedType === "review"
@@ -2444,8 +2380,7 @@ export class PageletOrchestrator {
             || Boolean(tabExtra?.savedInsights && tabExtra.savedInsights.items.length > 0)
             || Boolean(tabExtra?.memoryGovernance && (tabExtra.memoryGovernance.records.length > 0 || (tabExtra.memoryGovernance.candidates?.length ?? 0) > 0 || (tabExtra.memoryGovernance.routedItems?.length ?? 0) > 0))
             || Boolean(tabExtra?.maintenanceReview)
-            || Boolean(tabExtra?.graphDiscovery)
-            || Boolean(tabExtra?.quietRecall);
+            || Boolean(tabExtra?.graphDiscovery);
         const findings = hasPanelContent ? panelFindings : [];
         const detailExtra = this.detailExtraForTab(tabExtra);
         const payload: PageletDetailPayload = {
@@ -2593,10 +2528,7 @@ export class PageletOrchestrator {
         if (extra.patternDetection) {
             detailExtra.patternDetection = extra.patternDetection;
         }
-        if (extra.quietRecall) {
-            detailExtra.quietRecall = extra.quietRecall;
-        }
-        return detailExtra.connections || detailExtra.markdown !== undefined || detailExtra.contextPager || detailExtra.savedInsights || detailExtra.memoryGovernance || detailExtra.maintenanceReview || detailExtra.graphDiscovery || detailExtra.patternDetection || detailExtra.quietRecall
+        return detailExtra.connections || detailExtra.markdown !== undefined || detailExtra.contextPager || detailExtra.savedInsights || detailExtra.memoryGovernance || detailExtra.maintenanceReview || detailExtra.graphDiscovery || detailExtra.patternDetection
             ? detailExtra
             : undefined;
     }

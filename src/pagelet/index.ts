@@ -178,15 +178,9 @@ export {
 export { PetView, PetStateMachine, updatePetSvgState } from "./pet";
 export type { PetState, PetTaskKind, PetCorner, PetEvent, PetCallbacks, PetRenderer, PetRendererOptions, PetStateListener } from "./pet";
 
-export { BubbleView, buildQuickReviewContent, buildWritingAssistContent, buildDiscoveryContent, buildNudgeContent, buildEmptyContent, buildIntentionallyQuietContent, buildPreparedRecapDeliveryContent, buildRecallDeliveryContent, buildRecallDeliveryStackContent } from "./bubble";
-export type { BubbleState, BubbleContentType, BubbleFinding, BubbleContent, BubbleAction, BubbleCard, BubbleCallbacks, BubbleQuickAccessCallbacks, BubbleStateCallbacks, BubbleViewOptions, BubbleExplanationState, DeliveryCandidate, DeliveryCandidateKind, DeliveryCandidateRoute, DeliveryCandidateSourceRef, DeliveryCandidateStaleStatus, InlineContextHint } from "./bubble";
+export { BubbleView, buildIntentionallyQuietContent } from "./bubble";
+export type { BubbleState, BubbleContentType, BubbleFinding, BubbleContent, BubbleAction, BubbleCallbacks, BubbleQuickAccessCallbacks, BubbleStateCallbacks, BubbleViewOptions, BubbleExplanationState, DeliveryCandidate, DeliveryCandidateKind, DeliveryCandidateRoute, DeliveryCandidateSourceRef, DeliveryCandidateStaleStatus, InlineContextHint } from "./bubble";
 
-export {
-    PreloadBudget,
-    InMemoryPreloadBudgetStorage,
-    LocalStoragePreloadBudgetStorage,
-} from "./preload";
-export type { PreloadFinding, PreloadResult, PreloadConfig, AnalyzeCallback } from "./preload";
 
 export {
     ScopeResolver,
@@ -220,7 +214,6 @@ export { PageletOrchestrator } from "./orchestrator";
 export type { PageletHost } from "./PageletHost";
 
 export {
-    buildPreloadPrompt,
     buildDiscoveryPrompt,
     parseStructuredResponse,
 } from "./llm";

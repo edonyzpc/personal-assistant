@@ -156,7 +156,7 @@
       ...original,
       settings: { ...original.settings, memoryEnabled: false,
         policyModelName: "", webSearchEnabled: false,
-        operationsProactiveSaveSuggestionsEnabled: false, shareAnonymousCapabilityUsage: false, debug: false },
+        operationsProactiveSaveSuggestionsEnabled: false, debug: false },
       app: {
         workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
         vault: { getName: () => "test", getMarkdownFiles: () => [], getFiles: () => [], getAbstractFileByPath: () => null,

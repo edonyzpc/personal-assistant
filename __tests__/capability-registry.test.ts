@@ -343,49 +343,6 @@ describe("CapabilityAdapter source mapping", () => {
     });
 });
 
-describe("Capability telemetry hook", () => {
-    it("does not emit events when telemetry is disabled", async () => {
-        const onCapabilityEvent = jest.fn();
-        const registry = new CapabilityRegistry({ telemetryEnabled: false, onCapabilityEvent });
-        registry.register(createCapabilityFromChatToolDefinition(
-            toRegistryDefinition(createTestChatToolDefinition({ name: "search_vault_metadata" })),
-            {
-                providerId: "test-provider",
-                execute: async () => createOkToolResult("search_vault_metadata"),
-            },
-        ));
-
-        await registry.execute("search_vault_metadata", {}, { host: createPlugin() });
-
-        expect(onCapabilityEvent).not.toHaveBeenCalled();
-    });
-
-    it("emits one content-free local event when telemetry is enabled", async () => {
-        const onCapabilityEvent = jest.fn();
-        const registry = new CapabilityRegistry({ telemetryEnabled: true, onCapabilityEvent });
-        registry.register(createCapabilityFromChatToolDefinition(
-            toRegistryDefinition(createTestChatToolDefinition({ name: "search_vault_metadata" })),
-            {
-                providerId: "test-provider",
-                execute: async () => createOkToolResult("search_vault_metadata"),
-            },
-        ));
-
-        await registry.execute("search_vault_metadata", { query: "PRIVATE_PROMPT_SENTINEL" }, { host: createPlugin() });
-
-        expect(onCapabilityEvent).toHaveBeenCalledTimes(1);
-        expect(onCapabilityEvent).toHaveBeenCalledWith({
-            capabilityName: "search_vault_metadata",
-            providerId: "test-provider",
-            status: "invoked",
-            durationMs: expect.any(Number),
-        });
-        expect(Object.keys(onCapabilityEvent.mock.calls[0][0] as Record<string, unknown>).join(" ")).not.toMatch(/note|prompt|content|path/i);
-        expect(JSON.stringify(onCapabilityEvent.mock.calls[0][0])).not.toContain("PRIVATE_PROMPT_SENTINEL");
-    });
-
-});
-
 function createCoreCapabilities(): AgentCapability[] {
     return createCoreToolCapabilities([
         createSearchMemoryTool(executeMemorySearch),

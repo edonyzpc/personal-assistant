@@ -346,7 +346,7 @@ describe("Obsidian Resource SDK runtime", () => {
             renameFile: rename, isOperationsAgentEnabled: () => true, isPathAllowed: () => !denied });
         const session = service.createSession({ surface: "test" });
         const host = { settings: { debug: false, aiProvider: "qwen", baseURL: "https://example.invalid", chatModelName: "test-model",
-            policyModelName: "", embeddingModelName: "", shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false,
+            policyModelName: "", embeddingModelName: "", qwenThinkingEnabled: false,
             webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid" },
             app: { vault, workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
                 metadataCache: { getFileCache: () => null, getCache: () => null } },
@@ -461,7 +461,7 @@ describe("Obsidian Resource SDK runtime", () => {
         const read = async () => { if (++reads <= limit) await firstRead; return "A"; };
         const file = { path: "notes/a.md", extension: "md", stat: { mtime: 0, size: 1 } };
         const host = { settings: { debug: false, aiProvider: "qwen", baseURL: "https://example.invalid", chatModelName: "test-model",
-            policyModelName: "", embeddingModelName: "", shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false,
+            policyModelName: "", embeddingModelName: "", qwenThinkingEnabled: false,
             webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid" },
             app: { workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
                 vault: { getMarkdownFiles: () => [file], getAbstractFileByPath: (path: string) => path === file.path ? file : null,
@@ -547,7 +547,7 @@ describe("Obsidian Resource SDK runtime", () => {
             epoch++;
         });
         const host = { settings: { debug: false, aiProvider: "qwen", baseURL: "https://example.invalid", chatModelName: "test-model",
-            policyModelName: "", embeddingModelName: "", shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false,
+            policyModelName: "", embeddingModelName: "", qwenThinkingEnabled: false,
             webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid" },
             app: { vault, workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
                 metadataCache: { getFileCache: () => null, getCache: () => null } },
@@ -661,7 +661,7 @@ describe("Obsidian Resource SDK runtime", () => {
             cachedRead: async (file: FileLike) => file.content ?? "", readBinary, create, createFolder,
             adapter: { exists: async (path: string) => files.has(path) } };
         const host = { settings: { debug: false, aiProvider: "qwen", baseURL: "https://example.invalid", chatModelName: "test-model",
-            policyModelName: "", embeddingModelName: "", shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false,
+            policyModelName: "", embeddingModelName: "", qwenThinkingEnabled: false,
             webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid" },
             app: { vault, workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [],
                 getLeaf: () => openedLeaf, iterateAllLeaves: (visit: (leaf: unknown) => void) => visit(openedLeaf) },
@@ -760,7 +760,7 @@ describe("Obsidian Resource SDK runtime", () => {
             read: async (target: FileLike) => target.content ?? "", cachedRead: async (target: FileLike) => target.content ?? "",
             readBinary, create, adapter: { exists: async (path: string) => files.has(path) } };
         const host = { settings: { debug: false, aiProvider: "qwen", baseURL: "https://example.invalid", chatModelName: "test-model",
-            policyModelName: "", embeddingModelName: "", shareAnonymousCapabilityUsage: false, qwenThinkingEnabled: false,
+            policyModelName: "", embeddingModelName: "", qwenThinkingEnabled: false,
             webSearchEnabled: true, memoryEnabled: false, licenseTier: "paid" },
             app: { vault, workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
                 metadataCache: { getFileCache: () => null, getCache: () => null } },
@@ -1848,7 +1848,6 @@ describe("Obsidian Resource SDK runtime", () => {
                 chatModelName: "test-model",
                 policyModelName: "",
                 embeddingModelName: "",
-                shareAnonymousCapabilityUsage: false,
                 qwenThinkingEnabled: false,
                 webSearchEnabled: true,
                 memoryEnabled: false,

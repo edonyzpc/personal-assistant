@@ -3,8 +3,6 @@ import { TFile } from "obsidian";
 import { PluginManager } from "../../src/plugin";
 import { SourceAccess } from "../../src/plugin/source-access";
 import { VaultEventBridge } from "../../src/plugin/vault-event-bridge";
-import { QuietRecallPluginIntegration } from "../../src/pagelet/plugin-quiet-recall";
-import { ScopeRecapPluginIntegration } from "../../src/pagelet/plugin-scope-recap";
 import { DeepDiscoverPluginIntegration } from "../../src/pagelet/plugin-deep-discover";
 import { RetainedReviewPluginIntegration } from "../../src/pagelet/plugin-review-actions";
 import { PageletFeatureIntegration } from "../../src/pagelet/plugin-integration";
@@ -271,83 +269,6 @@ export function createPluginHarness(options: PluginHarnessOptions = {}): PluginH
         isRecentPageletSelfWrite: (path) => plugin.pageletRuntime?.isRecentSelfWrite(path) === true,
         scheduleMemoryStatus: () => plugin.memoryStatusNotifier.schedule(),
     });
-    plugin.quietRecallIntegration = new QuietRecallPluginIntegration({
-        app: {
-            get workspace() { return plugin.app.workspace; },
-            get vault() { return plugin.app.vault; },
-            get metadataCache() { return plugin.app.metadataCache; },
-        },
-        source: plugin.sourceAccess,
-        getSettings: () => ({
-            provider: plugin.settings.aiProvider,
-            providerPreset: plugin.settings.aiProviderPreset ?? null,
-            model: plugin.settings.chatModelName,
-            embeddingModel: plugin.settings.embeddingModelName,
-            endpoint: plugin.settings.baseURL,
-            quietRecall: plugin.settings.quietRecall,
-            pagelet: plugin.settings.pagelet,
-            retrievalHabitProfile: plugin.settings.retrievalHabitProfile,
-            savedInsights: plugin.settings.savedInsights.items,
-        }),
-        getLocale: () => plugin.getPageletLocale(),
-        getDataBoundaryFingerprint: () => plugin.getMemoryDataBoundaryFingerprint(),
-        isRuntimeCurrent: () => !plugin.unloading,
-        isMemorySearchReady: () => plugin.isPageletMemorySearchReady(),
-        findRelatedNotes: (activePath, contents, excludedPaths, options) => plugin.findPageletRelatedNotes(
-            activePath,
-            contents,
-            excludedPaths,
-            options,
-        ),
-        getGraphDiscoveryBacklinkMap: () => plugin.buildGraphDiscoveryBacklinkMap(),
-        getResolvedOutgoingLinks: (path) => plugin.getResolvedOutgoingLinks(path),
-        getGraphDiscoveryLinks: (file) => plugin.getGraphDiscoveryLinks(file),
-        createRateLimitStorage: () => plugin.createPageletRateLimitStorage(
-            "quiet-recall",
-            plugin.pageletVaultStorageScope(),
-        ),
-        getVaultStorageScope: () => plugin.pageletVaultStorageScope(),
-        getRateLimitStorageKey: (scope) => plugin.pageletRateLimitStorageKey("quiet-recall", scope),
-        listSavedInsights: () => plugin.listSavedInsights(),
-        createSavedInsight: (input) => plugin.getSavedInsightStore().create(input),
-        confirmLink: (input) => confirmUserAction(plugin.app, input),
-        addRelatedLink: (currentPath, candidatePath) => addPaRelatedLink(
-            plugin.app,
-            currentPath,
-            candidatePath,
-        ),
-        recordFeedback: (candidate, feedback) => plugin.getRetrievalHabitProfileStore()
-            .recordRecallFeedback(candidate, feedback),
-        log: (message, detail) => plugin.log(message, detail),
-    });
-    plugin.scopeRecapIntegration = new ScopeRecapPluginIntegration({
-        app: {
-            get workspace() { return plugin.app.workspace; },
-            get vault() { return plugin.app.vault; },
-        },
-        source: plugin.sourceAccess,
-        getSettings: () => ({
-            provider: plugin.settings.aiProvider,
-            providerPreset: plugin.settings.aiProviderPreset ?? null,
-            model: plugin.settings.chatModelName,
-            embeddingModel: plugin.settings.embeddingModelName,
-            endpoint: plugin.settings.baseURL,
-            pagelet: plugin.settings.pagelet,
-            mergedPagelet: plugin.sourceAccess.getPageletSettingsWithDataBoundary(),
-        }),
-        getDataBoundaryFingerprint: () => plugin.getMemoryDataBoundaryFingerprint(),
-        isRuntimeCurrent: () => !plugin.unloading,
-        getProviderCallAdmission: () => plugin.getPageletProviderCallAdmission(),
-        getCostTracker: () => plugin.pageletCostTracker,
-        createRateLimitStorage: () => plugin.createPageletRateLimitStorage(
-            "scope-recap",
-            plugin.pageletVaultStorageScope(),
-        ),
-        getVaultStorageScope: () => plugin.pageletVaultStorageScope(),
-        getRateLimitStorageKey: (scope) => plugin.pageletRateLimitStorageKey("scope-recap", scope),
-        createModel: (temperature, options) => plugin.createChatModel(temperature, options),
-        log: (message, detail) => plugin.log(message, detail),
-    });
     plugin.deepDiscoverIntegration = new DeepDiscoverPluginIntegration({
         app: {
             get vault() { return plugin.app.vault; },
@@ -429,7 +350,6 @@ export function createPluginHarness(options: PluginHarnessOptions = {}): PluginH
         releaseFeatureScope: (expectedScope) => plugin.releasePageletFeatureScope(expectedScope),
         isFeatureScopeCurrent: (scope) => plugin.isPageletFeatureScopeCurrent(scope),
         syncDeepDiscoverIdentity: () => plugin.syncPageletDeepDiscoverControllerIdentity(),
-        syncQuietRecallPolicy: () => plugin.quietRecallIntegration.syncPolicyIdentity(),
         registerCommandsOnce: () => plugin.registerPageletCommandsOnce(),
         registerFocusCommandOnce: () => plugin.registerPageletFocusCommandOnce(),
         createOrchestrator: (featureScope) => new PageletOrchestrator(
@@ -438,8 +358,6 @@ export function createPluginHarness(options: PluginHarnessOptions = {}): PluginH
         stopDeepDiscover: () => plugin.deepDiscoverIntegration.resetForFeatureDisable(),
         disposeDeepDiscoverFeatureResources: () => plugin.deepDiscoverIntegration.disposeFeature(),
         invalidateRetainedReviewLimiter: () => plugin.retainedReviewIntegration.invalidateLimiter(),
-        disposeScopeRecap: () => plugin.scopeRecapIntegration.dispose(),
-        disposeQuietRecall: () => plugin.quietRecallIntegration.dispose(),
         createRuntime: () => null,
         log: (message, detail) => plugin.log(message, detail),
     });

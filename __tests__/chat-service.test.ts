@@ -310,7 +310,6 @@ function createPlugin(overrides: {
             statisticsVaultId: 'test-vault',
             ...(overrides.skillContextEnabled === undefined ? {} : { skillContextEnabled: overrides.skillContextEnabled }),
             ...(overrides.enabledSkillIds === undefined ? {} : { enabledSkillIds: overrides.enabledSkillIds }),
-            shareAnonymousCapabilityUsage: false,
         },
         app: {
             workspace: {

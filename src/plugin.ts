@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { type Command, type MarkdownFileInfo, type TAbstractFile, Component, Editor, ItemView, MarkdownRenderer, MarkdownView, type Menu, Modal, Notice, Platform, Plugin, TFile, type View, type WorkspaceLeaf, addIcon, apiVersion, debounce, moment as obsidianMoment, normalizePath, setIcon } from 'obsidian';
+import { type Command, type MarkdownFileInfo, type TAbstractFile, Component, Editor, ItemView, MarkdownRenderer, MarkdownView, type Menu, Modal, Notice, Platform, Plugin, TFile, type View, type WorkspaceLeaf, addIcon, apiVersion, debounce, normalizePath, setIcon } from 'obsidian';
 import { getApi } from "obsidian-callout-manager";
 
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
@@ -38,8 +38,6 @@ import {
 } from "./ai-services/operations";
 import { createObsidianNoteImageHost } from "./ai-services/operations/obsidian-note-image-host";
 import { VSS } from './vss'
-import { PluginControlModal } from './modal'
-import { BatchPluginControlModal } from './batch-modal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeConfirmedMemoryCount, isMemoryExtractionConsentConfirmed } from './settings'
 import { LocalGraph } from './local-graph';
 import { GraphOptionsModal, type GraphOptions } from './settings/graph-options-modal';
@@ -52,8 +50,6 @@ import type { GhostPublishingConfiguration } from './ghost-publishing/configurat
 import { prepareGhostMetadata } from './ai-services/ghost-metadata';
 import { openSettings, openSettingsTab } from './obsidian-internals';
 import { icons } from './utils';
-import { PluginsUpdater } from './plugin-manifest';
-import { ThemeUpdater } from './theme-manifest';
 import { CalloutModal } from './callout';
 import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
 import { registerObsidianCommands, registerObsidianViews } from './plugin/obsidian-registration';
@@ -62,7 +58,6 @@ import { MetadataUpdater } from './plugin/metadata-updater';
 import { CalloutIntegration } from './plugin/callout-integration';
 import { MemoryStatusNotifier } from './plugin/memory-status';
 import { LocalGraphIntegration } from './plugin/local-graph-integration';
-import { createPluginUpdaterAction, createThemeUpdaterAction } from './plugin/update-actions';
 import { AIActions } from './plugin/ai-actions';
 import { SettingsPersistence, type SettingsPermissionPatch } from './plugin/settings-persistence';
 import {
@@ -139,11 +134,7 @@ import {
 } from './platform-dom';
 import type { PageletSettings } from './settings/pagelet';
 import { PageletOrchestrator, type PageletHost } from './pagelet/orchestrator';
-import {
-    QuietRecallPluginIntegration,
-    type QuietRecallSavedInsightCollection,
-} from './pagelet/plugin-quiet-recall';
-import { ScopeRecapPluginIntegration } from './pagelet/plugin-scope-recap';
+import { getPageletProviderInfo, getPageletProviderAuthorizationContextId } from './pagelet/provider-context';
 import { DeepDiscoverPluginIntegration } from './pagelet/plugin-deep-discover';
 import { RetainedReviewPluginIntegration } from './pagelet/plugin-review-actions';
 import { PageletActionPluginIntegration } from './pagelet/plugin-pagelet-actions';
@@ -243,7 +234,6 @@ import {
     ActiveVaultIndexer,
     CallbackMemoryGovernanceRecordRepository,
     MemoryGovernanceStore,
-    RetrievalHabitProfileStore,
     ReviewQueueStore,
     SavedInsightStore,
     type ConfirmedMemoryRecord,
@@ -256,10 +246,6 @@ import {
     type MemoryGovernanceRecordRepository,
     type PatternDetectionInput,
     type PatternDetectionResult,
-    type QuietRecallCandidate,
-    type QuietRecallSaveResult,
-    type RetrievalHabitFeedbackKind,
-    type RetrievalHabitProfileRecordResult,
     type ReviewQueueCreateInput,
     type ReviewQueueItem,
     type ReviewQueueListFilter,
@@ -267,10 +253,6 @@ import {
     type ReviewQueueRepository,
     type ReviewQueueStatus,
     type SavedInsight,
-    type ScopeRecapLocalOverview,
-    type ScopeRecapPreparationResult,
-    type ScopeRecapSourceNote,
-    addPaRelatedLink,
     resolveOutputLanguage,
     canAutoConfirmMemoryCandidate,
     detectCrossNotePatterns,
@@ -498,7 +480,6 @@ const debug = (enabled: boolean, ...msg: unknown[]) => {
     if (enabled) console.log(...msg.map((item: unknown) => redactForLog(item)));
 };
 
-const moment = obsidianMoment as unknown as (...args: unknown[]) => { format: (format: string) => string };
 
 function collectStringValues(value: unknown, output: Set<string>): void {
     if (Array.isArray(value)) {
@@ -986,11 +967,7 @@ export class PluginManager extends Plugin {
     private set backgroundDiscoveryPersistenceUncertain(value: boolean) {
         this.settingsPersistence.setBackgroundDiscoveryPersistenceUncertainForCompatibility(value);
     }
-    private readonly recordActions = new RecordActions({
-        app: this.app,
-        getSettings: () => this.settings,
-        log: (message, ...args) => this.log(message, ...args),
-    });
+    private readonly recordActions = new RecordActions({ app: this.app });
     private readonly metadataUpdater = new MetadataUpdater({
         workspace: this.app.workspace,
         metadataCache: this.app.metadataCache,
@@ -1067,7 +1044,6 @@ export class PluginManager extends Plugin {
         releaseFeatureScope: (expectedScope) => this.releasePageletFeatureScope(expectedScope),
         isFeatureScopeCurrent: (scope) => this.isPageletFeatureScopeCurrent(scope),
         syncDeepDiscoverIdentity: () => this.syncPageletDeepDiscoverControllerIdentity(),
-        syncQuietRecallPolicy: () => this.quietRecallIntegration.syncPolicyIdentity(),
         registerCommandsOnce: () => this.registerPageletCommandsOnce(),
         registerFocusCommandOnce: () => this.registerPageletFocusCommandOnce(),
         createOrchestrator: (featureScope) => new PageletOrchestrator(
@@ -1076,8 +1052,6 @@ export class PluginManager extends Plugin {
         stopDeepDiscover: () => this.deepDiscoverIntegration.resetForFeatureDisable(),
         disposeDeepDiscoverFeatureResources: () => this.deepDiscoverIntegration.disposeFeature(),
         invalidateRetainedReviewLimiter: () => this.retainedReviewIntegration.invalidateLimiter(),
-        disposeScopeRecap: () => this.scopeRecapIntegration.dispose(),
-        disposeQuietRecall: () => this.quietRecallIntegration.dispose(),
         createRuntime: () => {
             if (!this.settings.pagelet?.enabled) return null;
             if (!this.pageletIntegration.currentOrchestrator) return null;
@@ -1395,82 +1369,6 @@ export class PluginManager extends Plugin {
         },
         log: (message, detail) => this.log(message, detail),
     });
-    private readonly quietRecallIntegration = new QuietRecallPluginIntegration({
-        app: this.app,
-        source: this.sourceAccess,
-        getSettings: () => ({
-            provider: this.settings.aiProvider,
-            providerPreset: this.settings.aiProviderPreset ?? null,
-            model: this.settings.chatModelName,
-            embeddingModel: this.settings.embeddingModelName,
-            endpoint: this.settings.baseURL ?? "",
-            quietRecall: this.settings.quietRecall,
-            pagelet: this.settings.pagelet,
-            retrievalHabitProfile: this.settings.retrievalHabitProfile,
-            savedInsights: this.settings.savedInsights?.items ?? [],
-        }),
-        getLocale: () => this.getPageletLocale(),
-        getDataBoundaryFingerprint: () => this.getMemoryDataBoundaryFingerprint(),
-        isRuntimeCurrent: () => !this.unloading,
-        isMemorySearchReady: () => this.isPageletMemorySearchReady(),
-        findRelatedNotes: (activePath, contents, excludedPaths, options) => this.findPageletRelatedNotes(
-            activePath,
-            contents,
-            excludedPaths,
-            options,
-        ),
-        getGraphDiscoveryBacklinkMap: () => this.buildGraphDiscoveryBacklinkMap(),
-        getResolvedOutgoingLinks: (path) => this.getResolvedOutgoingLinks(path),
-        getGraphDiscoveryLinks: (file) => this.getGraphDiscoveryLinks(file),
-        createRateLimitStorage: () => this.createPageletRateLimitStorage(
-            "quiet-recall",
-            this.pageletVaultStorageScope(),
-        ),
-        getVaultStorageScope: () => this.pageletVaultStorageScope(),
-        getRateLimitStorageKey: (vaultStorageScope) => this.pageletRateLimitStorageKey(
-            "quiet-recall",
-            vaultStorageScope,
-        ),
-        listSavedInsights: () => this.listSavedInsights(),
-        createSavedInsight: (input) => this.getSavedInsightStore().create(input),
-        confirmLink: async (input) => confirmUserAction(this.app, input),
-        addRelatedLink: (currentPath, candidatePath) => addPaRelatedLink(
-            this.app,
-            currentPath,
-            candidatePath,
-        ),
-        recordFeedback: (candidate, feedback) => this.getRetrievalHabitProfileStore()
-            .recordRecallFeedback(candidate, feedback),
-        log: (message, detail) => this.log(message, detail),
-    });
-    private readonly scopeRecapIntegration = new ScopeRecapPluginIntegration({
-        app: this.app,
-        source: this.sourceAccess,
-        getSettings: () => ({
-            provider: this.settings.aiProvider,
-            providerPreset: this.settings.aiProviderPreset ?? null,
-            model: this.settings.chatModelName,
-            embeddingModel: this.settings.embeddingModelName,
-            endpoint: this.settings.baseURL ?? "",
-            pagelet: this.settings.pagelet,
-            mergedPagelet: this.getPageletSettingsWithDataBoundary(),
-        }),
-        getDataBoundaryFingerprint: () => this.getMemoryDataBoundaryFingerprint(),
-        isRuntimeCurrent: () => !this.unloading,
-        getProviderCallAdmission: () => this.getPageletProviderCallAdmission(),
-        getCostTracker: () => this.pageletCostTracker,
-        createRateLimitStorage: () => this.createPageletRateLimitStorage(
-            "scope-recap",
-            this.pageletVaultStorageScope(),
-        ),
-        getVaultStorageScope: () => this.pageletVaultStorageScope(),
-        getRateLimitStorageKey: (vaultStorageScope) => this.pageletRateLimitStorageKey(
-            "scope-recap",
-            vaultStorageScope,
-        ),
-        createModel: (temperature, options) => this.createChatModel(temperature, options),
-        log: (message, detail) => this.log(message, detail),
-    });
     private readonly vaultEventBridge = new VaultEventBridge({
         registerEvent: (eventRef) => this.registerEvent(eventRef),
         onMetadataEvent: (event, callback) => event === "resolved"
@@ -1502,10 +1400,6 @@ export class PluginManager extends Plugin {
         clearTimer: clearPlatformTimeout,
         log: (message, ...args) => this.log(message, ...args),
     });
-    private readonly updateActions = {
-        updatePlugins: createPluginUpdaterAction(() => new PluginsUpdater(this.app, this)),
-        updateThemes: createThemeUpdaterAction(() => ThemeUpdater.init(this.app, this)),
-    };
     private readonly aiActions = new AIActions({
         ensureAIConfigured: () => this.ensureAIConfigured(),
         getImageGenerationConnection: () => this.getImageGenerationConnection(),
@@ -1868,7 +1762,6 @@ export class PluginManager extends Plugin {
     private set currentLocalMemoryAutoAcceptPaused(value: boolean | null) {
         this.governanceStorage.autoAcceptPaused = value;
     }
-    private retrievalHabitProfileStore: RetrievalHabitProfileStore | null = null;
     private loadedPluginBuildIdentityPromise: Promise<{
         schemaVersion: 1;
         pluginId: string;
@@ -2061,15 +1954,10 @@ export class PluginManager extends Plugin {
 
         // This creates an icon in the left ribbon.
         addIcon(PA_CHAT_SUBAGENT_ICON, icons[PA_CHAT_SUBAGENT_ICON]);
-        addIcon('PluginAST', icons['PluginAST']);
         const ribbonIconEl = this.addRibbonIcon(PA_CHAT_SUBAGENT_ICON, this.t("plugin.ribbon.openChatControls"), () => {
             void this.activeChatView();
         });
         ribbonIconEl.addClass('plugin-manager-ribbon-class');
-        ribbonIconEl.addEventListener('contextmenu', (evt: MouseEvent) => {
-            evt.preventDefault();
-            new PluginControlModal(this.app).open();
-        });
 
         if (Platform.isDesktop) {
             // This adds a status bar item to the bottom of the app.
@@ -2139,8 +2027,6 @@ export class PluginManager extends Plugin {
                     (item) => this.confirmMemoryCandidateFromQueueItem(item),
                     (item) => this.dismissMemoryCandidateFromQueueItem(item),
                     (record) => this.forgetConfirmedMemory(record),
-                    (candidate) => this.saveQuietRecallAsInsight(candidate),
-                    (candidate) => this.linkQuietRecallCandidateFromActiveNote(candidate),
                     {
                         onCorrect: (record, summary) => this.runPageletGovernedMemoryAction(
                             "correct",
@@ -2161,16 +2047,6 @@ export class PluginManager extends Plugin {
         }]);
 
         registerObsidianCommands(obsidianRegistration, [{
-            id: 'startup-recording',
-            name: this.t("plugin.command.recordNote"),
-            callback: async () => {
-                const fileFormat = moment().format(this.settings.fileFormat);
-                const targetDir = this.settings.targetPath;
-                this.log(targetDir, fileFormat);
-                await this.createNewNote(targetDir, fileFormat);
-            }
-        },
-        {
             id: QUICK_CAPTURE_COMMAND_ID,
             name: QUICK_CAPTURE_COMMAND_NAME,
             callback: () => {
@@ -2214,25 +2090,6 @@ export class PluginManager extends Plugin {
         });
 
         this.addCommand({
-            id: 'switch-on-or-off-plugin',
-            name: this.t("plugin.command.openControls"),
-            callback: () => {
-                const modal = new PluginControlModal(this.app);
-                modal.setPlaceholder("Type plugin name to find it");
-                modal.open();
-            }
-        });
-
-        this.addCommand({
-            id: "batch-switch-on-or-off-plugins",
-            name: this.t("plugin.command.batchPluginControls"),
-            callback: () => {
-                const modal = new BatchPluginControlModal(this.app);
-                modal.open();
-            }
-        });
-
-        this.addCommand({
             id: 'set-local-graph-view-colors',
             name: this.t("plugin.command.setGraphColors"),
             callback: async () => {
@@ -2241,20 +2098,6 @@ export class PluginManager extends Plugin {
         });
 
         registerObsidianCommands(obsidianRegistration, [{
-            id: 'update-plugins',
-            name: this.t("plugin.command.updatePlugins"),
-            callback: async () => {
-                await this.updateActions.updatePlugins();
-            },
-        },
-        {
-            id: 'update-themes',
-            name: this.t("plugin.command.updateThemes"),
-            callback: async () => {
-                await this.updateActions.updateThemes();
-            },
-        },
-        {
             id: 'update-metadata',
             name: this.t("plugin.command.updateMetadata"),
             callback: async () => {
@@ -2814,7 +2657,6 @@ export class PluginManager extends Plugin {
         this.reviewQueueStore = null;
         this.savedInsightStore = null;
         this.memoryGovernanceStore = null;
-        this.retrievalHabitProfileStore = null;
     }
 
     private pageletCommandCallbacks(): PageletCommandCallbacks {
@@ -2886,7 +2728,6 @@ export class PluginManager extends Plugin {
     private createPageletHost(featureScope: Component): PageletHost {
         const getPageletSettings = () => this.getPageletSettingsWithDataBoundary();
         const getContextPagerSettings = () => this.settings.contextPager;
-        const getQuietRecallSettings = () => this.settings.quietRecall;
         const getFocusMode = () => this.settings.focusMode;
         const getConfirmedMemoryCount = () => this.getCurrentConfirmedMemoryCount();
         return {
@@ -2899,9 +2740,6 @@ export class PluginManager extends Plugin {
                     return {
                         enabled: getContextPagerSettings().enabled,
                     };
-                },
-                get quietRecall() {
-                    return getQuietRecallSettings();
                 },
                 get focusMode() {
                     return getFocusMode();
@@ -2991,17 +2829,6 @@ export class PluginManager extends Plugin {
             runMaintenanceReview: (options) => this.runMaintenanceReview(options),
             runGraphDiscovery: (options) => this.runGraphDiscovery(options),
             detectCrossNotePatterns: () => this.detectCrossNotePatternsForPagelet(),
-            buildScopeRecapLocalOverview: () => this.buildScopeRecapLocalOverview(),
-            isScopeRecapProviderConfigured: () => this.getAISetupIssue() === null,
-            getScopeRecapProviderInfo: () => this.getScopeRecapProviderInfo(),
-            getScopeRecapAuthorizationContextId: () => this.getScopeRecapAuthorizationContextId(),
-            getPageletFeatureRateLimitStatus: () => this.getPageletFeatureRateLimitStatus(),
-            getScopeRecapDataBoundarySnapshotId: () => this.getMemoryDataBoundaryFingerprint(),
-            runScopeRecap: (options) => this.runScopeRecap(options),
-            saveQuietRecallAsInsight: (candidate) => this.saveQuietRecallAsInsight(candidate),
-            linkRecallCandidate: (currentPath, candidatePath) => this.linkRecallCandidate(currentPath, candidatePath),
-            recordQuietRecallFeedback: (candidate, feedback) =>
-                this.recordQuietRecallFeedback(candidate, feedback),
             listSavedInsights: () => this.listSavedInsights(),
             listConfirmedMemories: () => this.listConfirmedMemories(),
             getMemoryGovernancePanelState: () => this.getMemoryGovernancePanelState(),
@@ -3261,43 +3088,26 @@ export class PluginManager extends Plugin {
         return result;
     }
 
-    private async buildScopeRecapLocalOverview(): Promise<ScopeRecapLocalOverview> {
-        return this.scopeRecapIntegration.buildScopeRecapLocalOverview();
+    private getPageletProviderSettings() {
+        return {
+            provider: this.settings.aiProvider,
+            providerPreset: this.settings.aiProviderPreset ?? null,
+            model: this.settings.chatModelName,
+            embeddingModel: this.settings.embeddingModelName,
+            endpoint: this.settings.baseURL ?? "",
+        };
     }
 
-    private async runScopeRecap(
-        options: Parameters<ScopeRecapPluginIntegration["runScopeRecap"]>[0],
-    ): Promise<ScopeRecapPreparationResult> {
-        return this.scopeRecapIntegration.runScopeRecap(options);
+    private getPageletProviderInfo(): { provider: string; model: string; endpoint: string } {
+        return getPageletProviderInfo(this.getPageletProviderSettings());
     }
 
-    private getScopeRecapProviderInfo(): { provider: string; model: string; endpoint: string } {
-        return this.scopeRecapIntegration.getScopeRecapProviderInfo();
-    }
-
-    private scopeRecapEndpointIdentity(): string {
-        return this.scopeRecapIntegration.scopeRecapEndpointIdentity();
-    }
-
-    private scopeRecapEndpointDisplay(): string {
-        return this.scopeRecapIntegration.scopeRecapEndpointDisplay();
-    }
-
-    private getScopeRecapAuthorizationContextId(): string {
-        return this.scopeRecapIntegration.getScopeRecapAuthorizationContextId();
-    }
-
-    private scopeRecapBuildOptions(
-        notes: readonly ScopeRecapSourceNote[],
-        options: { includeRecentChanges?: boolean } = {},
-    ) {
-        return this.scopeRecapIntegration.scopeRecapBuildOptions(notes, options);
-    }
-
-    private async collectScopeRecapSourceNotes(
-        options: { includeContent: boolean } = { includeContent: true },
-    ): Promise<ScopeRecapSourceNote[]> {
-        return this.scopeRecapIntegration.collectScopeRecapSourceNotes(options);
+    private getPageletProviderAuthorizationContextId(): string {
+        return getPageletProviderAuthorizationContextId(
+            this.getPageletProviderSettings(),
+            this.getPageletSettingsWithDataBoundary(),
+            this.getMemoryDataBoundaryFingerprint(),
+        );
     }
 
     private createPageletProviderSourceResolver(): ScopeResolver {
@@ -3423,39 +3233,6 @@ export class PluginManager extends Plugin {
             }
         }
         return notes;
-    }
-
-    private async collectQuietRecallVaultNotes(
-        activeFile: TFile,
-        currentContent: string,
-        options: Parameters<QuietRecallPluginIntegration["collectQuietRecallVaultNotes"]>[2],
-    ): Promise<ReturnType<QuietRecallPluginIntegration["collectQuietRecallVaultNotes"]>> {
-        return this.quietRecallIntegration.collectQuietRecallVaultNotes(activeFile, currentContent, options);
-    }
-
-    private async collectQuietRecallVaultNotesFromRelatedNotes(
-        relatedNotes: Parameters<QuietRecallPluginIntegration["collectQuietRecallVaultNotesFromRelatedNotes"]>[0],
-    ): Promise<ReturnType<QuietRecallPluginIntegration["collectQuietRecallVaultNotesFromRelatedNotes"]>> {
-        return this.quietRecallIntegration.collectQuietRecallVaultNotesFromRelatedNotes(relatedNotes);
-    }
-
-    private async collectQuietRecallVaultNotesFromMetadata(
-        activeFile: TFile,
-    ): Promise<ReturnType<QuietRecallPluginIntegration["collectQuietRecallVaultNotesFromMetadata"]>> {
-        return this.quietRecallIntegration.collectQuietRecallVaultNotesFromMetadata(activeFile);
-    }
-
-    private async readQuietRecallVaultNote(
-        file: TFile,
-        backlinkMap: Map<string, string[]>,
-    ): Promise<ReturnType<QuietRecallPluginIntegration["readQuietRecallVaultNote"]>> {
-        return this.quietRecallIntegration.readQuietRecallVaultNote(file, backlinkMap);
-    }
-
-    private quietRecallSourceSnapshotsAreCurrent(
-        snapshots: Parameters<QuietRecallPluginIntegration["quietRecallSourceSnapshotsAreCurrent"]>[0],
-    ): ReturnType<QuietRecallPluginIntegration["quietRecallSourceSnapshotsAreCurrent"]> {
-        return this.quietRecallIntegration.quietRecallSourceSnapshotsAreCurrent(snapshots);
     }
 
     private getGraphDiscoveryLinks(file: TFile): string[] {
@@ -3597,46 +3374,6 @@ export class PluginManager extends Plugin {
         return this.pageletActionIntegration.undoMaintenanceMove(actionId);
     }
 
-    private async saveQuietRecallAsInsight(candidate: QuietRecallCandidate): Promise<QuietRecallSaveResult> {
-        return this.quietRecallIntegration.saveQuietRecallAsInsight(candidate);
-    }
-
-    private async linkQuietRecallCandidateFromActiveNote(
-        candidate: QuietRecallCandidate,
-        currentPath?: string,
-    ): Promise<{ ok: boolean; message: string }> {
-        return this.quietRecallIntegration.linkQuietRecallCandidateFromActiveNote(candidate, currentPath);
-    }
-
-    private async linkRecallCandidate(currentPath: string, candidatePath: string): Promise<{ ok: boolean; message: string }> {
-        return this.quietRecallIntegration.linkRecallCandidate(currentPath, candidatePath);
-    }
-
-    private quietRecallLinkFailureMessage(reason: string): string {
-        return this.quietRecallIntegration.quietRecallLinkFailureMessage(reason);
-    }
-
-    private getRetrievalHabitProfileStore(): RetrievalHabitProfileStore {
-        if (!this.retrievalHabitProfileStore) {
-            this.retrievalHabitProfileStore = new RetrievalHabitProfileStore({
-                settings: this.settings.retrievalHabitProfile,
-                persist: async (settings) => {
-                    this.settings.retrievalHabitProfile = settings;
-                    await this.saveSettings();
-                },
-                isSourceAllowed: (ref) => this.isDataBoundaryAllowedPath(ref.path),
-            });
-        }
-        return this.retrievalHabitProfileStore;
-    }
-
-    private recordQuietRecallFeedback(
-        candidate: QuietRecallCandidate,
-        feedback: RetrievalHabitFeedbackKind,
-    ): Promise<RetrievalHabitProfileRecordResult> {
-        return this.quietRecallIntegration.recordQuietRecallFeedback(candidate, feedback);
-    }
-
     private getSavedInsightStore(): SavedInsightStore {
         if (!this.savedInsightStore) {
             this.savedInsightStore = new SavedInsightStore({
@@ -3684,10 +3421,6 @@ export class PluginManager extends Plugin {
             });
         }
         return this.insightActionPort;
-    }
-
-    private async collectPageletProviderAllowedSavedInsights(): Promise<QuietRecallSavedInsightCollection> {
-        return this.quietRecallIntegration.collectPageletProviderAllowedSavedInsights();
     }
 
     private getMemoryGovernanceStore(): MemoryGovernanceStore {
@@ -5852,14 +5585,6 @@ export class PluginManager extends Plugin {
         return this.retainedReviewIntegration.getRateLimiter();
     }
 
-    private getScopeRecapRateLimiter(): PageletRateLimiter {
-        return this.scopeRecapIntegration.getRateLimiter();
-    }
-
-    private getQuietRecallRateLimiter(): PageletRateLimiter {
-        return this.quietRecallIntegration.getRateLimiter();
-    }
-
     private getDeepDiscoverRateLimiter(): PageletRateLimiter {
         return this.deepDiscoverIntegration.getRateLimiter();
     }
@@ -6031,7 +5756,7 @@ export class PluginManager extends Plugin {
                     });
                 },
                 showStandardFirstUseNotice: () => {
-                    const provider = this.getScopeRecapProviderInfo().provider;
+                    const provider = this.getPageletProviderInfo().provider;
                     new Notice(pageletT(
                         "pagelet.provider.firstUseNotification",
                         this.getPageletLocale(),
@@ -6043,19 +5768,8 @@ export class PluginManager extends Plugin {
         return this.pageletProviderCallAdmissionInstance;
     }
 
-    private async getPageletFeatureRateLimitStatus() {
-        const [scopeRecap, quietRecall] = await Promise.all([
-            this.scopeRecapIntegration.getFeatureRateSnapshot(),
-            this.quietRecallIntegration.getFeatureRateSnapshot(),
-        ]);
-        return {
-            scopeRecap,
-            quietRecall,
-        };
-    }
-
     private createPageletRateLimitStorage(
-        bucket: "foreground-review" | "scope-recap" | "quiet-recall" | "deep-discover",
+        bucket: "foreground-review" | "deep-discover",
         vaultStorageScope: string | null = this.pageletVaultStorageScope(),
     ): PageletRateLimitStorage {
         const key = this.pageletRateLimitStorageKey(bucket, vaultStorageScope);
@@ -6123,7 +5837,7 @@ export class PluginManager extends Plugin {
     }
 
     private pageletRateLimitStorageKey(
-        bucket: "foreground-review" | "scope-recap" | "quiet-recall" | "background-review" | "deep-discover",
+        bucket: "foreground-review" | "background-review" | "deep-discover",
         vaultStorageScope: string | null = this.pageletVaultStorageScope(),
     ): string {
         return [
@@ -6258,7 +5972,7 @@ export class PluginManager extends Plugin {
     }>> {
         if (!this.vss || noteContents.length === 0) return [];
         if (!this.isPageletProviderPathAllowed(primarySourcePath)) return [];
-        const expectedProviderPolicyIdentity = this.getScopeRecapAuthorizationContextId();
+        const expectedProviderPolicyIdentity = this.getPageletProviderAuthorizationContextId();
         const limit = options.limit ?? PAGELET_DISCOVERY_MAX_RELATED_NOTES;
         const requireActivePrimary = options.requireActivePrimary ?? true;
         if (!(await this.isPageletMemorySearchReady())) return [];
@@ -6300,7 +6014,7 @@ export class PluginManager extends Plugin {
             return !controller.signal.aborted
                 && !this.unloading
                 && this.settings.pagelet.enabled === true
-                && expectedProviderPolicyIdentity === this.getScopeRecapAuthorizationContextId()
+                && expectedProviderPolicyIdentity === this.getPageletProviderAuthorizationContextId()
                 && (options.additionalCurrentCheck?.() ?? true)
                 && currentPrimary instanceof TFile
                 && currentPrimary.extension === "md"
@@ -6421,7 +6135,7 @@ export class PluginManager extends Plugin {
         currentNote: { path: string; content: string },
         relatedNotes: Array<{ path: string; content: string }>,
     ): Promise<DiscoveryResult | null> {
-        const expectedProviderPolicyIdentity = this.getScopeRecapAuthorizationContextId();
+        const expectedProviderPolicyIdentity = this.getPageletProviderAuthorizationContextId();
         const admittedProvider = this.settings.aiProvider;
         const admittedModel = this.settings.chatModelName;
         const liveSources = await this.readLivePageletDiscoverySources(
@@ -6443,7 +6157,7 @@ export class PluginManager extends Plugin {
         if (!model) return null;
         const requestIsCurrent = () => (
             liveSources.isCurrent()
-            && expectedProviderPolicyIdentity === this.getScopeRecapAuthorizationContextId()
+            && expectedProviderPolicyIdentity === this.getPageletProviderAuthorizationContextId()
         );
         if (!requestIsCurrent()) return null;
         try {
@@ -6651,7 +6365,6 @@ export class PluginManager extends Plugin {
         this.reviewQueueStore = null;
         this.savedInsightStore = null;
         this.memoryGovernanceStore = null;
-        this.retrievalHabitProfileStore = null;
         this.quickCaptureIntegration.reset();
         clearPageletDetailSessionCache();
     }
@@ -8318,16 +8031,6 @@ export class PluginManager extends Plugin {
         debug(this.settings.debug, ...msg);
     }
 
-    // the following is referenced from https://github.com/vanadium23/obsidian-advanced-new-file/blob/master/src/CreateNoteModal.ts#L102
-    /**
-     * Handles creating the new note
-     * A new markdown file will be created at the given file path (`input`)
-     * in the specified parent folder (`this.folder`)
-     **/
-    async createNewNote(targetPath: string, fileName: string, timestamp: Date = new Date()): Promise<void> {
-        await this.recordActions.createNewNote(targetPath, fileName, timestamp);
-    }
-
     /**
      * Joins multiple strings into a path using Obsidian's preferred format.
      * The resulting path is normalized with Obsidian's `normalizePath` func.
@@ -9350,8 +9053,6 @@ function coerceModelResultToString(result: unknown): string {
     const content = (result as { content?: unknown })?.content;
     return content != null ? String(content) : String(result);
 }
-
-
 
 function createStatisticsVaultId(): string {
     const cryptoApi = getPlatformCrypto() as (Crypto & { randomUUID?: () => string }) | undefined;

@@ -820,7 +820,6 @@ function createPageletRegistry(
             runKind: "review",
             allowWrite: false,
         }),
-        telemetryEnabled: false,
     });
     const pathFilter = { isPathAllowed: dependencies.isPathAllowed };
     registry.registerMany(createCoreToolCapabilities([

@@ -72,7 +72,6 @@ export function createAiServiceHost(
         chatModelName: "gpt-4o-mini",
         policyModelName: "",
         embeddingModelName: "text-embedding-3-small",
-        shareAnonymousCapabilityUsage: false,
         qwenThinkingEnabled: false,
         webSearchEnabled: false,
         licenseTier: MOCK_LICENSE_TIER,

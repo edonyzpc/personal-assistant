@@ -4,11 +4,33 @@ Document status: Current
 Updated: 2026-10-25
 Work item: B-189
 Decision: [DEC-075](../decisions/dec-075-legacy-surface-cleanup.md); predecessor [DEC-035](../decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md)
-Authority: 有界清理的当前产品边界与行为验收；B-189 的第一批范围由 Owner 于 2026-10-25 明确批准，实施证据由 Tracker 记录。B-136 的未接续边界与历史证据保留。
+Authority: 有界清理的当前产品边界与行为验收；B-189 两批范围由 Owner 于 2026-10-25 逐项批准，实施证据由 Tracker 记录。B-136 的未接续边界与历史证据保留。
 
-## B-189 Approved Scope — 2026-10-25
+## B-189 第二批接续范围 — 2026-10-25
 
-本轮仅执行以下第一批；不是整批清退旧功能。命令 ID 曾被明确保留，现在按 DEC-075
+下列条目按 DEC-075 第二批决定接续下文第一批及 B-136 的对应保留约定；历史验收
+不是本批实现后证据。范围之外的能力、配置和数据继续保留。
+
+| Requirement / Criterion | 行为与验收边界 |
+| --- | --- |
+| B-189/REQ-07 / B-189/AC-07 | 旧 Quiet Recall/Scope Recap 生成及专用查看、保存、手动关联退出；当前阅读、正常保存、共享成果库/来源权限/provider身份保持；不删除历史结果或笔记 |
+| B-189/REQ-08 / B-189/AC-08 | 双 Ctrl 入口退出；发现命令和 Pet 可用，正常打开已有阅读不新增 provider 请求 |
+| B-189/REQ-09 / B-189/AC-09 | 匿名能力使用开关及其专用事件记录退出；其他调试、运行记录与统计同步保持 |
+| B-189/REQ-10 / B-189/AC-10 | 旧录记、插件/主题更新、单个/批量插件启停及右键管理退出；Quick Capture、Records Preview、共用设置和已有插件/主题状态保持 |
+| B-189/REQ-11 / B-189/AC-11 | 三个无效 weekly 开关退出；维护 action log、手动维护、已有笔记与回顾内容保持，不新增自动扫描或数据清理 |
+| B-189/REQ-12 / B-189/AC-12 | 旧 append-action 退出；现行 Agent/Chat 追加、Undo、Quick Capture、共享保存和路径检查保持 |
+| B-189/REQ-13 / B-189/AC-13 | 旧 StatsStore 类退出；当前统计采集/存储/界面/同步/历史导入与共享 helpers 保持，统计数据不删除 |
+| B-189/REQ-14 / B-189/AC-14 | 旧气泡/preload预算/无消费者导出和专用测试退出；当前 Pet、发现气泡、状态提示、布局/动画/移动交互、实际预算和阅读保存保持；混合测试保留现行断言 |
+
+保留 Records Preview 和 free/paid mock tier。代码回滚不依赖数据重置；旧命令不再
+提供兼容别名，已删除开关的值不保证降级恢复。现行 Agent 的能力注册、写权限、
+来源身份、结果/撤销事实不因专用旧实现退役而改变。
+
+本轮授权实施与必要验证，不包含新的提交、推送、发布或 closeout。
+
+## B-189 第一批范围（接续基线）— 2026-10-25
+
+第一批仅执行以下范围；不是整批清退旧功能。命令 ID 曾被明确保留，按 DEC-075
 局部接续。Owner 已接受所列旧快捷键需重绑，不实现兼容转发或修改热键文件。
 
 | Requirement | 行为边界 |
@@ -99,7 +121,8 @@ provider 及其实际发送前的来源校验、成本预算、首次通知保�
 - `deviceMemoryReviewQueueRepository` 有安全 smoke 脚本消费者，不能仅凭 `src` 只写不读删除。
 - SourceRecord 只复用完全相同的浅拷贝；context/history 的隐私裁剪差异仍须保留。
 - Type C 的内存分析/viewer、Type A/proposal、weekly 持久化兼容保留；不恢复无生产入口的 Type C 文件写入或旧 generic preload producer。
-- ScopeResolver、前台 PreloadBudget、共享 Quiet Recall/Scope Recap、来源准入及正常 findings 保存不随旧 Panel 控件退役。
+- ScopeResolver、来源准入、当前调用预算及正常 findings 保存保留。B-136 当时保留的
+  PreloadBudget 和旧 Quiet Recall/Scope Recap 链已由 B-189 第二批显式接续退役。
 - 大类拆分、Statistics 历史整理、Weekly Review 兼容与未来 preload adapter 分别遵循 [Backlog](../../backlog.md) 的 B-105/B-110/B-116/B-122；Records 统一仍需独立产品决定。
 
 ## Implementation And Evidence

@@ -13,6 +13,7 @@ import type { PageletHost } from "../src/pagelet/PageletHost";
 import type { PetView } from "../src/pagelet/pet/PetView";
 import { ProactiveHints } from "../src/pagelet/hints/ProactiveHints";
 import type { ReviewQueueListFilter, ReviewQueueItem } from "../src/pa";
+import { PAGELET_DEFAULTS } from "../src/settings/pagelet";
 
 function makeHost(
     listReviewQueueItems: (filter?: ReviewQueueListFilter) => ReviewQueueItem[],
@@ -30,15 +31,15 @@ function makeHost(
         },
         settings: {
             pagelet: {
+                ...PAGELET_DEFAULTS,
                 enabled: true,
                 onboardingShown: true,
                 proactiveHints: true,
                 quietAcknowledged: false,
             },
-            quietRecall: {
-                enabled: true,
-                bubbleNudgesEnabled: false,
-            },
+            contextPager: { enabled: true },
+            focusMode: false,
+            confirmedMemoryCount: 0,
         },
         listReviewQueueItems,
         updatePageletSetting: jest.fn(),
@@ -48,7 +49,6 @@ function makeHost(
         isPathAllowedForPagelet: () => true,
         isMemoryReadyForPageletDiscovery: async () => true,
         getMemoryPreparationStatus: () => null,
-        linkRecallCandidate: jest.fn(),
         log: jest.fn(),
         ...overrides,
     } as unknown as PageletHost;
@@ -203,7 +203,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         }, { onReadCurrentNote });
         const bubble = makeBubbleView();
         const pet = Object.assign(makePetView(), { openActionRing: jest.fn() });
-        coordinator.showBubble(bubble, pet, { entry: 'pet' });
+        coordinator.showBubble(bubble, pet);
         finish(true);
         await flushAsyncWork();
         expect(onReadCurrentNote).toHaveBeenCalledTimes(1);
@@ -505,11 +505,12 @@ describe("BubbleCoordinator Review Queue reminders", () => {
 
 
     it("clears a live nudge and its wake timer while Focus Mode is active", () => {
-        const settings = {
-            pagelet: { enabled: true, petVisible: true, proactiveHints: true },
-            quietRecall: { enabled: true, quietRecallMode: "on" },
+        const settings: PageletHost["settings"] = {
+            pagelet: { ...PAGELET_DEFAULTS, enabled: true, petVisible: true, proactiveHints: true },
+            contextPager: { enabled: true },
             focusMode: false,
-        } as PageletHost["settings"];
+            confirmedMemoryCount: 0,
+        };
         const pattern = {
             generatedAt: "2026-07-05T12:01:00.000Z",
             totalCount: 1,
@@ -538,9 +539,10 @@ describe("BubbleCoordinator Review Queue reminders", () => {
             return [];
         });
         const coordinator = makeCoordinator(listReviewQueueItems);
+        (coordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
         const bubbleView = makeBubbleView();
 
-        coordinator.showBubble(bubbleView, makePetView(), { entry: "quick-review" });
+        coordinator.showBubble(bubbleView, makePetView());
         await flushAsyncWork();
 
         const content = shownContent(bubbleView);
@@ -551,36 +553,21 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         expect(listReviewQueueItems).not.toHaveBeenCalled();
     });
 
-    it("preserves focus when Memory readiness refresh repaints a visible bubble", async () => {
-        const coordinator = makeCoordinator(() => [], {
-            isMemoryReadyForPageletDiscovery: async () => true,
-        });
-        const bubbleView = makeBubbleView();
-
-        coordinator.showBubble(bubbleView, makePetView(), { entry: "quick-review" });
-        await Promise.resolve();
-        await Promise.resolve();
-
-        const show = bubbleView.show as unknown as jest.Mock;
-        expect(show).toHaveBeenCalledTimes(2);
-        expect(show.mock.calls[1]?.[2]).toEqual({ preserveFocus: true });
-    });
-
-    it("repaints a stale ready-empty bubble when Memory becomes unavailable", async () => {
+    it("returns to reading when a visible ready-empty result loses Memory readiness", async () => {
+        const onReadCurrentNote = jest.fn();
         const coordinator = makeCoordinator(() => [], {
             isMemoryReadyForPageletDiscovery: async () => false,
-        });
+        }, { onReadCurrentNote });
         (coordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
         const bubbleView = makeBubbleView();
 
-        coordinator.showBubble(bubbleView, makePetView(), { entry: "quick-review" });
+        coordinator.showBubble(bubbleView, makePetView());
         expect(shownContent(bubbleView).type).toBe("ready-empty");
         await flushAsyncWork();
 
-        expect(shownContent(bubbleView).type).toBe("needs-setup");
-        const show = bubbleView.show as unknown as jest.Mock;
-        expect(show).toHaveBeenCalledTimes(2);
-        expect(show.mock.calls[1]?.[2]).toEqual({ preserveFocus: true });
+        expect(bubbleView.bubbleState).toBe("hidden");
+        expect(bubbleView.show).toHaveBeenCalledTimes(1);
+        expect(onReadCurrentNote).toHaveBeenCalledTimes(1);
     });
 
 
@@ -594,9 +581,10 @@ describe("BubbleCoordinator Review Queue reminders", () => {
             ] as ReviewQueueItem[];
         });
         const coordinator = makeCoordinator(listReviewQueueItems);
+        (coordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
         const bubbleView = makeBubbleView();
 
-        coordinator.showBubble(bubbleView, makePetView(), { entry: "quick-review" });
+        coordinator.showBubble(bubbleView, makePetView());
         await Promise.resolve();
 
         const content = shownContent(bubbleView);
@@ -615,7 +603,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         });
         const bubbleView = makeBubbleView();
 
-        coordinator.showBubble(bubbleView, makePetView(), { entry: "quick-review" });
+        coordinator.showBubble(bubbleView, makePetView());
 
         const content = shownContent(bubbleView);
         expect(content.type).toBe("needs-setup");
@@ -629,21 +617,22 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         });
         const bubbleView = makeBubbleView();
 
-        coordinator.showBubble(bubbleView, makePetView(), { entry: "quick-review" });
+        coordinator.showBubble(bubbleView, makePetView());
 
         const content = shownContent(bubbleView);
         expect(content.type).toBe("context-limited");
         expect(content.actions.map((action) => action.label)).toEqual(["View boundary settings"]);
     });
 
-    it("closes Bubble and routes Discover through the unified callback without running Quiet Recall", async () => {
+    it("closes Bubble and routes Discover through the unified callback", async () => {
         const onDiscoverConnections = jest.fn();
         const coordinator = makeCoordinator(() => [], {}, {
             onDiscoverConnections,
         });
+        (coordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
         const bubbleView = makeBubbleView();
 
-        coordinator.showBubble(bubbleView, makePetView(), { entry: "quick-review" });
+        coordinator.showBubble(bubbleView, makePetView());
         await flushAsyncWork();
         shownContent(bubbleView).actions[0].callback();
 
@@ -664,31 +653,24 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         proactiveHints,
         copyVersion,
     ) => {
-        const acknowledgements = new Set<string>();
-        const onExplanationVisible = jest.fn((nextKind: string, nextVersion: string) => {
-            acknowledgements.add(`${nextKind}:${nextVersion}`);
-        });
+        const onExplanationVisible = jest.fn();
         const updatePageletSetting = jest.fn();
         const coordinator = makeCoordinator(() => [], {
             updatePageletSetting,
             settings: {
                 pagelet: {
+                    ...PAGELET_DEFAULTS,
                     enabled: true,
                     petVisible: true,
                     onboardingShown: true,
                     proactiveHints,
                     quietAcknowledged: true,
                 },
-                quietRecall: {
-                    enabled: true,
-                    bubbleNudgesEnabled: false,
-                    quietRecallMode: "off",
-                },
-            } as PageletHost["settings"],
+                contextPager: { enabled: true },
+                focusMode: false,
+                confirmedMemoryCount: 0,
+            },
         }, {
-            isExplanationAcknowledged: (nextKind, nextVersion) => (
-                acknowledgements.has(`${nextKind}:${nextVersion}`)
-            ),
             onExplanationVisible,
         });
         (coordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
@@ -717,62 +699,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         expect(petView.openActionRing).not.toHaveBeenCalled();
     });
 
-
-
-    it("keeps acknowledged Quick Review as terse Bubble instead of opening Ring", () => {
-        const onExplanationVisible = jest.fn();
-        const coordinator = makeCoordinator(() => [], {}, {
-            isExplanationAcknowledged: (kind, version) => (
-                kind === "ready-empty" && version === READY_EMPTY_EXPLANATION_COPY_VERSION
-            ),
-            onExplanationVisible,
-        });
-        (coordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
-        const bubbleView = makeBubbleView();
-        const petView = Object.assign(makePetView(), {
-            actionRingOpen: false,
-            openActionRing: jest.fn(),
-            closeActionRing: jest.fn(),
-        });
-
-        coordinator.showBubble(bubbleView, petView, { entry: "quick-review" });
-
-        expect(shownContent(bubbleView)).toEqual(expect.objectContaining({
-            type: "ready-empty",
-            findings: [expect.any(Object)],
-        }));
-        expect(petView.openActionRing).not.toHaveBeenCalled();
-        expect(onExplanationVisible).not.toHaveBeenCalled();
-    });
-
-    it("keeps Quick Review in a terse Bubble when async readiness first resolves", async () => {
-        const coordinator = makeCoordinator(() => [], {
-            isMemoryReadyForPageletDiscovery: async () => true,
-        }, {
-            isExplanationAcknowledged: (kind, version) => (
-                kind === "ready-empty" && version === READY_EMPTY_EXPLANATION_COPY_VERSION
-            ),
-        });
-        const bubbleView = makeBubbleView();
-        const petView = Object.assign(makePetView(), {
-            actionRingOpen: false,
-            openActionRing: jest.fn(),
-            closeActionRing: jest.fn(),
-        });
-
-        coordinator.showBubble(bubbleView, petView, { entry: "quick-review" });
-        expect(shownContent(bubbleView).type).toBe("needs-setup");
-
-        await flushAsyncWork();
-
-        expect(shownContent(bubbleView)).toEqual(expect.objectContaining({
-            type: "ready-empty",
-            findings: [expect.any(Object)],
-        }));
-        expect(petView.openActionRing).not.toHaveBeenCalled();
-    });
-
-    it("rechecks the latest Quick Review presentation queued behind a Pet readiness probe", async () => {
+    it("rechecks the latest presentation queued behind an earlier readiness probe", async () => {
         let resolveFirst!: (ready: boolean) => void;
         const firstReadiness = new Promise<boolean>((resolve) => {
             resolveFirst = resolve;
@@ -780,13 +707,10 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         const isMemoryReadyForPageletDiscovery = jest.fn<() => Promise<boolean>>()
             .mockImplementationOnce(() => firstReadiness)
             .mockResolvedValue(true);
+        const onReadCurrentNote = jest.fn();
         const coordinator = makeCoordinator(() => [], {
             isMemoryReadyForPageletDiscovery,
-        }, {
-            isExplanationAcknowledged: (kind, version) => (
-                kind === "ready-empty" && version === READY_EMPTY_EXPLANATION_COPY_VERSION
-            ),
-        });
+        }, { onReadCurrentNote });
         const bubbleView = makeBubbleView();
         const petView = Object.assign(makePetView(), {
             actionRingOpen: false,
@@ -794,76 +718,17 @@ describe("BubbleCoordinator Review Queue reminders", () => {
             closeActionRing: jest.fn(),
         });
 
-        coordinator.showBubble(bubbleView, petView, { entry: "pet" });
-        coordinator.showBubble(bubbleView, petView, { entry: "quick-review" });
+        coordinator.showBubble(bubbleView, petView);
+        coordinator.showBubble(bubbleView, petView);
         expect(shownContent(bubbleView).type).toBe("needs-setup");
 
         resolveFirst(true);
         await flushAsyncWork();
 
-        expect(isMemoryReadyForPageletDiscovery).toHaveBeenCalledTimes(3);
-        expect(shownContent(bubbleView)).toEqual(expect.objectContaining({
-            type: "ready-empty",
-            findings: [expect.any(Object)],
-        }));
+        expect(isMemoryReadyForPageletDiscovery).toHaveBeenCalledTimes(2);
+        expect(bubbleView.bubbleState).toBe("hidden");
+        expect(onReadCurrentNote).toHaveBeenCalledTimes(1);
         expect(petView.openActionRing).not.toHaveBeenCalled();
-    });
-
-    it("does not consume the unseen Ready Empty explanation from an Intentionally Quiet Quick Review", () => {
-        const acknowledgements = new Set([
-            `intentionally-quiet:${INTENTIONALLY_QUIET_EXPLANATION_COPY_VERSION}`,
-        ]);
-        const onExplanationVisible = jest.fn((kind: string, version: string) => {
-            acknowledgements.add(`${kind}:${version}`);
-        });
-        const settings = {
-            pagelet: {
-                enabled: true,
-                petVisible: true,
-                onboardingShown: true,
-                proactiveHints: false,
-                quietAcknowledged: true,
-            },
-            quietRecall: {
-                enabled: true,
-                bubbleNudgesEnabled: false,
-                quietRecallMode: "off",
-            },
-        } as PageletHost["settings"];
-        const coordinator = makeCoordinator(() => [], { settings }, {
-            isExplanationAcknowledged: (kind, version) => (
-                acknowledgements.has(`${kind}:${version}`)
-            ),
-            onExplanationVisible,
-        });
-        (coordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
-        const bubbleView = makeBubbleView();
-        const petView = Object.assign(makePetView(), {
-            actionRingOpen: false,
-            openActionRing: jest.fn(),
-            closeActionRing: jest.fn(),
-        });
-
-        coordinator.showBubble(bubbleView, petView, { entry: "quick-review" });
-
-        expect(shownContent(bubbleView)).toEqual(expect.objectContaining({
-            type: "ready-empty",
-            findings: [expect.any(Object)],
-        }));
-        expect(onExplanationVisible).not.toHaveBeenCalled();
-
-        bubbleView.close();
-        settings.pagelet.proactiveHints = true;
-        coordinator.showBubble(bubbleView, petView);
-
-        expect(shownContent(bubbleView)).toEqual(expect.objectContaining({
-            type: "ready-empty",
-            findings: [expect.any(Object), expect.any(Object)],
-        }));
-        expect(onExplanationVisible).toHaveBeenCalledWith(
-            "ready-empty",
-            READY_EMPTY_EXPLANATION_COPY_VERSION,
-        );
     });
 
 
