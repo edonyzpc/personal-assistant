@@ -48,25 +48,3 @@ export class ConsoleDebugObserver implements DebugObserver {
         this.logger(`${this.prefix} ${event.type} ${event.capabilityId}`, event);
     }
 }
-
-/**
- * Convenience: wrap an observer to fan out to multiple sinks (e.g., console +
- * future persistent audit). Returned observer is itself a DebugObserver so it
- * composes recursively.
- */
-export function combineDebugObservers(...observers: DebugObserver[]): DebugObserver {
-    if (observers.length === 0) return NOOP_DEBUG_OBSERVER;
-    if (observers.length === 1) return observers[0];
-    return {
-        emit(event: DebugEvent): void {
-            for (const obs of observers) {
-                try {
-                    obs.emit(event);
-                } catch {
-                    // One bad observer must not break the rest. Framework debug emit
-                    // is best-effort and never throws back into the action lifecycle.
-                }
-            }
-        },
-    };
-}

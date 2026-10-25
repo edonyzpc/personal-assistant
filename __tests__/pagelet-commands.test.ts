@@ -1,5 +1,4 @@
 import {
-    PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID,
     PAGELET_DISCOVER_COMMAND_ID,
     PAGELET_GRAPH_DISCOVERY_COMMAND_ID,
     PAGELET_MAINTENANCE_REVIEW_COMMAND_ID,
@@ -34,7 +33,6 @@ function makeCallbacks(): PageletCommandCallbacks {
         onMaintenanceReview: jest.fn(),
         onGraphDiscovery: jest.fn(),
         onToggleProactiveHints: jest.fn(),
-        onShowBackgroundPreparationStatus: jest.fn(),
         onMovePetCorner: jest.fn(),
         onTogglePetVisibility: jest.fn(),
     };
@@ -53,7 +51,6 @@ describe("registerPageletCommands", () => {
             PAGELET_MAINTENANCE_REVIEW_COMMAND_ID,
             PAGELET_GRAPH_DISCOVERY_COMMAND_ID,
             PAGELET_TOGGLE_HINTS_COMMAND_ID,
-            PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID,
             PAGELET_MOVE_PET_COMMAND_ID,
             PAGELET_TOGGLE_PET_COMMAND_ID,
         ]));
@@ -65,6 +62,7 @@ describe("registerPageletCommands", () => {
             "pa-pagelet:quiet-recall",
             "pa-pagelet:scope-recap",
             "pa-pagelet:preload-status",
+            "pa-pagelet:background-preparation-status",
             "pa-pagelet:clear-scope-recap-cache",
             "pa-pagelet:weekly-review",
             "pa-pagelet:periodic-summary",
@@ -86,7 +84,6 @@ describe("registerPageletCommands", () => {
         host.registered.find((command) => command.id === PAGELET_MAINTENANCE_REVIEW_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_GRAPH_DISCOVERY_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_TOGGLE_HINTS_COMMAND_ID)?.callback();
-        host.registered.find((command) => command.id === PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_MOVE_PET_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_TOGGLE_PET_COMMAND_ID)?.callback();
 
@@ -95,7 +92,6 @@ describe("registerPageletCommands", () => {
         expect(callbacks.onMaintenanceReview).toHaveBeenCalledTimes(1);
         expect(callbacks.onGraphDiscovery).toHaveBeenCalledTimes(1);
         expect(callbacks.onToggleProactiveHints).toHaveBeenCalledTimes(1);
-        expect(callbacks.onShowBackgroundPreparationStatus).toHaveBeenCalledTimes(1);
         expect(callbacks.onMovePetCorner).toHaveBeenCalledTimes(1);
         expect(callbacks.onTogglePetVisibility).toHaveBeenCalledTimes(1);
     });

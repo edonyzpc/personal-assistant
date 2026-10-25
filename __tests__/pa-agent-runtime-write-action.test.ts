@@ -82,10 +82,9 @@ function fakePlugin(settings: Record<string, unknown> = {}): AgentCapabilityCont
     } as never;
 }
 
-function makeFsProbe(existsMap: Record<string, boolean> = {}, contentMap: Record<string, string> = {}): FsProbe {
+function makeFsProbe(existsMap: Record<string, boolean> = {}): FsProbe {
     return {
         exists: jest.fn(async (path: string) => existsMap[path] ?? false) as FsProbe["exists"],
-        read: jest.fn(async (path: string) => contentMap[path] ?? "") as FsProbe["read"],
     };
 }
 
@@ -407,7 +406,6 @@ describe("PA Agent runtime — Write Action Framework integration (Track A · A3
                 }
                 return false;
             }) as FsProbe["exists"],
-            read: jest.fn(async () => "") as FsProbe["read"],
         };
         const harness = buildReviewModeHarness({ fsProbe: probe });
         const capability = makeWriteCapability();

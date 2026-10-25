@@ -53,7 +53,6 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 onboardingShown: true,
                 maintenanceScanSuggested: false,
                 quickCaptureExplained: false,
-                quietAcknowledged: false,
                 pageletProviderFirstUseNotified: false,
             },
             contextPager: { enabled: true },

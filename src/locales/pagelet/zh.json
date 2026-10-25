@@ -86,7 +86,6 @@
     "pagelet.settings.proactiveHintsCooldown.name": "提示冷却时间（分钟）",
     "pagelet.settings.proactiveHintsCooldown.desc": "两次主动提示之间的最少分钟数。范围 1–120，默认 30。",
 
-    "pagelet.settings.preload.heading": "后台审阅准备",
     "pagelet.settings.preloadEnabled.name": "在后台准备审阅",
     "pagelet.settings.preloadEnabled.desc": "在后台安静准备审阅上下文，让拾页响应更快。笔记正文可能会发送给当前 AI 服务商，并可能消耗额度。",
     "pagelet.settings.deepDiscover.heading": "深度发现",
@@ -103,7 +102,6 @@
     "pagelet.deepDiscover.functionCallingUnsupported": "当前模型不支持 Function Calling，深度发现未能完成。请换用支持该能力的模型。",
     "pagelet.deepDiscover.noToolCalls": "本次模型没有调用工具，深度发现未能完成。换用能按要求调用工具的模型可能会改善结果。",
     "pagelet.deepDiscover.boundaryDenied": "这篇笔记不在 PA 当前允许的数据范围内。",
-    "pagelet.deepDiscover.usageUnavailable": "深度发现用量暂时无法读取。",
     "pagelet.deepDiscover.noInsight": "本次分析没有发现。",
     "pagelet.deepDiscover.noNewResults": "本次分析没有新增可展示的结果。",
     "pagelet.deepDiscover.cancelled": "分析已取消。",
@@ -141,15 +139,6 @@
     "pagelet.panel.agentInsight.handoffBusy": "聊天正忙，请等待当前回复完成后重试。",
     "pagelet.panel.agentInsight.handoffDraft": "聊天中已有草稿，请先发送或清空，再打开这条洞察。",
     "pagelet.panel.agentInsight.handoffUnavailable": "暂时无法在聊天中打开这条洞察。",
-    "pagelet.settings.scopeRecap.heading": "范围回顾",
-    "pagelet.settings.scopeRecapPreparation.name": "在后台准备范围回顾",
-    "pagelet.settings.scopeRecapPreparation.desc": "在一次性说明数据范围和费用后，为你正在使用的范围安静准备有来源依据的回顾。它与后台审阅准备互不影响。",
-    "pagelet.settings.preloadInterval.name": "准备间隔（分钟）",
-    "pagelet.settings.preloadInterval.desc": "后台审阅准备周期之间的分钟数。范围 5–240，默认 30。",
-    "pagelet.settings.preloadPerHourCap.name": "每小时后台 AI 调用上限",
-    "pagelet.settings.preloadPerHourCap.desc": "通用后台审阅准备每个滚动小时最多使用的 AI 调用次数。范围 1–2，默认 2。",
-    "pagelet.settings.preloadPerDayCap.name": "每日后台 AI 调用上限",
-    "pagelet.settings.preloadPerDayCap.desc": "通用后台审阅准备每个本地自然日最多使用的 AI 调用次数。范围 1–20，默认 20。",
 
     "pagelet.settings.reviews.heading": "审阅",
 
@@ -168,7 +157,6 @@
     "pagelet.settings.quietHoursEnd.name": "结束时间",
     "pagelet.settings.quietHoursEnd.desc": "静默时段结束时间（HH:mm，例如 08:00）。",
 
-    "pagelet.settings.quietRecall.heading": "相关回顾",
     "pagelet.settings.foreground.heading": "前台费用",
     "pagelet.settings.foregroundPerHourCap.name": "每小时前台上限",
     "pagelet.settings.foregroundPerHourCap.desc": "每小时最大前台审阅调用数。范围 1–60，默认 10。",
@@ -359,7 +347,6 @@
     "pagelet.status.no": "否",
     "pagelet.status.unknown": "未知",
     "pagelet.command.toggleHints": "拾页：切换主动提示",
-    "pagelet.command.preloadStatus": "拾页：显示后台审阅准备状态",
     "pagelet.command.movePet": "拾页：移动拾页到角落",
     "pagelet.command.togglePet": "拾页：切换拾页可见性",
 
@@ -377,24 +364,6 @@
     "pagelet.research.status.openChat": "请打开 Chat 面板来查证这条发现",
 
 
-    "pagelet.settings.preloadTokenBudgetInput.name": "后台准备输入 token 预算",
-    "pagelet.settings.preloadTokenBudgetInput.desc": "每次后台审阅准备的最大输入 token。范围 1000–4000，默认 4000。",
-    "pagelet.settings.preloadTokenBudgetOutput.name": "后台准备输出 token 预算",
-    "pagelet.settings.preloadTokenBudgetOutput.desc": "每次后台审阅准备的最大输出 token。范围 500–1000，默认 1000。",
-
-
-    "pagelet.preload.status.title": "后台审阅准备状态",
-    "pagelet.preload.status.running": "运行中",
-    "pagelet.preload.status.stopped": "已停止",
-    "pagelet.preload.status.lastCycle": "上次准备",
-    "pagelet.preload.status.budgetHourly": "每小时剩余",
-    "pagelet.preload.status.budgetDaily": "每日剩余",
-    "pagelet.preload.status.cached": "已缓存结果",
-    "pagelet.preload.status.notRunning": "后台审阅准备未运行。",
-    "pagelet.preload.status.never": "从未",
-    "pagelet.preload.status.cacheYes": "有",
-    "pagelet.preload.status.cacheNo": "无",
-    "pagelet.preload.status.notice": "后台审阅准备：{state}\n上次：{last}\n预算：{hourly}h / {daily}d\n缓存：{cache}\n发现：{findings}",
 
     "pagelet.panel.layout.review": "最近回顾",
     "pagelet.panel.layout.current": "当前笔记分析",

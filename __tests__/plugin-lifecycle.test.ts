@@ -5,7 +5,6 @@ import { setPlatformMobile, resetPlatform } from "./helpers/platform-mock";
 import { DomStubNode, findAllByTag } from './helpers/dom-stub';
 import { AssistantHelper } from '../src/ai';
 import { pluginT } from '../src/locales/plugin';
-import { MetadataUpdater, type MetadataUpdaterDependencies } from '../src/plugin/metadata-updater';
 import { CalloutIntegration } from '../src/plugin/callout-integration';
 import { MemoryStatusNotifier } from '../src/plugin/memory-status';
 import { LocalGraphIntegration } from '../src/plugin/local-graph-integration';
@@ -744,13 +743,12 @@ describe('B-106 feature and permission Plugin integration', () => {
     it('keeps all source scopes closed through a failed save, then publishes only their captured arrays', async () => {
         const { plugin, state, adapter, readPersisted } = await fixture();
         const scopePatch = (paths: string[]): SettingsPermissionPatch => ({
-            vssCacheExcludePath: [...paths], metadataExcludePath: [...paths],
+            vssCacheExcludePath: [...paths],
             dataBoundary: { excludedFolders: [...paths], excludedTags: [...paths] },
             pagelet: { excludedFolders: [...paths], excludedTags: [...paths], excludedPatterns: [...paths] },
         });
         const readScopes = () => ({
             vssCacheExcludePath: plugin.settings.vssCacheExcludePath,
-            metadataExcludePath: plugin.settings.metadataExcludePath,
             dataBoundary: { excludedFolders: plugin.settings.dataBoundary.excludedFolders, excludedTags: plugin.settings.dataBoundary.excludedTags },
             pagelet: { excludedFolders: plugin.settings.pagelet.excludedFolders, excludedTags: plugin.settings.pagelet.excludedTags, excludedPatterns: plugin.settings.pagelet.excludedPatterns },
         });
@@ -3460,38 +3458,6 @@ describe("inline AI setup coordinator", () => {
             unloadStatistics: jest.fn(() => order.push("stats")),
         };
         internals.calloutIntegration = { dispose: jest.fn() };
-        const metadataGetCache = jest.fn<MetadataUpdaterDependencies["metadataCache"]["getCache"]>(() => null);
-        const metadataProcessFrontMatter = jest.fn<MetadataUpdaterDependencies["fileManager"]["processFrontMatter"]>(
-            async () => undefined,
-        );
-        const metadataEventRef = {};
-        const metadataWorkspaceOn = jest.fn<MetadataUpdaterDependencies["workspace"]["on"]>(() => metadataEventRef as never);
-        const metadataRegisterEvent = jest.fn<MetadataUpdaterDependencies["registerEvent"]>();
-        const metadataUpdater = new MetadataUpdater({
-            workspace: {
-                on: metadataWorkspaceOn,
-            },
-            metadataCache: { getCache: metadataGetCache },
-            fileManager: { processFrontMatter: metadataProcessFrontMatter },
-            getSettings: () => ({
-                enableMetadataUpdating: true,
-                metadataExcludePath: [],
-                metadatas: [],
-            }),
-            log: jest.fn(),
-            setActive: (active: boolean) => {
-                if (!active) order.push("metadata-dispose");
-            },
-            notifyDisabled: jest.fn(),
-            registerEvent: metadataRegisterEvent,
-        });
-        metadataUpdater.toggle();
-        expect(metadataRegisterEvent).toHaveBeenCalledWith(metadataEventRef);
-        const metadataListener = metadataWorkspaceOn.mock.calls[0]?.[1];
-        expect(metadataListener).toEqual(expect.any(Function));
-        const MetadataTestFile = TFile as unknown as new (path: string) => TFile;
-        metadataListener?.(new MetadataTestFile("Notes/BeforeUnload.md"));
-        internals.metadataUpdater = metadataUpdater;
         internals.activeFeatureOptionsModal = {
             close: jest.fn(() => order.push("feature-modal-close")),
         };
@@ -3522,7 +3488,6 @@ describe("inline AI setup coordinator", () => {
         await Promise.resolve();
 
         expect(order).toEqual([
-            "metadata-dispose",
             "feature-modal-close",
             "share-close",
             "status-cancel",
@@ -3531,14 +3496,11 @@ describe("inline AI setup coordinator", () => {
             "drain-start",
         ]);
         expect(dispose).not.toHaveBeenCalled();
-        metadataListener?.(new MetadataTestFile("Notes/AfterDispose.md"));
         await jest.advanceTimersByTimeAsync(100);
-        expect(metadataProcessFrontMatter).not.toHaveBeenCalled();
         releaseIdle();
         await unloading;
 
         expect(order).toEqual([
-            "metadata-dispose",
             "feature-modal-close",
             "share-close",
             "status-cancel",
@@ -3571,7 +3533,6 @@ describe("inline AI setup coordinator", () => {
             destroyUnloadedRuntime: jest.fn(),
             finishUnloadAfterSharedService: jest.fn(),
         };
-        internals.metadataUpdater = { dispose: jest.fn() };
         internals.shareCardActions = { closeAll: jest.fn() };
         internals.localGraphIntegration = { disposeObserver: jest.fn() };
         internals.memoryStatusNotifier = { cancelPending: jest.fn() };

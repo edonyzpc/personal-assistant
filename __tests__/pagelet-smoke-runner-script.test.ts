@@ -54,11 +54,16 @@ describe('Pagelet smoke settings preflight', () => {
         },
     );
 
-    it.each([false, true])('detects whether a retired discovery alias remains registered: %s', async (registered) => {
+    it.each([
+        ['pa-pagelet:review-current', false],
+        ['pa-pagelet:review-current', true],
+        ['pa-pagelet:background-preparation-status', false],
+        ['pa-pagelet:background-preparation-status', true],
+    ] as const)('detects whether retired command %s remains registered: %s', async (id, registered) => {
         const checks = await settingsPreflight({ pagelet: { enabled: true, backgroundDiscoveryEnabled: true } },
-            registered ? { 'personal-assistant:pa-pagelet:review-current': {} } : {});
+            registered ? { [`personal-assistant:${id}`]: {} } : {});
         expect(checks).toContainEqual(expect.objectContaining({
-            name: 'Retired command absent: pa-pagelet:review-current',
+            name: `Retired command absent: ${id}`,
             status: registered ? 'FAIL' : 'PASS',
         }));
     });

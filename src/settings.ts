@@ -166,23 +166,6 @@ export interface MaintenanceReviewSettings {
     actionLog: MaintenanceMoveActionLogEntry[];
 }
 
-/** SG-01: Off/On two-tier, no frequency cap. */
-export type QuietRecallMode = "off" | "on";
-
-export interface QuietRecallSettings {
-    enabled: boolean;
-    /** @deprecated Use quietRecallMode instead. Kept for migration. */
-    bubbleNudgesEnabled: boolean;
-    /** SG-01: User-facing Off/On toggle. Default "off". */
-    quietRecallMode: QuietRecallMode;
-}
-
-export const QUIET_RECALL_DEFAULTS: Readonly<QuietRecallSettings> = Object.freeze({
-    enabled: true,
-    bubbleNudgesEnabled: false,
-    quietRecallMode: "off",
-});
-
 export const DATA_BOUNDARY_DEFAULTS: Readonly<DataBoundarySettings> = Object.freeze({
     excludedFolders: [...DEFAULT_DATA_BOUNDARY_POLICY.excludedFolders],
     excludedTags: [...DEFAULT_DATA_BOUNDARY_POLICY.excludedTags],
@@ -270,9 +253,6 @@ export interface PluginManagerSettings {
             rgb: number,
         }
     }[];
-    enableMetadataUpdating: boolean;
-    metadatas: { key: string, value: string, t: string }[];
-    metadataExcludePath: string[];
     statisticsType: string;
     statsPath: string;
     statisticsVaultId: string;
@@ -338,8 +318,6 @@ export interface PluginManagerSettings {
     memoryGovernance: MemoryGovernanceSettings;
     /** Historical actions from manual Pagelet Maintenance Review. */
     maintenanceReview: MaintenanceReviewSettings;
-    /** Quiet Recall surfaces. Bubble nudges remain disabled until the later slice. */
-    quietRecall: QuietRecallSettings;
     /** Last structure-based cross-note pattern detection run timestamp. */
     lastPatternDetectionAt?: string;
     /** Global Focus Mode: suppress all PA-initiated proactive behavior. */
@@ -388,11 +366,6 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
             }
         }
     ],
-    enableMetadataUpdating: false,
-    metadatas: [
-        { key: "modify", value: "YYYY-MM-DD HH:mm:ss", t: "moment" },
-    ],
-    metadataExcludePath: [],
     statisticsType: "overview",
     statsPath: "",
     statisticsVaultId: "",
@@ -459,7 +432,6 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     maintenanceReview: {
         actionLog: [],
     },
-    quietRecall: { ...QUIET_RECALL_DEFAULTS },
     lastPatternDetectionAt: undefined,
     focusMode: false,
     retrievalHabitProfile: {
@@ -521,13 +493,20 @@ export function normalizeConfirmedMemoryCount(value: unknown): number {
 
 const DEPRECATED_SIMPLE_SETTINGS_KEYS = [
     "memoryAutoCheckBeforeChat", "skillContextEnabled", "enabledSkillIds", "operationsAgentEnabled",
-    "shareAnonymousCapabilityUsage",
+    "shareAnonymousCapabilityUsage", "quietRecall", "enableMetadataUpdating", "metadatas",
+    "metadataExcludePath",
 ] as const;
 const RETIRED_OPERATIONS_AUDIT_SETTINGS_KEYS = [
     "operationsAuditIncludeContent",
     "operationsAuditRetentionDays",
 ] as const;
-const DEPRECATED_PAGELET_SETTINGS_KEYS = ["preloadEnabled", "deepDiscoverEnabled"] as const;
+const DEPRECATED_PAGELET_SETTINGS_KEYS = [
+    "preloadEnabled", "deepDiscoverEnabled", "ribbonPosition", "preloadInterval",
+    "preloadPerHourCap", "preloadPerDayCap", "preloadTokenBudget",
+    "scopeRecapPreparationEnabled", "scopeRecapBackgroundAuthorization",
+    "scopeRecapAuthorizationContextId", "scopeRecapHighValueHints",
+    "quietRecallMode", "quietRecallExplained", "quietAcknowledged",
+] as const;
 const DEPRECATED_WEEKLY_REVIEW_SETTINGS_KEYS = ["enabled", "preparedReviewEnabled"] as const;
 
 export function hasDeprecatedSimpleSettingsFields(value: unknown): boolean {
@@ -594,7 +573,6 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
         },
     };
     merged.previewTags = normalizeStringArray(loadedObject.previewTags, DEFAULT_SETTINGS.previewTags);
-    merged.metadataExcludePath = normalizeStringArray(loadedObject.metadataExcludePath, DEFAULT_SETTINGS.metadataExcludePath);
     merged.vssCacheExcludePath = normalizeStringArray(loadedObject.vssCacheExcludePath, DEFAULT_SETTINGS.vssCacheExcludePath);
     const loadedRetrievalFlags = isRecord(loadedObject.retrievalOptimizationFlags)
         ? loadedObject.retrievalOptimizationFlags
@@ -616,7 +594,6 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
         }
         : undefined;
     merged.colorGroups = normalizeGraphColorArray(loadedObject.colorGroups, DEFAULT_SETTINGS.colorGroups);
-    merged.metadatas = normalizeMetadataArray(loadedObject.metadatas, DEFAULT_SETTINGS.metadatas);
     merged.confirmedMemoryCount = normalizeConfirmedMemoryCount(loadedObject.confirmedMemoryCount);
     merged.memoryAutoAcceptPaused = typeof loadedObject.memoryAutoAcceptPaused === "boolean"
         ? loadedObject.memoryAutoAcceptPaused
@@ -652,20 +629,6 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     merged.savedInsights = mergeSavedInsightSettings(loadedObject.savedInsights);
     merged.memoryGovernance = mergeMemoryGovernanceSettings(loadedObject.memoryGovernance);
     merged.maintenanceReview = mergeMaintenanceReviewSettings(loadedObject.maintenanceReview);
-    // A short-lived B-118 settings shape persisted the visible toggle under
-    // `pagelet.quietRecallMode` while runtime consumed `quietRecall` instead.
-    // An explicit canonical mode is authoritative. When that field is absent,
-    // absorb the stale mirror before falling back to the older boolean
-    // migration. `mergePageletSettings` deliberately drops the mirror, so the
-    // next save leaves a single persisted source of truth.
-    const migratedPageletQuietRecallMode = loadedPagelet.quietRecallMode === "on"
-        || loadedPagelet.quietRecallMode === "off"
-        ? loadedPagelet.quietRecallMode
-        : undefined;
-    merged.quietRecall = mergeQuietRecallSettings(
-        loadedObject.quietRecall,
-        migratedPageletQuietRecallMode,
-    );
     merged.lastPatternDetectionAt = typeof loadedObject.lastPatternDetectionAt === "string"
         && loadedObject.lastPatternDetectionAt.trim()
         ? loadedObject.lastPatternDetectionAt.trim()
@@ -903,36 +866,6 @@ export function mergeMaintenanceReviewSettings(loaded: unknown): MaintenanceRevi
     };
 }
 
-export function mergeQuietRecallSettings(
-    loaded: unknown,
-    legacyPageletMode?: QuietRecallMode,
-): QuietRecallSettings {
-    const loadedObject = isRecord(loaded) ? loaded : {};
-    const legacyBubbleNudgesEnabled = typeof loadedObject.bubbleNudgesEnabled === "boolean"
-        ? loadedObject.bubbleNudgesEnabled
-        : undefined;
-    const bubbleNudgesEnabled = legacyBubbleNudgesEnabled
-        ?? QUIET_RECALL_DEFAULTS.bubbleNudgesEnabled;
-    // SG-01 migration: old bubbleNudgesEnabled: true → "on"; false/missing → "off"
-    let quietRecallMode: QuietRecallMode;
-    if (loadedObject.quietRecallMode === "on" || loadedObject.quietRecallMode === "off") {
-        quietRecallMode = loadedObject.quietRecallMode;
-    } else if (legacyPageletMode === "on" || legacyPageletMode === "off") {
-        quietRecallMode = legacyPageletMode;
-    } else if (legacyBubbleNudgesEnabled !== undefined) {
-        quietRecallMode = legacyBubbleNudgesEnabled ? "on" : "off";
-    } else {
-        quietRecallMode = QUIET_RECALL_DEFAULTS.quietRecallMode;
-    }
-    return {
-        enabled: typeof loadedObject.enabled === "boolean"
-            ? loadedObject.enabled
-            : QUIET_RECALL_DEFAULTS.enabled,
-        bubbleNudgesEnabled,
-        quietRecallMode,
-    };
-}
-
 export function mergeRetrievalHabitProfileSettings(loaded: unknown): RetrievalHabitProfileSettings {
     return normalizeRetrievalHabitProfileSettings(loaded);
 }
@@ -971,21 +904,6 @@ function normalizeGraphColorArray(value: unknown, fallback: PluginManagerSetting
                 a: entry.color.a,
                 rgb: entry.color.rgb,
             },
-        }));
-}
-
-function normalizeMetadataArray(value: unknown, fallback: PluginManagerSettings["metadatas"]): PluginManagerSettings["metadatas"] {
-    if (!Array.isArray(value)) return JSON.parse(JSON.stringify(fallback));
-    return value
-        .filter((entry): entry is { key: string; value: string; t: string } =>
-            isRecord(entry)
-            && typeof entry.key === "string"
-            && typeof entry.value === "string"
-            && typeof entry.t === "string")
-        .map((entry) => ({
-            key: entry.key,
-            value: entry.value,
-            t: entry.t,
         }));
 }
 
@@ -1116,7 +1034,6 @@ export class SettingTab extends PluginSettingTab {
     private qwenOptionsContainer: HTMLDivElement | null = null;
     private memorySubContainer: HTMLDivElement | null = null;
     private memoryAdvancedContainer: HTMLDivElement | null = null;
-    private metadataContainer: HTMLDivElement | null = null;
     private featuredImageContainer: HTMLDivElement | null = null;
     private featureOptionsModal: Modal | null = null;
     private pageletSaveLocationContainer: HTMLElement | null = null;
@@ -1167,20 +1084,17 @@ export class SettingTab extends PluginSettingTab {
     //
     // Toggle / Dropdown / Button onChange handlers still save immediately —
     // those are discrete user actions where each value flip is meaningful and
-    // some of them rebuild dependent UI (e.g. enableGraphColors,
-    // enableMetadataUpdating, aiProvider).
+    // some of them rebuild dependent UI (e.g. enableGraphColors, aiProvider).
     private hasPendingSettingsSave = false;
     private settingsEditRevision = 0;
     private settingsSaveError = false;
     private providerSaveError = false;
     private settingsVisible = false;
-    private metadataRenderRevision = 0;
     private settingsSaveFeedback: HTMLElement | null = null;
     private sourceScopeStates = {
         folders: createSourceScopeSettingState(),
         tags: createSourceScopeSettingState(),
         memory: createSourceScopeSettingState(),
-        metadata: createSourceScopeSettingState(),
         pagelet: {
             excludedFolders: createSourceScopeSettingState(),
             excludedTags: createSourceScopeSettingState(),
@@ -1321,7 +1235,6 @@ export class SettingTab extends PluginSettingTab {
         this.qwenOptionsContainer = null;
         this.memorySubContainer = null;
         this.memoryAdvancedContainer = null;
-        this.metadataContainer = null;
         this.featuredImageContainer = null;
         this.memoryModelTextControl = null;
         this.aiProviderPresetDropdown = null;
@@ -1387,7 +1300,6 @@ export class SettingTab extends PluginSettingTab {
                     this.memoryAdvancedContainer = this.createSettingsDetail(p, "plugin.settings.simple.memoryMaintenance");
                     this.rebuildMemoryAdvanced();
                 },
-                (p) => this.renderMetadataSection(this.createSettingsDetail(p, "plugin.settings.metadata.title")),
                 (p) => this.renderAdvancedSection(this.createSettingsDetail(p, "plugin.settings.advanced.title")),
                 (p) => this.renderLegalSection(this.createSettingsDetail(p, "plugin.settings.legal.title")),
             ] },
@@ -1617,8 +1529,8 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private clearSourceScopeBindings(): void {
-        const { folders, tags, memory, metadata, pagelet } = this.sourceScopeStates;
-        for (const state of [folders, tags, memory, metadata, ...Object.values(pagelet)]) {
+        const { folders, tags, memory, pagelet } = this.sourceScopeStates;
+        for (const state of [folders, tags, memory, ...Object.values(pagelet)]) {
             state.refresh = undefined;
         }
     }
@@ -2539,149 +2451,6 @@ export class SettingTab extends PluginSettingTab {
             .addButton((button) => button
                 .setButtonText(this.t("plugin.settings.legal.open"))
                 .onClick(() => { this.featureOptionsModal = this.plugin.openGraphOptions(); }));
-    }
-
-    private renderMetadataSection(parentEl: HTMLElement): void {
-        const plugin = this.plugin;
-        // setting options for updating metadata
-        parentEl.createEl('h2', { text: this.t("plugin.settings.metadata.title") });
-        const metadataSetting = new Setting(parentEl).setName(this.t("plugin.settings.metadata.enabled.name"))
-            .addToggle(toggle => this.configurePermissionToggle("enableMetadataUpdating", toggle,
-                () => plugin.settings.enableMetadataUpdating,
-                (value) => plugin.saveSettingsPermissions({ enableMetadataUpdating: value }),
-                undefined, () => this.rebuildMetadataList()));
-        metadataSetting.descEl.createEl('p', undefined, (p) => {
-            p.innerText = this.t("plugin.settings.metadata.descPrefix");
-            p.createEl('a', undefined, (link) => {
-                link.innerText = this.t("plugin.settings.metadata.descLink");
-                link.href = 'https://momentjs.com/docs/#/displaying/format/';
-            });
-        });
-        this.metadataContainer = parentEl.createDiv();
-        this.rebuildMetadataList();
-    }
-
-    private rebuildMetadataList(): void {
-        if (!this.metadataContainer) return;
-        const renderRevision = ++this.metadataRenderRevision;
-        this.sourceScopeStates.metadata.refresh = undefined;
-        this.metadataContainer.empty();
-        const plugin = this.plugin;
-        if (!plugin.settings.enableMetadataUpdating) return;
-
-        const container = this.metadataContainer;
-        // deep copy metadata for rendering
-        const metas = JSON.parse(JSON.stringify(plugin.settings.metadatas)) as PluginManagerSettings["metadatas"];
-        new Setting(container).setName("---");
-        for (let i = 0; i < metas.length; i++) {
-            const index = this.findMetadata(metas[i].key);
-            new Setting(container)
-                .setName(`${metas[i].key}: `)
-                .addText(text => {
-                    text.setValue(plugin.settings.metadatas[index].value)
-                        .onChange((value) => {
-                            if (index > -1) {
-                                plugin.settings.metadatas[index].value = value;
-                                this.debouncedSave();
-                            }
-                        })
-                })
-                .addExtraButton(btn => {
-                    btn.setIcon("trash").setTooltip(this.t("plugin.settings.graphColors.remove")).onClick(async () => {
-                        const generation = this.memoryControlCenterGeneration;
-                        btn.setDisabled(true);
-                        if (index > -1) {
-                            this.log("removing metadata rule", plugin.settings.metadatas[index]);
-                            plugin.settings.metadatas.splice(index, 1);
-                        }
-                        await this.saveImmediateSettings();
-                        if (generation !== this.memoryControlCenterGeneration || container !== this.metadataContainer
-                            || renderRevision !== this.metadataRenderRevision) return;
-                        this.rebuildMetadataList();
-                    });
-                })
-        }
-        new Setting(container).setName("---");
-
-        // Initialize with the dropdown's first option ("string") so a user who
-        // clicks Add without touching the dropdown gets a valid type instead of
-        // undefined being persisted to data.json.
-        let key = "";
-        let value = "";
-        let t = "string";
-        let pendingAddition: PluginManagerSettings["metadatas"][number] | null = null;
-        // Track the input components so the Add handler can reset their visible
-        // value after a successful save — otherwise the form retains the just-
-        // submitted text and the next entry has to be typed over it.
-        let keyInput: { setValue: (v: string) => unknown } | null = null;
-        let valueInput: { setValue: (v: string) => unknown } | null = null;
-        new Setting(container)
-            .setName(this.t("plugin.settings.metadata.add.name"))
-            .setDesc(this.t("plugin.settings.metadata.add.desc"))
-            .addText(text => {
-                keyInput = text;
-                text.setPlaceholder('key')
-                    .setValue(key)
-                    .onChange(async (val) => {
-                        key = val;
-                    })
-            })
-            .addText(text => {
-                valueInput = text;
-                text.setPlaceholder('value')
-                    .setValue(value)
-                    .onChange(async (val) => {
-                        value = val;
-                    })
-            })
-            .addDropdown(dropDown => {
-                dropDown.addOption('string', this.t("plugin.settings.metadata.dropdown.string"));
-                dropDown.addOption('moment', this.t("plugin.settings.metadata.dropdown.moment"));
-                dropDown.setValue(t);
-                dropDown.onChange(async (value) => {
-                    t = value;
-                });
-            })
-            .addButton(btn => {
-                btn.setButtonText(this.t("plugin.settings.metadata.add.button")).onClick(async () => {
-                    const generation = this.memoryControlCenterGeneration;
-                    const trimmedKey = key.trim();
-                    if (!trimmedKey) {
-                        new Notice(this.t("plugin.settings.metadata.keyRequired"), 4000);
-                        return;
-                    }
-                    this.log("adding new frontmatter");
-                    const submitted = { key: trimmedKey, value, t };
-                    if (!pendingAddition || pendingAddition.key !== trimmedKey
-                        || pendingAddition.value !== value || pendingAddition.t !== t
-                        || !plugin.settings.metadatas.includes(pendingAddition)) {
-                        pendingAddition = submitted;
-                        plugin.settings.metadatas.push(pendingAddition);
-                    }
-                    btn.setDisabled(true);
-                    const saved = await this.saveImmediateSettings();
-                    if (generation !== this.memoryControlCenterGeneration || container !== this.metadataContainer
-                        || renderRevision !== this.metadataRenderRevision) return;
-                    btn.setDisabled(false);
-                    if (!saved || key.trim() !== submitted.key || value !== submitted.value || t !== submitted.t) return;
-                    // Reset the form so the next add starts blank. We update both
-                    // the captured local vars (consumed by the next Add click)
-                    // and the visible inputs (rebuildMetadataList will re-mount,
-                    // but resetting first avoids a flash of stale text).
-                    key = "";
-                    value = "";
-                    keyInput?.setValue("");
-                    valueInput?.setValue("");
-                    this.rebuildMetadataList();
-                })
-            });
-        this.renderSourceExclusion(container, new Setting(container)
-            .setName(this.t("plugin.settings.metadata.excludePath.name"))
-            .setDesc(this.t("plugin.settings.metadata.excludePath.desc")),
-        this.sourceScopeStates.metadata, "tmp/,notes/templates",
-        () => plugin.settings.metadataExcludePath,
-        (next) => plugin.saveSettingsPermissions({ metadataExcludePath: next }), undefined, false);
-        this.markFormControlSettings(container);
     }
 
     private renderStatisticsSection(parentEl: HTMLElement): void {
@@ -4387,9 +4156,4 @@ export class SettingTab extends PluginSettingTab {
         this.markFormControlSettings(container);
     }
 
-    private findMetadata(metaKey: string) {
-        return this.plugin.settings.metadatas.findIndex((m) => {
-            return m.key === metaKey;
-        })
-    }
 }

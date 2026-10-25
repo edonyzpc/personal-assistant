@@ -118,21 +118,6 @@ describe("pageletT lookup", () => {
         expect(zh).toContain("设置");
     });
 
-    it("describes background caps as actual AI calls rather than preparation cycles", () => {
-        const en = pageletT("pagelet.settings.preloadPerHourCap.desc", "en");
-        const zh = pageletT("pagelet.settings.preloadPerHourCap.desc", "zh");
-
-        expect(en).toContain("AI calls");
-        expect(en).toContain("generic background preparation");
-        expect(en).toContain("rolling hour");
-        expect(en).toContain("Range 1–2");
-        expect(en).not.toContain("preparation cycles");
-        expect(zh).toContain("后台审阅准备");
-        expect(zh).toContain("AI 调用次数");
-        expect(zh).toContain("滚动小时");
-        expect(zh).toContain("范围 1–2");
-        expect(zh).not.toContain("准备周期数");
-    });
 });
 
 describe("makePageletTranslator", () => {

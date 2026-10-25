@@ -761,7 +761,6 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
                 ...group,
                 color: { ...group.color },
             })),
-            metadatas: DEFAULT_SETTINGS.metadatas.map((metadata) => ({ ...metadata })),
             quickCapture: { ...DEFAULT_SETTINGS.quickCapture },
             dataBoundary: {
                 excludedFolders: [...DEFAULT_SETTINGS.dataBoundary.excludedFolders],
@@ -808,7 +807,6 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
                     })),
                 })),
             },
-            quietRecall: { ...DEFAULT_SETTINGS.quietRecall },
             memoryExtractionConsent: { ...DEFAULT_SETTINGS.memoryExtractionConsent },
             retrievalHabitProfile: {
                 enabled: DEFAULT_SETTINGS.retrievalHabitProfile.enabled,
@@ -1289,8 +1287,23 @@ describe('simple settings canonicalization', () => {
         const raw = {
             memoryAutoCheckBeforeChat: false, skillContextEnabled: false, enabledSkillIds: [], operationsAgentEnabled: false,
             shareAnonymousCapabilityUsage: true,
-            pagelet: { preloadEnabled: false, deepDiscoverEnabled: false,
-                backgroundDiscoveryEnabled: false, proactiveHints: false, preloadInterval: 42 },
+            quietRecall: { enabled: false, bubbleNudgesEnabled: true, quietRecallMode: 'on' },
+            enableMetadataUpdating: true,
+            metadatas: [{ key: 'modify', value: 'invalid', t: 'string' }],
+            metadataExcludePath: ['legacy/'],
+            pagelet: {
+                preloadEnabled: false, deepDiscoverEnabled: false, ribbonPosition: 'hidden',
+                preloadInterval: 42, preloadPerHourCap: 1, preloadPerDayCap: 1,
+                preloadTokenBudget: { input: 1000, output: 500 },
+                scopeRecapPreparationEnabled: true,
+                scopeRecapBackgroundAuthorization: 'authorized-v1',
+                scopeRecapAuthorizationContextId: 'legacy-context',
+                scopeRecapHighValueHints: true, quietRecallMode: 'on',
+                quietRecallExplained: true, quietAcknowledged: true,
+                backgroundDiscoveryEnabled: false, proactiveHints: false,
+                scopeRecapNudgeSuppressions: [{ fingerprint: 'keep-suppression', shownAt: 123 }],
+                quietRecallLastAcceptedCount: 3,
+            },
             weeklyReview: { enabled: false, preparedReviewEnabled: true, history: ['keep-weekly-data'] },
             maintenanceReview: { weeklyScanEnabled: true, actionLog: [{ id: 'keep-history' }], futureField: 'keep' },
             memoryExtractionConsent: { state: 'paused', version: 1 },
@@ -1298,7 +1311,11 @@ describe('simple settings canonicalization', () => {
             dataBoundary: { excludedFolders: ['private'] }, customFutureField: 'keep',
         };
         const expected = {
-            pagelet: { backgroundDiscoveryEnabled: false, proactiveHints: false, preloadInterval: 42 },
+            pagelet: {
+                backgroundDiscoveryEnabled: false, proactiveHints: false,
+                scopeRecapNudgeSuppressions: raw.pagelet.scopeRecapNudgeSuppressions,
+                quietRecallLastAcceptedCount: 3,
+            },
             weeklyReview: { history: raw.weeklyReview.history },
             maintenanceReview: { actionLog: raw.maintenanceReview.actionLog, futureField: 'keep' },
             memoryExtractionConsent: raw.memoryExtractionConsent,
@@ -1309,11 +1326,17 @@ describe('simple settings canonicalization', () => {
         expect(canonical).toEqual(expected);
         expect(omitDeprecatedSimpleSettingsFields(canonical)).toEqual(expected);
         expect(raw.pagelet.preloadEnabled).toBe(false);
+        expect(raw.pagelet.ribbonPosition).toBe('hidden');
+        expect(raw.quietRecall.quietRecallMode).toBe('on');
+        expect(raw.metadatas).toHaveLength(1);
         expect(raw.weeklyReview.enabled).toBe(false);
         expect(raw.maintenanceReview.weeklyScanEnabled).toBe(true);
         expect(hasDeprecatedSimpleSettingsFields(raw)).toBe(true);
         expect(hasDeprecatedSimpleSettingsFields(canonical)).toBe(false);
-        expect(mergeLoadedSettings(raw).pagelet.backgroundDiscoveryEnabled).toBe(false);
+        const merged = mergeLoadedSettings(raw);
+        expect(merged.pagelet.backgroundDiscoveryEnabled).toBe(false);
+        expect(merged.pagelet.scopeRecapNudgeSuppressions).toEqual([{ fingerprint: 'keep-suppression', shownAt: 123 }]);
+        expect(merged.pagelet.quietRecallLastAcceptedCount).toBe(3);
     });
 
     it('does not expose switches for necessary guides or Memory readiness', () => {
@@ -1333,7 +1356,6 @@ describe('simple settings canonicalization', () => {
 describe('Phase 1 refactor invariants', () => {
     type SettingTabInternals = {
         rebuildProviderConfig: () => void;
-        metadataContainer: unknown;
         providerConfigContainer: unknown;
         featuredImageContainer: unknown;
         memoryAdvancedContainer: unknown;
@@ -1420,7 +1442,6 @@ describe('Phase 1 refactor invariants', () => {
 
         const internals = tab as unknown as SettingTabInternals;
         const before = {
-            metadata: internals.metadataContainer,
             provider: internals.providerConfigContainer,
             featured: internals.featuredImageContainer,
         };
@@ -1435,7 +1456,6 @@ describe('Phase 1 refactor invariants', () => {
         expect(plugin.saveSettings).not.toHaveBeenCalled();
         expect(plugin.settings.showAdvancedMemoryControls).toBe(false);
         // Sibling sub-container refs preserved across the rebuild.
-        expect(internals.metadataContainer).toBe(before.metadata);
         expect(internals.providerConfigContainer).toBe(before.provider);
         expect(internals.featuredImageContainer).toBe(before.featured);
     });
@@ -1638,7 +1658,7 @@ describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
 });
 
 describe('Phase 2 P0 data integrity', () => {
-    it('renders linked descriptions and editable metadata labels in a separate Settings window', () => {
+    it('renders linked descriptions in a separate Settings window', () => {
         const ForeignDocumentFragment = runInNewContext(`
             (class DocumentFragment extends Base {
                 constructor() { super('fragment'); }
@@ -1657,8 +1677,7 @@ describe('Phase 2 P0 data integrity', () => {
             }),
         });
         try {
-            const plugin = makePlugin({ enableMetadataUpdating: true,
-                metadatas: [{ key: 'synthetic-label', value: 'preserved-value', t: 'string' }] });
+            const plugin = makePlugin();
             const tab = new SettingTab(makeMockApp() as never, plugin as never);
             tab.containerEl = new MockContainerEl('div') as never;
             tab.display();
@@ -1666,7 +1685,6 @@ describe('Phase 2 P0 data integrity', () => {
             const records = getMockSettingRecords();
             for (const name of [
                 pluginT('plugin.settings.record.fileFormat.name'),
-                pluginT('plugin.settings.metadata.enabled.name'),
             ]) {
                 const row = records.find((record) => record.name === name)!;
                 expect(row.desc).not.toContain('[object DocumentFragment]');
@@ -1675,8 +1693,6 @@ describe('Phase 2 P0 data integrity', () => {
                 expect(link && mockDomTextContent(link)).toBeTruthy();
             }
             expect(records.some((record) => record.name?.includes('[object DocumentFragment]'))).toBe(false);
-            expect(records.find((record) => record.name === 'synthetic-label: ')?.texts[0]?.value)
-                .toBe('preserved-value');
             expect(plugin.saveSettings).not.toHaveBeenCalled();
         } finally {
             if (originalDocument) Object.defineProperty(globalThis, 'activeDocument', originalDocument);
@@ -1684,43 +1700,6 @@ describe('Phase 2 P0 data integrity', () => {
         }
     });
 
-    it('isEnabledMetadataUpdating is no longer a persisted setting', () => {
-        expect(DEFAULT_SETTINGS).not.toHaveProperty('isEnabledMetadataUpdating');
-        // The user-facing toggle is unchanged.
-        expect(DEFAULT_SETTINGS).toHaveProperty('enableMetadataUpdating');
-    });
-
-    it('rejects empty metadata key on Add and does not mutate settings', async () => {
-        const plugin = makePlugin({ enableMetadataUpdating: true });
-        const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        tab.containerEl = new MockContainerEl('div') as never;
-        tab.display();
-
-        const records = getMockSettingRecords();
-        const addRecord = records.find((record) => record.name === 'Add Key:Value in frontmatter');
-        expect(addRecord).toBeDefined();
-        const addButton = addRecord!.buttons.find((button) => button.text === 'Add');
-        expect(addButton?.onClick).toBeDefined();
-
-        const beforeLength = plugin.settings.metadatas.length;
-        const beforeSaveCount = plugin.saveSettings.mock.calls.length;
-
-        await addButton!.onClick!();
-
-        expect(plugin.settings.metadatas).toHaveLength(beforeLength);
-        expect(plugin.saveSettings.mock.calls.length).toBe(beforeSaveCount);
-    });
-
-    it('initializes the metadata Add dropdown with the "string" type', () => {
-        const plugin = makePlugin({ enableMetadataUpdating: true });
-        const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        tab.containerEl = new MockContainerEl('div') as never;
-        tab.display();
-
-        const records = getMockSettingRecords();
-        const addRecord = records.find((record) => record.name === 'Add Key:Value in frontmatter');
-        expect(addRecord?.dropdowns[0]?.value).toBe('string');
-    });
 });
 
 function setMockConfirmDecision(decision: boolean | undefined) {
@@ -3524,7 +3503,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         const system = container.querySelector('#pa-settings-group-system')!;
         expect(privacy.findAll('h2').map((node) => node.textContent)).toContain('Memory');
         expect(privacy.findAll('h2').map((node) => node.textContent)).not.toContain('Metadata Management');
-        expect(system.findAll('h2').map((node) => node.textContent)).toContain('Metadata Management');
+        expect(system.findAll('h2').map((node) => node.textContent)).not.toContain('Metadata Management');
         const records = getMockSettingRecords();
         expect(records.filter((row) => row.name === pluginT('plugin.settings.graph.options.title'))).toHaveLength(1);
         expect(records.filter((row) => row.name === pluginT('plugin.settings.featuredImage.options.title'))).toHaveLength(1);
@@ -3653,20 +3632,16 @@ describe('Phase 3 IA reorder + provider UX', () => {
         });
     });
 
-    it('preserves Quiet Recall and feedback defaults without unused Weekly Review switches', () => {
+    it('retires Quiet Recall config while preserving feedback defaults and data', () => {
         expect(DEFAULT_SETTINGS).not.toHaveProperty('weeklyReview');
-        expect(DEFAULT_SETTINGS.quietRecall).toEqual({
-            enabled: true,
-            bubbleNudgesEnabled: false,
-            quietRecallMode: "off",
-        });
+        expect(DEFAULT_SETTINGS).not.toHaveProperty('quietRecall');
         expect(DEFAULT_SETTINGS.retrievalHabitProfile).toEqual({
             enabled: true,
             state: { aggregates: [] },
         });
         expect(mergeLoadedSettings({
             weeklyReview: { enabled: false, preparedReviewEnabled: true },
-            quietRecall: { enabled: false, bubbleNudgesEnabled: true },
+            quietRecall: { enabled: false, bubbleNudgesEnabled: true, quietRecallMode: 'on' },
             retrievalHabitProfile: {
                 enabled: true,
                 state: {
@@ -3679,10 +3654,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
                 },
             },
         })).toMatchObject({
-            quietRecall: {
-                enabled: false,
-                bubbleNudgesEnabled: true,
-            },
             retrievalHabitProfile: {
                 enabled: true,
                 state: {
@@ -3697,7 +3668,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         });
         expect(mergeLoadedSettings({
             weeklyReview: { enabled: "yes", preparedReviewEnabled: "yes" },
-            quietRecall: { enabled: "yes", bubbleNudgesEnabled: "yes" },
+            quietRecall: { enabled: "yes", bubbleNudgesEnabled: "yes", quietRecallMode: "yes" },
             retrievalHabitProfile: {
                 enabled: "yes",
                 state: {
@@ -3710,10 +3681,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
                 },
             },
         })).toMatchObject({
-            quietRecall: {
-                enabled: true,
-                bubbleNudgesEnabled: false,
-            },
             retrievalHabitProfile: {
                 enabled: true,
                 state: { aggregates: [] },
@@ -5052,16 +5019,15 @@ describe('Phase 3 IA reorder + provider UX', () => {
 describe('Phase 4 P1 UX', () => {
     it.each([
         ['Excluded folders', 'folders'], ['Excluded tags', 'tags'],
-        ['Memory Exclude Path', 'memory'], ['Meta Updating Exclude Path', 'metadata'],
+        ['Memory Exclude Path', 'memory'],
     ] as const)('retains the %s draft across failed persistence and reopening while the previous scope remains active', async (name, key) => {
-        const plugin = makePlugin({ enableMetadataUpdating: true,
+        const plugin = makePlugin({
             dataBoundary: { ...DEFAULT_SETTINGS.dataBoundary, excludedFolders: ['private'], excludedTags: ['private'] },
-            vssCacheExcludePath: ['private'], metadataExcludePath: ['private'] });
+            vssCacheExcludePath: ['private'] });
         const read = {
             folders: () => plugin.settings.dataBoundary.excludedFolders,
             tags: () => plugin.settings.dataBoundary.excludedTags,
             memory: () => plugin.settings.vssCacheExcludePath,
-            metadata: () => plugin.settings.metadataExcludePath,
         };
         let rejectSave!: (reason: unknown) => void;
         plugin.saveSettings.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { rejectSave = reject; }));
@@ -5260,7 +5226,7 @@ describe('Phase 4 P1 UX', () => {
 
     describe('4a: text input debounce', () => {
         it('text onChange routes through debouncedSave instead of saveSettings', async () => {
-            const plugin = makePlugin({ enableMetadataUpdating: true });
+        const plugin = makePlugin();
             const tab = new SettingTab(makeMockApp() as never, plugin as never);
             tab.containerEl = new MockContainerEl('div') as never;
             tab.display();
@@ -5824,127 +5790,6 @@ describe('Phase 4 P1 UX', () => {
             expect(plugin.settings.displaySectionCounts).toBe(true);
             expect(plugin.settings.countComments).toBe(true);
             expect(plugin.saveSettings.mock.calls.length).toBe(beforeSaves + 2);
-        });
-    });
-
-    describe('4e: metadata form polish', () => {
-        it('preserves a new metadata draft when Remove rebuilds the same container before an older Add save completes', async () => {
-            const plugin = makePlugin({ enableMetadataUpdating: true,
-                metadatas: [{ key: 'existing', value: 'remove me', t: 'string' }] });
-            const saves: Array<() => void> = [];
-            plugin.saveSettings.mockImplementation(() => new Promise<void>((resolve) => { saves.push(resolve); }));
-            const tab = new SettingTab(makeMockApp() as never, plugin as never);
-            tab.containerEl = new MockContainerEl('div') as never;
-            tab.display();
-            const form = () => [...getMockSettingRecords()].reverse()
-                .find((row) => row.name === 'Add Key:Value in frontmatter')!;
-            const initialForm = form();
-            const container = (tab as unknown as { metadataContainer: unknown }).metadataContainer;
-            const removeRow = getMockSettingRecords().find((row) => row.name?.trim() === 'existing:')!;
-            const removing = removeRow.buttons.find((button) => button.text === 'Remove')!.onClick!();
-            initialForm.texts[0].onChange!('submittedKey');
-            initialForm.texts[1].onChange!('submittedValue');
-            const adding = initialForm.buttons[0].onClick!();
-            expect(saves).toHaveLength(2);
-
-            saves[0]();
-            await removing;
-            const currentForm = form();
-            expect(currentForm).not.toBe(initialForm);
-            expect((tab as unknown as { metadataContainer: unknown }).metadataContainer).toBe(container);
-            currentForm.texts[0].onChange!('newDraftKey');
-            currentForm.texts[1].onChange!('newDraftValue');
-            const rebuild = jest.spyOn(tab as unknown as { rebuildMetadataList(): void }, 'rebuildMetadataList');
-
-            saves[1]();
-            await adding;
-            expect(rebuild).not.toHaveBeenCalled();
-            expect(form()).toBe(currentForm);
-            expect(currentForm.texts.map((text) => text.value)).toEqual(['newDraftKey', 'newDraftValue']);
-            expect(plugin.settings.metadatas).toEqual([{ key: 'submittedKey', value: 'submittedValue', t: 'string' }]);
-        });
-
-        it('does not rebuild the reopened metadata form or clear a new draft after an old Add finishes', async () => {
-            const plugin = makePlugin({ enableMetadataUpdating: true });
-            let resolveSave!: () => void;
-            plugin.saveSettings.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveSave = resolve; }));
-            const tab = new SettingTab(makeMockApp() as never, plugin as never);
-            tab.containerEl = new MockContainerEl('div') as never;
-            tab.display();
-            const form = () => [...getMockSettingRecords()].reverse().find((row) => row.name === 'Add Key:Value in frontmatter')!;
-            const original = form();
-            original.texts[0].onChange!('oldKey');
-            original.texts[1].onChange!('oldValue');
-            const saving = original.buttons[0].onClick!();
-            tab.hide();
-            tab.display();
-            const current = form();
-            current.texts[0].onChange!('newDraftKey');
-            current.texts[1].onChange!('newDraftValue');
-            const rebuild = jest.spyOn(tab as unknown as { rebuildMetadataList(): void }, 'rebuildMetadataList');
-            resolveSave();
-            await saving;
-            expect(rebuild).not.toHaveBeenCalled();
-            expect(form()).toBe(current);
-            expect(current.texts.map((text) => text.value)).toEqual(['newDraftKey', 'newDraftValue']);
-        });
-
-        it('retains failed Add inputs and retries without adding the same rule twice', async () => {
-            const plugin = makePlugin({ enableMetadataUpdating: true });
-            plugin.saveSettings.mockRejectedValueOnce(new Error('disk unavailable'));
-            const tab = new SettingTab(makeMockApp() as never, plugin as never);
-            tab.containerEl = new MockContainerEl('div') as never;
-            tab.display();
-            const row = getMockSettingRecords().find((candidate) => candidate.name === 'Add Key:Value in frontmatter')!;
-            row.texts[0].onChange!('retryKey');
-            row.texts[1].onChange!('retryValue');
-            await row.buttons[0].onClick!();
-            expect(row.texts.map((text) => text.value)).toEqual(['retryKey', 'retryValue']);
-            expect(plugin.settings.metadatas.filter((rule) => rule.key === 'retryKey')).toHaveLength(1);
-            await row.buttons[0].onClick!();
-            expect(plugin.settings.metadatas.filter((rule) => rule.key === 'retryKey')).toHaveLength(1);
-            expect(row.texts.map((text) => text.value)).toEqual(['', '']);
-        });
-
-        it('renames metadata type dropdown labels to plain English', () => {
-            const plugin = makePlugin({ enableMetadataUpdating: true });
-            const tab = new SettingTab(makeMockApp() as never, plugin as never);
-            tab.containerEl = new MockContainerEl('div') as never;
-            tab.display();
-
-            const record = getMockSettingRecords()
-                .find((r) => r.name === 'Add Key:Value in frontmatter');
-            const options = record?.dropdowns[0]?.options;
-            expect(options).toEqual([
-                { value: 'string', text: 'Regular string' },
-                { value: 'moment', text: 'Formatted timestamp' },
-            ]);
-        });
-
-        it('clears the visible key/value inputs after a successful Add', async () => {
-            const plugin = makePlugin({ enableMetadataUpdating: true });
-            const tab = new SettingTab(makeMockApp() as never, plugin as never);
-            tab.containerEl = new MockContainerEl('div') as never;
-            tab.display();
-
-            const records = getMockSettingRecords();
-            const addRecord = records.find((r) => r.name === 'Add Key:Value in frontmatter')!;
-            // Drive the form through its onChange handlers (mirrors a real user typing).
-            await addRecord.texts[0].onChange!('newKey');
-            await addRecord.texts[1].onChange!('newValue');
-            const beforeKeyResetCalls = addRecord.texts[0].setValueCalls.length;
-            const beforeValueResetCalls = addRecord.texts[1].setValueCalls.length;
-
-            const addButton = addRecord.buttons.find((b) => b.text === 'Add')!;
-            await addButton.onClick!();
-
-            expect(plugin.settings.metadatas[plugin.settings.metadatas.length - 1])
-                .toMatchObject({ key: 'newKey', value: 'newValue', t: 'string' });
-            // Add handler invoked setValue("") on both inputs after save.
-            expect(addRecord.texts[0].setValueCalls.length).toBe(beforeKeyResetCalls + 1);
-            expect(addRecord.texts[0].setValueCalls[addRecord.texts[0].setValueCalls.length - 1]).toBe('');
-            expect(addRecord.texts[1].setValueCalls.length).toBe(beforeValueResetCalls + 1);
-            expect(addRecord.texts[1].setValueCalls[addRecord.texts[1].setValueCalls.length - 1]).toBe('');
         });
     });
 

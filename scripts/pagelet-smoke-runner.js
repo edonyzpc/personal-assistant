@@ -20,7 +20,6 @@
     "pa-pagelet:maintenance-review",
     "pa-pagelet:graph-discovery",
     "pa-pagelet:toggle-proactive-hints",
-    "pa-pagelet:background-preparation-status",
     "pa-pagelet:move-pet-corner",
     "pa-pagelet:toggle-pet-visibility",
   ];
@@ -31,6 +30,7 @@
     "pa-pagelet:quiet-recall",
     "pa-pagelet:scope-recap",
     "pa-pagelet:preload-status",
+    "pa-pagelet:background-preparation-status",
     "pa-pagelet:clear-scope-recap-cache",
     "pa-pagelet:weekly-review",
     "pa-pagelet:periodic-summary",
@@ -256,9 +256,6 @@
     );
 
     await runD6MemorySmoke(plugin, sourceFile);
-
-    await app.commands.executeCommandById(`${PLUGIN_ID}:pa-pagelet:background-preparation-status`);
-    record("Background preparation status command executed without throwing", "PASS");
   } catch (error) {
     record("Runner threw", "FAIL", error?.stack || String(error));
   } finally {

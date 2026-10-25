@@ -4,7 +4,6 @@
  * Covers the key behaviors introduced by Slices B–F:
  *   - F-03: Settings defaults are owned by pagelet-settings.test.ts
  *   - F-06: Pet state convergence (settleForForegroundOwner)
- *   - F-07: Settings quietRecallMode migration
  *   - F-10: Provider first-use shared notification
  */
 
@@ -12,126 +11,6 @@ import {
     mergePageletSettings,
     PAGELET_DEFAULTS,
 } from "../src/settings/pagelet/index";
-import { LEARNING_DEFAULTS_VERSION, mergeLoadedSettings, mergeQuietRecallSettings } from "../src/settings";
-
-// ---------------------------------------------------------------------------
-// F-07: Settings quietRecallMode
-// ---------------------------------------------------------------------------
-
-describe("F-07 quietRecallMode Settings", () => {
-    it("defaults to 'off'", () => {
-        expect(mergeLoadedSettings({}).quietRecall.quietRecallMode).toBe("off");
-        expect(PAGELET_DEFAULTS).not.toHaveProperty("quietRecallMode");
-    });
-
-    it("QuietRecall merge defaults to 'off'", () => {
-        const result = mergeQuietRecallSettings({});
-        expect(result.quietRecallMode).toBe("off");
-    });
-
-    it("migrates old bubbleNudgesEnabled:true to 'on'", () => {
-        const result = mergeQuietRecallSettings({
-            enabled: true,
-            bubbleNudgesEnabled: true,
-        });
-        expect(result.quietRecallMode).toBe("on");
-    });
-
-    it("migrates old bubbleNudgesEnabled:false to 'off'", () => {
-        const result = mergeQuietRecallSettings({
-            enabled: true,
-            bubbleNudgesEnabled: false,
-        });
-        expect(result.quietRecallMode).toBe("off");
-    });
-
-    it("migrates missing field to 'off'", () => {
-        const result = mergeQuietRecallSettings({
-            enabled: true,
-        });
-        expect(result.quietRecallMode).toBe("off");
-    });
-
-    it("preserves explicit quietRecallMode:'on'", () => {
-        const result = mergeQuietRecallSettings({
-            enabled: true,
-            bubbleNudgesEnabled: false,
-            quietRecallMode: "on",
-        });
-        expect(result.quietRecallMode).toBe("on");
-    });
-
-    it("preserves explicit quietRecallMode:'off' even with bubbleNudgesEnabled:true", () => {
-        const result = mergeQuietRecallSettings({
-            enabled: true,
-            bubbleNudgesEnabled: true,
-            quietRecallMode: "off",
-        });
-        expect(result.quietRecallMode).toBe("off");
-    });
-
-    it("migrates the stale Pagelet mirror only when canonical mode is absent", () => {
-        const migrated = mergeLoadedSettings({
-            pagelet: { quietRecallMode: "on" },
-            quietRecall: {
-                enabled: true,
-                bubbleNudgesEnabled: false,
-            },
-        });
-
-        expect(migrated.quietRecall.quietRecallMode).toBe("on");
-        expect(migrated.pagelet).not.toHaveProperty("quietRecallMode");
-
-        const reloaded = mergeLoadedSettings(JSON.parse(JSON.stringify(migrated)));
-        expect(reloaded.quietRecall.quietRecallMode).toBe("on");
-        expect(reloaded.pagelet).not.toHaveProperty("quietRecallMode");
-    });
-
-    it("keeps an explicit canonical opt-out ahead of a conflicting stale mirror", () => {
-        const result = mergeLoadedSettings({
-            pagelet: { quietRecallMode: "on" },
-            quietRecall: {
-                enabled: true,
-                bubbleNudgesEnabled: true,
-                quietRecallMode: "off",
-            },
-        });
-
-        expect(result.quietRecall.quietRecallMode).toBe("off");
-        expect(result.pagelet).not.toHaveProperty("quietRecallMode");
-    });
-
-    it("keeps Quiet Recall independent from generic hints, Recap, and RHP", () => {
-        const result = mergeLoadedSettings({
-            learningPreferences: {
-                version: LEARNING_DEFAULTS_VERSION,
-                memoryExtraction: "default",
-                habitLearning: "disabled",
-            },
-            pagelet: {
-                quietRecallMode: "on",
-                proactiveHints: false,
-                scopeRecapPreparationEnabled: false,
-                scopeRecapHighValueHints: true,
-            },
-            retrievalHabitProfile: {
-                enabled: false,
-                state: { aggregates: [] },
-            },
-        });
-
-        expect(result.quietRecall.quietRecallMode).toBe("on");
-        expect(result.pagelet).toMatchObject({
-            proactiveHints: false,
-            scopeRecapPreparationEnabled: false,
-            scopeRecapHighValueHints: true,
-        });
-        expect(result.retrievalHabitProfile).toEqual({
-            enabled: false,
-            state: { aggregates: [] },
-        });
-    });
-});
 
 // ---------------------------------------------------------------------------
 // F-10: Provider First-Use Shared Notification

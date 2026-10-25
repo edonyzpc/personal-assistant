@@ -475,9 +475,6 @@ export class PageletOrchestrator {
             onMaintenanceReview: () => this.runMaintenanceReview(),
             onGraphDiscovery: () => this.runGraphDiscovery(),
             onToggleProactiveHints: () => this.toggleProactiveHints(),
-            onShowBackgroundPreparationStatus: () => {
-                void this.showBackgroundPreparationStatusNotice();
-            },
             onMovePetCorner: () => {
                 this.cyclePetCorner();
             },
@@ -2276,26 +2273,6 @@ export class PageletOrchestrator {
                 this.handleLeafChange(activeLeaf);
             }
             this.reconcilePetNudge();
-        }
-    }
-
-    /** Preserve the stable command while reporting the unified Agent lane. */
-    private async showBackgroundPreparationStatusNotice(): Promise<void> {
-        if (!this.host.getDeepDiscoverUsage) {
-            new Notice(this.t("pagelet.deepDiscover.usageUnavailable"), 5000);
-            return;
-        }
-        try {
-            const usage = await this.host.getDeepDiscoverUsage();
-            new Notice(this.t("pagelet.settings.deepDiscover.usage.value", {
-                runs: usage.runs,
-                dailyCap: usage.dailyCap,
-                modelTurns: usage.modelTurns,
-                toolCalls: usage.toolCalls,
-            }), 8000);
-        } catch (error) {
-            this.host.log("Pagelet Deep Discover usage unavailable", error);
-            new Notice(this.t("pagelet.deepDiscover.usageUnavailable"), 5000);
         }
     }
 

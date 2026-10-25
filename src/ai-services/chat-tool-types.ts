@@ -160,8 +160,7 @@ export interface ChatToolDefinition<Input, Output> {
      * Optional pre-validation transform for raw tool-call arguments from the model.
      * - Maps known aliases to canonical schema keys (e.g., `q` → `query`).
      * - MUST NOT throw on unrepairable input; return raw so validateInput throws with a model-actionable error.
-     * - May read ctx.userInput when a tool has a documented host-context shim
-     *   (currently only get_current_note_context for shouldUseFullCurrentNoteContext override).
+     * - May read ctx.userInput when a tool has a documented host-context shim.
      */
     prepareArguments?: (raw: unknown, ctx: PrepareToolArgumentsContext) => unknown;
     validateInput(input: unknown): Input;

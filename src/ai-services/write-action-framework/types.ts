@@ -10,7 +10,7 @@ import type {
  * v1 仅支持一种 action family（create-file）；扩展到 append / replace / multi-file / command
  * 推迟到 Operations Agent mode (v2+)。详见 docs/architecture/write-action-framework-sdd.md §1.4。
  */
-export type WriteActionFamily = "create-file" | "append-to-current-note";
+export type WriteActionFamily = "create-file";
 
 /**
  * Typed preview spec (framework SDD §2.1)。Preview modal 渲染 + LLM 不可绕开。
@@ -24,7 +24,7 @@ export type WriteActionFamily = "create-file" | "append-to-current-note";
  *   - confirmCopy — i18n button labels supplied by the capability
  */
 export interface PreviewSpec {
-    operationType: "create-file" | "append-to-current-note";
+    operationType: "create-file";
     actionFamily: string;
     capabilityId: string;
     target: {
@@ -45,10 +45,6 @@ export interface PreviewSpec {
     };
     riskNotes: string[];
     confirmCopy: { confirmLabel: string; cancelLabel: string };
-    appendContext?: {
-        existingTailLines: string[];
-        insertionPoint: "end-of-file";
-    };
 }
 
 /**
@@ -97,14 +93,11 @@ export interface ConfinementConfig {
 }
 
 /**
- * Stale-reread target snapshot (framework SDD §2.3 mode A + mode B).
+ * Stale-reread target snapshot (framework SDD §2.3).
  *
  * Captured at Gate 2 (preview shown) and re-validated at Gate 3 (before execute).
  * Drift on folderExists / targetExists → reject + emit `gate.stale-reread.drift`.
  *
- * Mode B fields (contentHash, contentLength) are populated when
- * `takeSnapshot` is called with `{ includeContentHash: true }` — used by
- * append-to-current-note actions for TOCTOU content-change detection.
  */
 export interface TargetSnapshot {
     targetPath: string;
@@ -112,10 +105,6 @@ export interface TargetSnapshot {
     targetExists: boolean;
     /** Date.now() at capture time. Useful for debug emit aging analysis. */
     capturedAt: number;
-    /** Content hash for stale-reread mode B (append operations). */
-    contentHash?: string;
-    /** Content length at capture time for stale-reread mode B (append operations). */
-    contentLength?: number;
 }
 
 /**
@@ -136,9 +125,6 @@ export interface WriteActionCapability extends AgentCapability {
     targetCategory: string;
     /** Per-capability path allowlist + extension + rejectPatterns (framework SDD §2.2). */
     targetConfinement: ConfinementConfig;
-    /** Stale-reread strategy: "target-snapshot" (mode A, create-file) or "content-hash" (mode B, append). */
-    staleRereadMode?: "target-snapshot" | "content-hash";
-
     /**
      * 由 framework Gate 1 (target-confinement) 调用 — **同步 + 纯函数**。
      *

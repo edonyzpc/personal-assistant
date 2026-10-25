@@ -6,8 +6,7 @@
  * Spec source:
  *  - `docs/archive/review-assistant-sdd.md` §10.3 (Settings UI layout)
  *  - D008-D010 (storage path), D013 (beta default on), D015 (output lang),
- *    D018 (token caps), D020 (call limits — read-only display only),
- *    background preparation opt-in)
+ *    D018 (token caps), D020 (call limits — read-only display only).
  *
  * Shape contract:
  *  - 7 user-editable fields. Two more (`hourlyCallLimit` / `dailyCallLimit`)
@@ -64,26 +63,20 @@ import {
 /** Output language preference, mirrors D015 (Auto = follow detection). */
 export type PageletOutputLanguageSetting = "auto" | "zh" | "en";
 
-/** Versioned consent state for provider-backed Scope Recap preparation. */
-export type ScopeRecapBackgroundAuthorization = "pending" | "authorized-v1" | "declined-v1";
-
 export interface ScopeRecapNudgeSuppression {
     fingerprint: string;
     shownAt: number;
     snoozedUntil?: number;
 }
 
-/** Legacy Pagelet ribbon setting value kept for data.json compatibility. */
-type LegacyRibbonSettingValue = "default" | "hidden";
-
 /**
- * 7 persisted Pagelet settings.
+ * Persisted Pagelet settings and historical status records.
  *
  * If you add a field, also:
  *  1. add a default below
  *  2. extend `mergePageletSettings` with a normalizer
  *  3. add the i18n keys to en.json + zh.json
- *  4. render it in `renderPageletSection`
+ *  4. render user-facing choices in the appropriate preferences/privacy surface
  */
 export interface PageletSettings {
     /** Master toggle. Default ON during beta (D013). */
@@ -94,8 +87,6 @@ export interface PageletSettings {
     reviewsFolder: string;
     /** Output language preference (D015). */
     outputLanguage: PageletOutputLanguageSetting;
-    /** @deprecated Pagelet no longer registers a ribbon icon. */
-    ribbonPosition: LegacyRibbonSettingValue;
     /** Model temperature 0.0-0.5; default 0.2 (SDD §2.2). */
     temperature: number;
     /** Per-review input cap; default 8000, hard max 32000 (D018). */
@@ -111,27 +102,11 @@ export interface PageletSettings {
     /** Proactive hints cooldown in minutes (D038). */
     proactiveHintsCooldown: number;
 
-    // ── Background review preparation ──────────────────────────────
+    // ── Background discovery ───────────────────────────────────────
     /** Allow bounded automatic discovery; explicit requests remain available. */
     backgroundDiscoveryEnabled: boolean;
-    /** Background preparation polling interval in minutes. */
-    preloadInterval: number;
-    /** Background preparation per-hour cap. */
-    preloadPerHourCap: number;
-    /** Background preparation per-day cap. */
-    preloadPerDayCap: number;
-    /** Background preparation per-call token budget. */
-    preloadTokenBudget: { input: number; output: number };
 
-    // ── Scope Recap preparation ───────────────────────────────────
-    /** Prepare current/high-intent Scope Recaps; persisted capability opt-out. */
-    scopeRecapPreparationEnabled: boolean;
-    /** @deprecated Legacy first-run metadata retained for data.json compatibility. */
-    scopeRecapBackgroundAuthorization: ScopeRecapBackgroundAuthorization;
-    /** @deprecated Legacy authorization context retained for data.json compatibility. */
-    scopeRecapAuthorizationContextId: string | null;
-    /** Allow high-value Recap nudges without enabling unrelated hint families. */
-    scopeRecapHighValueHints: boolean;
+    // ── Historical Recap / Recall records ───────────────────────────
     /** Content-free, bounded ledger preventing repeated Recap nudges across reloads. */
     scopeRecapNudgeSuppressions: ScopeRecapNudgeSuppression[];
     /** Last content-free Scope Recap preparation attempt, for status after reload. */
@@ -170,10 +145,6 @@ export interface PageletSettings {
     maintenanceScanSuggested: boolean;
     /** Whether the first Quick Capture bridge explanation has been shown. */
     quickCaptureExplained: boolean;
-    /** Whether the first Quiet Recall bridge explanation has been shown. */
-    quietRecallExplained: boolean;
-    /** Whether the user has already seen the intentionally quiet Bubble explanation. */
-    quietAcknowledged: boolean;
     /**
      * SG-05: Shared first-use notification across all Pagelet provider paths.
      * Once any surface (Recap/Recall/Discover) shows the provider disclosure,
@@ -186,14 +157,11 @@ export interface PageletSettings {
 // Defaults + constraints
 // ---------------------------------------------------------------------------
 
-const LEGACY_RIBBON_SETTING_DEFAULT: LegacyRibbonSettingValue = "default";
-
 export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     enabled: true,
     petVisible: true,
     reviewsFolder: ".pagelet",
     outputLanguage: "auto",
-    ribbonPosition: LEGACY_RIBBON_SETTING_DEFAULT,
     temperature: 0.2,
     maxInputTokens: 8000,
     maxOutputTokens: 2000,
@@ -203,16 +171,6 @@ export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     proactiveHintsCooldown: 30,
     // New and existing installs share the same bounded automatic default.
     backgroundDiscoveryEnabled: true,
-    // Legacy background review preparation settings (read compatibility only).
-    preloadInterval: 30,
-    preloadPerHourCap: 2,
-    preloadPerDayCap: 20,
-    preloadTokenBudget: Object.freeze({ input: 4000, output: 1000 }),
-    // SG-06: Scope Recap defaults ON; no modal authorization required.
-    scopeRecapPreparationEnabled: true,
-    scopeRecapBackgroundAuthorization: "pending",
-    scopeRecapAuthorizationContextId: null,
-    scopeRecapHighValueHints: true,
     scopeRecapNudgeSuppressions: Object.freeze([]) as readonly ScopeRecapNudgeSuppression[] as ScopeRecapNudgeSuppression[],
     scopeRecapLastAttempt: null,
     quietRecallLastDiagnostics: null,
@@ -230,8 +188,6 @@ export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     onboardingShown: false,
     maintenanceScanSuggested: false,
     quickCaptureExplained: false,
-    quietRecallExplained: false,
-    quietAcknowledged: false,
     pageletProviderFirstUseNotified: false,
 });
 
@@ -247,21 +203,10 @@ export const PAGELET_BOUNDS = Object.freeze({
     temperature: { min: 0, max: 0.5 },
     maxInputTokens: { min: 1, max: 32000 },
     maxOutputTokens: { min: 1, max: 4000 },
-    // Pet, background preparation, review, and foreground limits
+    // Pet and foreground review limits
     proactiveHintsCooldown: { min: 1, max: 120 },
-    preloadInterval: { min: 5, max: 240 },
-    // DEC-023 unattended generic-preload envelope. Users may lower these
-    // limits, but Settings must never imply that a broader background mode is
-    // available without a separate product contract.
-    preloadPerHourCap: { min: 1, max: 2 },
-    preloadPerDayCap: { min: 1, max: 20 },
     foregroundPerHourCap: { min: 1, max: 60 },
     foregroundPerDayCap: { min: 1, max: 500 },
-});
-
-export const PAGELET_PRELOAD_TOKEN_BOUNDS = Object.freeze({
-    input: { min: 1000, max: 4000 },
-    output: { min: 500, max: 1000 },
 });
 
 /**
@@ -345,41 +290,11 @@ export interface NormalizeReviewsFolderOptions {
  */
 export function mergePageletSettings(loaded: unknown): PageletSettings {
     const raw = isRecord(loaded) ? loaded : {};
-    const requestedScopeRecapAuthorization = normalizeScopeRecapAuthorization(
-        raw.scopeRecapBackgroundAuthorization,
-    );
-    const requestedScopeRecapAuthorizationContextId = normalizeScopeRecapAuthorizationContextId(
-        raw.scopeRecapAuthorizationContextId,
-    );
-    const scopeRecapBackgroundAuthorization = requestedScopeRecapAuthorization === "authorized-v1"
-        ? requestedScopeRecapAuthorizationContextId
-            ? "authorized-v1"
-            : "pending"
-        : requestedScopeRecapAuthorization;
-    const scopeRecapAuthorizationContextId = scopeRecapBackgroundAuthorization === "authorized-v1"
-        ? requestedScopeRecapAuthorizationContextId
-        : null;
-    const hasScopeRecapPreparationSetting = Object.prototype.hasOwnProperty.call(
-        raw,
-        "scopeRecapPreparationEnabled",
-    );
-    // DEC-023 migration: either explicit opt-out signal wins. The Settings UI
-    // clears a legacy decline before persisting a new explicit opt-in, so a
-    // contradictory declined+true payload remains safely disabled. Otherwise
-    // the capability boolean is independent of the legacy authorization tuple.
-    const scopeRecapPreparationEnabled = scopeRecapBackgroundAuthorization === "declined-v1"
-        ? false
-        : hasScopeRecapPreparationSetting
-            ? typeof raw.scopeRecapPreparationEnabled === "boolean"
-                ? raw.scopeRecapPreparationEnabled
-                : false
-            : PAGELET_DEFAULTS.scopeRecapPreparationEnabled;
     return {
         enabled: typeof raw.enabled === "boolean" ? raw.enabled : PAGELET_DEFAULTS.enabled,
         petVisible: typeof raw.petVisible === "boolean" ? raw.petVisible : PAGELET_DEFAULTS.petVisible,
         reviewsFolder: normalizeReviewsFolder(raw.reviewsFolder).value,
         outputLanguage: normalizeOutputLanguage(raw.outputLanguage),
-        ribbonPosition: normalizeRibbonPosition(raw.ribbonPosition),
         temperature: normalizeBoundedNumber(
             raw.temperature,
             PAGELET_DEFAULTS.temperature,
@@ -407,19 +322,6 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
         backgroundDiscoveryEnabled: typeof raw.backgroundDiscoveryEnabled === "boolean"
             ? raw.backgroundDiscoveryEnabled
             : PAGELET_DEFAULTS.backgroundDiscoveryEnabled,
-        // Legacy background review preparation (read compatibility only).
-        preloadInterval: normalizeBoundedInt(raw.preloadInterval, PAGELET_DEFAULTS.preloadInterval, PAGELET_BOUNDS.preloadInterval.min, PAGELET_BOUNDS.preloadInterval.max),
-        preloadPerHourCap: normalizeBoundedInt(raw.preloadPerHourCap, PAGELET_DEFAULTS.preloadPerHourCap, PAGELET_BOUNDS.preloadPerHourCap.min, PAGELET_BOUNDS.preloadPerHourCap.max),
-        preloadPerDayCap: normalizeBoundedInt(raw.preloadPerDayCap, PAGELET_DEFAULTS.preloadPerDayCap, PAGELET_BOUNDS.preloadPerDayCap.min, PAGELET_BOUNDS.preloadPerDayCap.max),
-        preloadTokenBudget: normalizeTokenBudget(raw.preloadTokenBudget, PAGELET_DEFAULTS.preloadTokenBudget),
-        // Scope Recap preparation. DEC-023 treats the legacy authorization
-        // tuple as migration metadata rather than a capability gate.
-        scopeRecapPreparationEnabled,
-        scopeRecapBackgroundAuthorization,
-        scopeRecapAuthorizationContextId,
-        scopeRecapHighValueHints: typeof raw.scopeRecapHighValueHints === "boolean"
-            ? raw.scopeRecapHighValueHints
-            : PAGELET_DEFAULTS.scopeRecapHighValueHints,
         scopeRecapNudgeSuppressions: normalizeScopeRecapNudgeSuppressions(raw.scopeRecapNudgeSuppressions),
         scopeRecapLastAttempt: normalizeScopeRecapLastAttempt(raw.scopeRecapLastAttempt),
         quietRecallLastDiagnostics: normalizeQuietRecallLastDiagnostics(raw.quietRecallLastDiagnostics),
@@ -440,8 +342,6 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
         onboardingShown: typeof raw.onboardingShown === "boolean" ? raw.onboardingShown : PAGELET_DEFAULTS.onboardingShown,
         maintenanceScanSuggested: typeof raw.maintenanceScanSuggested === "boolean" ? raw.maintenanceScanSuggested : PAGELET_DEFAULTS.maintenanceScanSuggested,
         quickCaptureExplained: typeof raw.quickCaptureExplained === "boolean" ? raw.quickCaptureExplained : PAGELET_DEFAULTS.quickCaptureExplained,
-        quietRecallExplained: typeof raw.quietRecallExplained === "boolean" ? raw.quietRecallExplained : PAGELET_DEFAULTS.quietRecallExplained,
-        quietAcknowledged: typeof raw.quietAcknowledged === "boolean" ? raw.quietAcknowledged : PAGELET_DEFAULTS.quietAcknowledged,
         pageletProviderFirstUseNotified: typeof raw.pageletProviderFirstUseNotified === "boolean" ? raw.pageletProviderFirstUseNotified : PAGELET_DEFAULTS.pageletProviderFirstUseNotified,
     };
 }
@@ -458,7 +358,7 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
  * On any rejection, the function returns the default folder (`.pagelet`) so
  * the rest of the runtime stays safe even if a caller forgets to inspect
  * `error`. The UI layer is responsible for surfacing the error and reverting
- * the editable text input (see `renderPageletSection`).
+ * the editable text input (see `renderPageletNotePrivacy`).
  *
  * `PaReviewToolProvider` also calls this validator when deriving the write
  * allowlist. That is intentional defense in depth: normal settings are already
@@ -585,18 +485,6 @@ export function normalizeReviewsFolder(
 function normalizeOutputLanguage(value: unknown): PageletOutputLanguageSetting {
     if (value === "auto" || value === "zh" || value === "en") return value;
     return PAGELET_DEFAULTS.outputLanguage;
-}
-
-function normalizeScopeRecapAuthorization(value: unknown): ScopeRecapBackgroundAuthorization {
-    return value === "authorized-v1" || value === "declined-v1"
-        ? value
-        : "pending";
-}
-
-function normalizeScopeRecapAuthorizationContextId(value: unknown): string | null {
-    if (typeof value !== "string") return null;
-    const normalized = value.trim();
-    return normalized.length > 0 && normalized.length <= 160 ? normalized : null;
 }
 
 function normalizeScopeRecapNudgeSuppressions(value: unknown): ScopeRecapNudgeSuppression[] {
@@ -939,11 +827,6 @@ function includesLiteral<const T extends readonly string[]>(values: T, value: un
     return typeof value === "string" && (values as readonly string[]).includes(value);
 }
 
-function normalizeRibbonPosition(value: unknown): LegacyRibbonSettingValue {
-    if (value === "default" || value === "hidden") return value;
-    return LEGACY_RIBBON_SETTING_DEFAULT;
-}
-
 function normalizeBoundedNumber(value: unknown, fallback: number, min: number, max: number): number {
     const parsed = typeof value === "number" ? value : Number.parseFloat(String(value));
     if (!Number.isFinite(parsed)) return fallback;
@@ -965,27 +848,6 @@ function normalizePetCorner(value: unknown): PetCorner {
     const valid: PetCorner[] = ["bottom-right", "bottom-left", "top-right", "top-left"];
     if (typeof value === "string" && valid.includes(value as PetCorner)) return value as PetCorner;
     return PAGELET_DEFAULTS.petCorner;
-}
-
-function normalizeTokenBudget(
-    value: unknown,
-    fallback: { input: number; output: number },
-): { input: number; output: number } {
-    if (!isRecord(value)) return { ...fallback };
-    return {
-        input: normalizeBoundedInt(
-            value.input,
-            fallback.input,
-            PAGELET_PRELOAD_TOKEN_BOUNDS.input.min,
-            PAGELET_PRELOAD_TOKEN_BOUNDS.input.max,
-        ),
-        output: normalizeBoundedInt(
-            value.output,
-            fallback.output,
-            PAGELET_PRELOAD_TOKEN_BOUNDS.output.min,
-            PAGELET_PRELOAD_TOKEN_BOUNDS.output.max,
-        ),
-    };
 }
 
 function normalizeQuietHours(value: unknown): { enabled: boolean; start: string; end: string } {
@@ -1038,8 +900,6 @@ export interface PageletSettingsHost {
     app: App;
     settings: {
         pagelet: PageletSettings;
-        /** Canonical Quiet Recall capability state consumed by runtime. */
-        quietRecall: { quietRecallMode: "off" | "on" };
         /** Deep Discover always uses this Chat model; it is not independently configurable. */
         chatModelName?: string;
     };
@@ -1065,7 +925,7 @@ export interface PageletSettingsHost {
 /**
  * Minimal Setting / container surface so this file does not pull in the
  * concrete Obsidian Setting class. The actual class is constructed by
- * `renderPageletSection`'s caller (which already lives in the obsidian
+ * the renderer's caller (which already lives in the obsidian
  * dependency tree) and passed in via the SettingFactory.
  */
 export interface PageletSettingFactory {
@@ -1102,17 +962,6 @@ export interface PageletDropdownHandle {
     addOption(value: string, text: string): PageletDropdownHandle;
     setValue(value: string): PageletDropdownHandle;
     onChange(cb: (value: string) => void | Promise<void>): PageletDropdownHandle;
-}
-
-/** Legacy combined entrypoint; current Settings routes the two surfaces separately. */
-export function renderPageletSection(
-    parentEl: HTMLElement,
-    host: PageletSettingsHost,
-    factory: PageletSettingFactory,
-    locale: PageletLocale = "en",
-): void {
-    renderPageletPreferences(parentEl, host, factory, locale);
-    renderPageletNotePrivacy({ saveLocation: parentEl, sourceExclusions: parentEl }, host, factory, locale);
 }
 
 /** Everyday choices. Conditional children update locally without replacing other Settings drafts. */

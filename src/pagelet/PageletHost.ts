@@ -93,7 +93,6 @@ export interface PageletHost {
             onboardingShown: boolean;
             maintenanceScanSuggested: boolean;
             quickCaptureExplained: boolean;
-            quietAcknowledged: boolean;
             pageletProviderFirstUseNotified: boolean;
         };
         contextPager: {

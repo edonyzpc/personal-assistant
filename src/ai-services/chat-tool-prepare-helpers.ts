@@ -111,15 +111,7 @@ export function summarizeRawInput(raw: unknown, maxChars = 200): string {
     return `${serialized.slice(0, maxChars - 3)}...`;
 }
 
-/**
- * Heuristic: did the user explicitly limit the request to current-note-only?
- * Used by `get_current_note_context.prepareArguments` to override mode to "full"
- * when paired with exact-token / find / search phrasing.
- *
- * Originally lived in pa-agent-required-capability-policy.ts; moved here so chat-tools.ts
- * prepareArguments can call it without circular import. The policy module still
- * re-exports it for backward compatibility.
- */
+/** Heuristic used by Memory extraction request classification. */
 export function isExplicitCurrentNoteOnlyRequest(text: string): boolean {
     const normalized = text.toLowerCase();
     return /\b(current note|this note)\s+only\b/.test(normalized)
@@ -148,16 +140,6 @@ export function isExplicitNoWebRequest(text: string): boolean {
             "不查网络",
             "不查网页",
         ].some((token) => text.includes(token));
-}
-
-/**
- * Heuristic: did the user explicitly request full current-note content (e.g., exact-token search)?
- * Combines isExplicitCurrentNoteOnlyRequest with English/中文 keyword cues.
- */
-export function shouldUseFullCurrentNoteContext(userInput: string): boolean {
-    if (!isExplicitCurrentNoteOnlyRequest(userInput)) return false;
-    return /\b(token|prefix|exact|identifier|id|find|search|contains?|match|full token|whole token)\b/i.test(userInput)
-        || /查找|寻找|搜索|精确|完整\s*token|全文|前缀/.test(userInput);
 }
 
 /**

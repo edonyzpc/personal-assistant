@@ -4,7 +4,23 @@ Document status: Current
 Updated: 2026-10-25
 Work item: B-189
 Decision: [DEC-075](../decisions/dec-075-legacy-surface-cleanup.md); predecessor [DEC-035](../decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md)
-Authority: 有界清理的当前产品边界与行为验收；B-189 两批范围由 Owner 于 2026-10-25 逐项批准，实施证据由 Tracker 记录。B-136 的未接续边界与历史证据保留。
+Authority: 有界清理的当前产品边界与行为验收；B-189 三批范围由 Owner 于 2026-10-25 逐项批准，实施证据由 Tracker 记录。B-136 的未接续边界与历史证据保留。
+
+## B-189 第三批接续范围 — 2026-10-25
+
+| Requirement / Criterion | 行为与验收边界 |
+| --- | --- |
+| B-189/REQ-15 / B-189/AC-15 | 后台审阅准备状态命令及专用接线退出；设置页用量、真实预算、当前发现保持 |
+| B-189/REQ-16 / B-189/AC-16 | metadata 自动更新命令/实现/专用设置退出；既有属性、Capture 模板、Agent 属性操作及共享状态栏保持 |
+| B-189/REQ-17 / B-189/AC-17 | DEC-075 列明的旧 Pagelet 设置与兼容恢复退出；历史结果、suppression/attempt/diagnostics/acceptedCount、savedInsights 及当前设置保持 |
+| B-189/REQ-18 / B-189/AC-18 | 旧 coalescer/短期内存缓存、导出及专用测试退出；现行 scheduler/cache/取消/预算保持 |
+| B-189/REQ-19 / B-189/AC-19 | 旧追加预览及 framework content-hash 分支退出；创建文件预览与确认后目标复核、来源身份、Agent 追加/Undo、Capture 共享检查保持 |
+| B-189/REQ-20 / B-189/AC-20 | 主动提示旧 pending/接口退出；实际展示才开始冷却、安静时段、当前队列和显示保持 |
+| B-189/REQ-21 / B-189/AC-21 | 三个已确认无消费者辅助入口退出；全文读取/范围限制/调试日志/当前设置/有效测试保持 |
+
+AI 摘要、局部图谱、Callout 插入、Records Preview、模拟权益及全部当前 Agent/Pagelet 能力
+明确保留。只删除专用测试，混合测试转到当前入口；不改写历史数据，不改动已有笔记。
+回滚恢复代码即可，不依赖数据重置。第三批不包含提交、推送、发布或 closeout。
 
 ## B-189 第二批接续范围 — 2026-10-25
 

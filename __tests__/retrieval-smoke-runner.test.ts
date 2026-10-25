@@ -11919,7 +11919,6 @@ function createRunnerContext(
             webSearchEnabled: false,
             licenseTier: "free",
             focusMode: false,
-            quietRecall: { enabled: true, quietRecallMode: "off" },
             retrievalHabitProfile: { enabled: false, state: { aggregates: [] } },
             vssCacheExcludePath: [".obsidian", ".trash"],
             pagelet: {

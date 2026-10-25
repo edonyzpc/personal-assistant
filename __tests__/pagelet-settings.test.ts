@@ -23,10 +23,8 @@ import {
     PAGELET_BOUNDS,
     PAGELET_DEFAULTS,
     PAGELET_FIXED_CALL_LIMITS,
-    PAGELET_PRELOAD_TOKEN_BOUNDS,
     mergePageletSettings,
     normalizeReviewsFolder,
-    renderPageletSection,
     renderPageletPreferences,
     renderPageletNotePrivacy,
     type PageletReviewsFolderError,
@@ -178,7 +176,6 @@ function makeStubFactory(options: { notifyToggleChanges?: boolean } = {}): { fac
 
 function makeHost(
     overrides?: Partial<PageletSettings>,
-    quietRecallMode: "off" | "on" = "off",
 ): {
     host: PageletSettingsHost;
     save: jest.Mock<() => Promise<void>>;
@@ -191,7 +188,6 @@ function makeHost(
         app: {} as unknown as PageletSettingsHost["app"],
         settings: {
             pagelet: settings,
-            quietRecall: { quietRecallMode },
         },
         saveSettings: save,
         saveSettingsPermissions: async (patch) => {
@@ -363,7 +359,6 @@ describe("PAGELET_DEFAULTS", () => {
         expect(PAGELET_DEFAULTS.enabled).toBe(true);            // D013 beta on
         expect(PAGELET_DEFAULTS.reviewsFolder).toBe(".pagelet"); // D010 dotfolder
         expect(PAGELET_DEFAULTS.outputLanguage).toBe("auto");    // D015 default
-        expect(PAGELET_DEFAULTS.ribbonPosition).toBe("default"); // R4 default
         expect(PAGELET_DEFAULTS.temperature).toBe(0.2);          // SDD §2.2
         expect(PAGELET_DEFAULTS.maxInputTokens).toBe(8000);      // D018
         expect(PAGELET_DEFAULTS.maxOutputTokens).toBe(2000);     // D018
@@ -371,9 +366,6 @@ describe("PAGELET_DEFAULTS", () => {
         expect(PAGELET_DEFAULTS).not.toHaveProperty("preloadEnabled");
         expect(PAGELET_DEFAULTS).not.toHaveProperty("deepDiscoverEnabled");
         expect(PAGELET_DEFAULTS.pageletProviderFirstUseNotified).toBe(false);
-        expect(PAGELET_DEFAULTS.scopeRecapPreparationEnabled).toBe(true);
-        expect(PAGELET_DEFAULTS.scopeRecapBackgroundAuthorization).toBe("pending");
-        expect(PAGELET_DEFAULTS.scopeRecapHighValueHints).toBe(true);
         expect(PAGELET_DEFAULTS.scopeRecapLastAttempt).toBeNull();
         expect(PAGELET_DEFAULTS.quietRecallLastDiagnostics).toBeNull();
         expect(PAGELET_DEFAULTS.quietRecallLastAcceptedCount).toBe(0);
@@ -391,14 +383,6 @@ describe("PAGELET_BOUNDS", () => {
         expect(PAGELET_BOUNDS.maxOutputTokens).toEqual({ min: 1, max: 4000 });
     });
 
-    it("caps generic background preparation at the DEC-023 unattended envelope", () => {
-        expect(PAGELET_BOUNDS.preloadPerHourCap).toEqual({ min: 1, max: 2 });
-        expect(PAGELET_BOUNDS.preloadPerDayCap).toEqual({ min: 1, max: 20 });
-        expect(PAGELET_PRELOAD_TOKEN_BOUNDS).toEqual({
-            input: { min: 1000, max: 4000 },
-            output: { min: 500, max: 1000 },
-        });
-    });
 });
 
 describe("PAGELET_FIXED_CALL_LIMITS", () => {
@@ -436,7 +420,6 @@ describe("mergePageletSettings", () => {
             petVisible: true,
             reviewsFolder: "reviews/pagelet",
             outputLanguage: "zh",
-            ribbonPosition: "hidden",
             temperature: 0.4,
             maxInputTokens: 12000,
             maxOutputTokens: 3000,
@@ -444,10 +427,6 @@ describe("mergePageletSettings", () => {
             proactiveHints: false,
             proactiveHintsCooldown: 30,
             backgroundDiscoveryEnabled: true,
-            scopeRecapPreparationEnabled: true,
-            scopeRecapBackgroundAuthorization: "authorized-v1",
-            scopeRecapAuthorizationContextId: "scope-recap-auth-test",
-            scopeRecapHighValueHints: false,
             scopeRecapNudgeSuppressions: [],
             scopeRecapLastAttempt: {
                 attemptedAt: "2026-07-18T08:30:00.000Z",
@@ -481,10 +460,6 @@ describe("mergePageletSettings", () => {
                 attempts: [],
             },
             quietRecallLastAcceptedCount: 1,
-            preloadInterval: 30,
-            preloadPerHourCap: 2,
-            preloadPerDayCap: 20,
-            preloadTokenBudget: { input: 4000, output: 1000 },
             excludedFolders: [],
             excludedTags: [],
             excludedPatterns: [],
@@ -494,8 +469,6 @@ describe("mergePageletSettings", () => {
             onboardingShown: false,
             maintenanceScanSuggested: true,
             quickCaptureExplained: true,
-            quietRecallExplained: true,
-            quietAcknowledged: true,
             pageletProviderFirstUseNotified: false,
         };
         expect(mergePageletSettings(persisted)).toEqual(persisted);
@@ -507,148 +480,6 @@ describe("mergePageletSettings", () => {
         expect(merged.onboardingShown).toBe(true);
         expect(merged.maintenanceScanSuggested).toBe(false);
         expect(merged.quickCaptureExplained).toBe(false);
-        expect(merged.quietRecallExplained).toBe(false);
-    });
-
-    it.each([
-        [
-            "malformed authorization tuple",
-            {
-                scopeRecapBackgroundAuthorization: "authorized-v0",
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: 42,
-            },
-            {
-                scopeRecapBackgroundAuthorization: "pending",
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: null,
-            },
-        ],
-        [
-            "pending authorization with stale context",
-            {
-                scopeRecapBackgroundAuthorization: "pending",
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: "stale-context",
-            },
-            {
-                scopeRecapBackgroundAuthorization: "pending",
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: null,
-            },
-        ],
-        [
-            "declined authorization with stale context",
-            {
-                scopeRecapBackgroundAuthorization: "declined-v1",
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: "stale-context",
-            },
-            {
-                scopeRecapBackgroundAuthorization: "declined-v1",
-                scopeRecapPreparationEnabled: false,
-                scopeRecapAuthorizationContextId: null,
-            },
-        ],
-        [
-            "authorized state without a usable context",
-            {
-                scopeRecapBackgroundAuthorization: "authorized-v1",
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: "   ",
-            },
-            {
-                scopeRecapBackgroundAuthorization: "pending",
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: null,
-            },
-        ],
-        [
-            "authorized state with a normalized context",
-            {
-                scopeRecapBackgroundAuthorization: "authorized-v1",
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: "  provider-model-policy-v1  ",
-            },
-            {
-                scopeRecapBackgroundAuthorization: "authorized-v1",
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: "provider-model-policy-v1",
-            },
-        ],
-    ])("normalizes the Recap authorization tuple: %s", (_label, input, expected) => {
-        expect(mergePageletSettings(input)).toMatchObject(expected);
-    });
-
-    it.each([
-        ["fresh install", {}, true],
-        ["legacy pending metadata", { scopeRecapBackgroundAuthorization: "pending" }, true],
-        [
-            "legacy authorized metadata",
-            {
-                scopeRecapBackgroundAuthorization: "authorized-v1",
-                scopeRecapAuthorizationContextId: "legacy-context",
-            },
-            true,
-        ],
-        [
-            "explicit opt-out",
-            {
-                scopeRecapPreparationEnabled: false,
-                scopeRecapBackgroundAuthorization: "authorized-v1",
-                scopeRecapAuthorizationContextId: "legacy-context",
-            },
-            false,
-        ],
-        [
-            "explicit opt-in without authorization metadata",
-            { scopeRecapPreparationEnabled: true },
-            true,
-        ],
-        [
-            "legacy decline without capability field",
-            { scopeRecapBackgroundAuthorization: "declined-v1" },
-            false,
-        ],
-        [
-            "legacy decline remains an opt-out until Settings clears it",
-            {
-                scopeRecapPreparationEnabled: true,
-                scopeRecapBackgroundAuthorization: "declined-v1",
-            },
-            false,
-        ],
-    ])("reconciles the Scope Recap capability truth table: %s", (_label, input, expected) => {
-        expect(mergePageletSettings(input).scopeRecapPreparationEnabled).toBe(expected);
-    });
-
-    it.each([undefined, null, "false", 0, {}, []])(
-        "fails closed when the persisted capability field exists but is not boolean: %p",
-        (malformed) => {
-            expect(mergePageletSettings({
-                scopeRecapPreparationEnabled: malformed,
-                scopeRecapBackgroundAuthorization: "pending",
-            }).scopeRecapPreparationEnabled).toBe(false);
-        },
-    );
-
-    it("preserves explicit and migrated opt-outs across a serialized reload", () => {
-        const explicitOptOut = mergePageletSettings({
-            scopeRecapPreparationEnabled: false,
-            scopeRecapBackgroundAuthorization: "authorized-v1",
-            scopeRecapAuthorizationContextId: "legacy-context",
-        });
-        const migratedDecline = mergePageletSettings({
-            scopeRecapBackgroundAuthorization: "declined-v1",
-        });
-
-        expect(mergePageletSettings(JSON.parse(JSON.stringify(explicitOptOut)))
-            .scopeRecapPreparationEnabled).toBe(false);
-        expect(mergePageletSettings(JSON.parse(JSON.stringify(migratedDecline))))
-            .toMatchObject({
-                scopeRecapPreparationEnabled: false,
-                scopeRecapBackgroundAuthorization: "declined-v1",
-            });
     });
 
     it("normalizes, deduplicates, and caps the persisted Recap suppression ledger", () => {
@@ -867,7 +698,6 @@ describe("mergePageletSettings", () => {
             enabled: "not a boolean",
             reviewsFolder: "  my/reviews  ",
             outputLanguage: "fr", // unsupported
-            ribbonPosition: 7,    // wrong type
             temperature: 99,      // out of range
             maxInputTokens: -10,  // below min
             maxOutputTokens: "abc", // unparseable
@@ -875,7 +705,6 @@ describe("mergePageletSettings", () => {
         expect(merged.enabled).toBe(PAGELET_DEFAULTS.enabled);
         expect(merged.reviewsFolder).toBe("my/reviews"); // trimmed
         expect(merged.outputLanguage).toBe(PAGELET_DEFAULTS.outputLanguage);
-        expect(merged.ribbonPosition).toBe(PAGELET_DEFAULTS.ribbonPosition);
         expect(merged.temperature).toBe(PAGELET_BOUNDS.temperature.max); // clamped
         expect(merged.maxInputTokens).toBe(PAGELET_BOUNDS.maxInputTokens.min); // clamped to min
         expect(merged.maxOutputTokens).toBe(PAGELET_DEFAULTS.maxOutputTokens); // default
@@ -935,18 +764,6 @@ describe("mergePageletSettings", () => {
         );
     });
 
-    it("accepts every valid ribbonPosition and rejects others", () => {
-        for (const v of ["default", "hidden"] as const) {
-            expect(mergePageletSettings({ ribbonPosition: v }).ribbonPosition).toBe(v);
-        }
-        expect(mergePageletSettings({ ribbonPosition: "top" }).ribbonPosition).toBe(
-            PAGELET_DEFAULTS.ribbonPosition,
-        );
-        expect(mergePageletSettings({ ribbonPosition: "bottom" }).ribbonPosition).toBe(
-            PAGELET_DEFAULTS.ribbonPosition,
-        );
-    });
-
     it("clamps numeric fields exactly at the boundaries", () => {
         // Min boundary holds.
         expect(
@@ -973,28 +790,6 @@ describe("mergePageletSettings", () => {
         expect(mergePageletSettings({ maxInputTokens: 1234.78 }).maxInputTokens).toBe(1234);
     });
 
-    it("clamps background preparation token budgets to the smaller background pool", () => {
-        const merged = mergePageletSettings({
-            preloadTokenBudget: { input: 32000, output: 4000 },
-        });
-
-        expect(merged.preloadTokenBudget).toEqual({
-            input: PAGELET_PRELOAD_TOKEN_BOUNDS.input.max,
-            output: PAGELET_PRELOAD_TOKEN_BOUNDS.output.max,
-        });
-    });
-
-    it("migrates legacy generic-preload caps into the unattended standard envelope", () => {
-        const merged = mergePageletSettings({
-            preloadPerHourCap: 20,
-            preloadPerDayCap: 200,
-            preloadTokenBudget: { input: 8000, output: 2000 },
-        });
-
-        expect(merged.preloadPerHourCap).toBe(2);
-        expect(merged.preloadPerDayCap).toBe(20);
-        expect(merged.preloadTokenBudget).toEqual({ input: 4000, output: 1000 });
-    });
 });
 
 // ---------------------------------------------------------------------------
@@ -1317,10 +1112,10 @@ describe("normalizeReviewsFolder (settings-layer validator)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// renderPageletSection — UI wiring + i18n + onChange path
+// Pagelet settings renderers — UI wiring + i18n + onChange path
 // ---------------------------------------------------------------------------
 
-describe("renderPageletSection", () => {
+describe("Pagelet settings renderers", () => {
     it("explains that the corner preference is desktop/iPad-only", () => {
         expect(makePageletTranslator("en")("pagelet.settings.petCorner.desc"))
             .toContain("On iPhone, it follows the active note toolbar.");
@@ -1366,11 +1161,16 @@ describe("renderPageletSection", () => {
         expect(rows.filter((row) => row.name?.startsWith("Excluded")).every((row) => row.parent === sourceExclusions)).toBe(true);
     });
 
-    it("keeps native details and the folder error surface in the combined compatibility renderer", () => {
+    it("keeps native preference details and the folder error surface in the split renderers", () => {
         const parent = makeStubNode("div");
+        const sourceExclusions = makeStubNode("div");
         const { factory } = makeStubFactory();
         const { host } = makeHost();
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        renderPageletPreferences(parent as unknown as HTMLElement, host, factory, "en");
+        renderPageletNotePrivacy({
+            saveLocation: parent as unknown as HTMLElement,
+            sourceExclusions: sourceExclusions as unknown as HTMLElement,
+        }, host, factory, "en");
 
         expect(parent.children[0].text).toBe("Pagelet");
         expect(parent.children.find((node) => node.cls === "pa-pagelet-beta-callout")?.text).toContain("Beta");
@@ -1383,7 +1183,11 @@ describe("renderPageletSection", () => {
         const parent = makeStubNode("div");
         const { factory, rows } = makeStubFactory();
         const { host } = makeHost({ enabled: false, reviewsFolder: "custom/path", outputLanguage: "zh" });
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "zh");
+        renderPageletPreferences(parent as unknown as HTMLElement, host, factory, "zh");
+        renderPageletNotePrivacy({
+            saveLocation: parent as unknown as HTMLElement,
+            sourceExclusions: makeStubNode("div") as unknown as HTMLElement,
+        }, host, factory, "zh");
 
         expect(rows.find((row) => row.name === "启用拾页")?.toggleValue).toBe(false);
         expect(rows.find((row) => row.name === "审阅笔记目录")?.textValue).toBe("custom/path");
@@ -1469,7 +1273,7 @@ describe("renderPageletSection", () => {
         const { factory, rows } = makeStubFactory();
         const { host, save } = makeHost();
 
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        renderPageletPreferences(parent as unknown as HTMLElement, host, factory, "en");
         expect(host.settings.pagelet.enabled).toBe(true);
 
         await rows[0].toggleOnChange!(false);
@@ -1478,53 +1282,19 @@ describe("renderPageletSection", () => {
         expect(save).toHaveBeenCalledTimes(1);
     });
 
-    it("keeps retired review settings internal while saving current hint preferences", async () => {
+    it("saves current hint preferences without retired review controls", async () => {
         const parent = makeStubNode("div");
         const { factory, rows } = makeStubFactory();
-        const { host, save } = makeHost({
-            proactiveHints: true,
-            scopeRecapPreparationEnabled: false,
-            scopeRecapHighValueHints: false,
-        }, "on");
+        const { host, save } = makeHost({ proactiveHints: true });
 
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        renderPageletPreferences(parent as unknown as HTMLElement, host, factory, "en");
         expect(rows.find((row) => row.name === "Quiet Recall")).toBeUndefined();
         expect(rows.find((row) => row.name === "High-value Recap hints")).toBeUndefined();
         expect(save).not.toHaveBeenCalled();
         await rows.find((row) => row.name === "Proactive hints")!.toggleOnChange!(false);
 
-        expect(host.settings.quietRecall.quietRecallMode).toBe("on");
-        expect(host.settings.pagelet).not.toHaveProperty("quietRecallMode");
-        expect(host.settings.pagelet).toMatchObject({
-            proactiveHints: false,
-            scopeRecapPreparationEnabled: false,
-            scopeRecapHighValueHints: false,
-        });
+        expect(host.settings.pagelet.proactiveHints).toBe(false);
         expect(save).toHaveBeenCalledTimes(1);
-    });
-
-    it("keeps legacy Recap data internal without affecting valid hint choices", async () => {
-        const parent = makeStubNode("div");
-        const { factory, rows } = makeStubFactory();
-        const { host, save } = makeHost({
-            scopeRecapPreparationEnabled: false,
-            scopeRecapBackgroundAuthorization: "declined-v1",
-            scopeRecapAuthorizationContextId: null,
-            scopeRecapHighValueHints: false,
-        });
-
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
-        const recapPreparation = rows.find((row) => row.name === "Prepare Scope Recap in the background");
-        expect(recapPreparation).toBeUndefined();
-        expect(rows.find((row) => row.name === "High-value Recap hints")).toBeUndefined();
-
-        expect(host.settings.pagelet).toMatchObject({
-            scopeRecapPreparationEnabled: false,
-            scopeRecapBackgroundAuthorization: "declined-v1",
-            scopeRecapAuthorizationContextId: null,
-            scopeRecapHighValueHints: false,
-        });
-        expect(save).not.toHaveBeenCalled();
     });
 
     it("normalizes reviewsFolder via the same merger on text edit", async () => {
@@ -1532,7 +1302,10 @@ describe("renderPageletSection", () => {
         const { factory, rows } = makeStubFactory();
         const { host, save } = makeHost();
 
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        renderPageletNotePrivacy({
+            saveLocation: parent as unknown as HTMLElement,
+            sourceExclusions: makeStubNode("div") as unknown as HTMLElement,
+        }, host, factory, "en");
         await rows.find((row) => row.name === "Reviews folder")!.textOnChange!("./notes/reviews/");
 
         expect(host.settings.pagelet.reviewsFolder).toBe("notes/reviews");
@@ -1543,7 +1316,10 @@ describe("renderPageletSection", () => {
         const parent = makeStubNode("div");
         const { factory, rows } = makeStubFactory();
         const { host, save } = makeHost({ reviewsFolder: "notes" });
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        renderPageletNotePrivacy({
+            saveLocation: parent as unknown as HTMLElement,
+            sourceExclusions: makeStubNode("div") as unknown as HTMLElement,
+        }, host, factory, "en");
         const folder = rows.find((row) => row.name === "Reviews folder")!;
 
         for (const value of ["notes/", "notes/r", "notes/reviews/"]) {
@@ -1570,7 +1346,10 @@ describe("renderPageletSection", () => {
         const { factory, rows } = makeStubFactory();
         const { host, save } = makeHost({ reviewsFolder: "notes/reviews" });
 
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        renderPageletNotePrivacy({
+            saveLocation: parent as unknown as HTMLElement,
+            sourceExclusions: makeStubNode("div") as unknown as HTMLElement,
+        }, host, factory, "en");
         // Seeded value rendered into the input.
         expect(rows.find((row) => row.name === "Reviews folder")!.textValue).toBe("notes/reviews");
 
@@ -1620,7 +1399,10 @@ describe("renderPageletSection", () => {
         const { factory, rows } = makeStubFactory();
         const { host } = makeHost({ reviewsFolder: "notes/reviews" });
 
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        renderPageletNotePrivacy({
+            saveLocation: parent as unknown as HTMLElement,
+            sourceExclusions: makeStubNode("div") as unknown as HTMLElement,
+        }, host, factory, "en");
 
         const errorEl = parent.children.find(
             (c) => c.tagName === "div" && c.cls === "pa-pagelet-settings-error",
@@ -1647,7 +1429,7 @@ describe("renderPageletSection", () => {
         const { factory, rows } = makeStubFactory();
         const { host } = makeHost();
 
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        renderPageletPreferences(parent as unknown as HTMLElement, host, factory, "en");
 
         expect(rows.map((row) => row.name)).not.toContain("Prepare reviews in the background");
         expect(rows.find((row) => row.name === "Discover connections in the background")!.name).toBe("Discover connections in the background");
@@ -1677,7 +1459,7 @@ describe("renderPageletSection", () => {
                 resolve();
             };
         }));
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        renderPageletPreferences(parent as unknown as HTMLElement, host, factory, "en");
         const row = rows.find((entry) => entry.name === "Discover connections in the background")!;
         // Obsidian changes its own value before firing the registered handler.
         row.toggleValue = true;
@@ -1704,7 +1486,7 @@ describe("renderPageletSection", () => {
         const { host } = makeHost({ backgroundDiscoveryEnabled: false });
         let reject!: (error: Error) => void;
         host.setBackgroundDiscoveryEnabled = jest.fn(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        renderPageletPreferences(parent as unknown as HTMLElement, host, factory, "en");
         const row = rows.find((entry) => entry.name === "Discover connections in the background")!;
         const saving = row.toggleOnChange!(true);
         expect(row.toggleValue).toBe(false);

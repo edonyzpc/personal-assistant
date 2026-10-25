@@ -4,7 +4,7 @@
  * Pagelet — compatibility / a11y compat module barrel.
  *
  * Track B · B5 deliverable. Houses the bits that exist purely to
- * mediate with Obsidian itself (view-type gating, debounce,
+ * mediate with Obsidian itself (view-type gating,
  * the Cmd+/ focus jump-in command) rather than the review
  * pipeline.
  *
@@ -19,16 +19,6 @@ export {
     type PageletObsidianViewProbe,
     type PageletWorkspaceLike,
 } from "./view-type";
-
-export {
-    PAGELET_DEFAULT_DEBOUNCE_MS,
-    PAGELET_DEFAULT_IDEMPOTENCY_TTL_MS,
-    PageletCoalescerClearedError,
-    PageletReviewCoalescer,
-    type PageletCoalescerEntrySnapshot,
-    type PageletCoalescerOptions,
-    type PageletReviewKey,
-} from "./debounce";
 
 export {
     PAGELET_FOCUS_LATEST_COMMAND_ID,

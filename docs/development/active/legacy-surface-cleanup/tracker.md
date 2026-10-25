@@ -10,6 +10,31 @@ SDD: [Software Design Document](./sdd.md)
 
 ## Current Snapshot
 
+- Third batch: Owner 已批准 DEC-075 第三批、REQ/AC-15–21 的实施与必要验证，随后恢复 GPT + GLM；
+  批准范围已完成实现、独立审查、自动检查及部署后桌面验收。Owner 随后授权仅将第三批
+  相关修改签名提交到 master；不推送，不发布，不执行文档 closeout。
+- Baseline: 第二批签名本地提交 `58128d0b`；两个开发索引及
+  `obsidian-code-interface-consistency/` 为其他任务改动，保持原样。
+- Preserve: AI 摘要、局部图谱、Callout 插入、Records、模拟权益、Agent 当前能力、
+  Pagelet 显示/读取/保存/取消/预算及已有数据。新发现有效消费者则保留并反馈。
+- Ownership: 恢复流程前的 15 个 Pagelet/settings 源/测试部分补丁交接给单一 GLM writer；
+  GLM 完成源码、测试及统一检查，后续仅补 F-04 两个 tooling 文件。GPT 负责 docs、独立
+  diff/原始证据验收、环境失败补验和实际 app 交互；所有 writer 已结束。
+- Evidence: lint、生产 build、DOM/diff 检查通过。全量 395/396 suites 通过，唯一 Ghost
+  本机监听环境失败单独补验 53/53 通过；最后 F-04 tooling 22/22 通过。全部 396 suites
+  有通过证据，不宣称单次最终全量命令全绿；源码未变，不重复昂贵检查。
+- App result: 当前构建已部署并核对资产；两个退役命令消失，Settings 用量保留，Pet 可
+  打开阅读页。相同临时气泡与创建预览的尺寸、位置、字号、文字前后一致，实际关闭气泡
+  后焦点返回 Pet，实际 Cancel 返回 cancelled 且目标不存在。选定历史字段摘要前后一致。
+- Evidence boundary: 测试库仍显示已有的内容暂不可检查状态；不宣称本次观察到真实模型
+  生成或已有发现完整阅读/保存。Agent 工具、实际预算、当前保存/撤销由回归与调用链证据支持。
+- App restoration: 用户恢复前台后基线为 Cat.md、原 Chat leaf 与草稿
+  `Find notes related to the current note.`；最终均保留，启用插件列表一致。临时阅读页、
+  设置、气泡和预览已关闭，debugAttached=false、mobile=false，未发送 Chat 或写入笔记。
+- Open decisions: 无；回滚只恢复代码，不重置用户数据。
+
+### 第二批交付记录
+
 - Second batch: DEC-075 第二批、REQ/AC-07–14 已完成实现、独立审查、必要自动检查与
   部署后桌面验收；下方记录完整命令与补验的证据边界。
 - Baseline: 第一批已签名本地提交 `315212f8`，未推送。其他任务的两个开发索引修改及
@@ -46,6 +71,20 @@ SDD: [Software Design Document](./sdd.md)
   恢复 false，mobile 保持 false；已有 Chat 会话与空草稿保留，未执行笔记写入。
 
 ## Work
+
+### Third Batch
+
+| Requirement / AC | Slice / risk | Minimum evidence / rerun trigger | Status |
+| --- | --- | --- | --- |
+| B-189/REQ-15 / B-189/AC-15 | 状态命令专用接线退出 | 注册/设置测试、真实命令面板；误删共享接线时补验 | [x] |
+| B-189/REQ-16 / B-189/AC-16 | metadata 专用链退出 | 生命周期及设置测试、真实命令面板；误删共享接线时补验 | [x] |
+| B-189/REQ-17 / B-189/AC-17 | 旧配置剔除、历史保留 | 设置/持久化旧配置数据断言、工具fingerprint；数据投影变化补验 | [x] |
+| B-189/REQ-18 / B-189/AC-18 | 无消费者coalescer退出 | 调用检索、当前调度/cache/取消/预算回归；现行依赖变化补验 | [x] |
+| B-189/REQ-19 / B-189/AC-19 | 旧append预览/hash退出 | 保存preview/runtime/stale/confinement、Operations/QuickCapture；实际创建预览取消 | [x] |
+| B-189/REQ-20 / B-189/AC-20 | 提示pending退出 | hints/coordinator回归、实际Pet/气泡显示与关闭；时钟/样式变化补验 | [x] |
+| B-189/REQ-21 / B-189/AC-21 | 三个辅助入口退出 | 当前全文工具、日志、preferences/privacy有效测试；接口行为变化补验 | [x] |
+
+统一门覆盖以上定向测试时不重复运行；桌面结果、模型/数据边界和失败补验分别记录。
 
 ### Second Batch
 
@@ -93,8 +132,37 @@ SDD: [Software Design Document](./sdd.md)
 | F-01 | Product compatibility | 七个旧 ID 删除将使其快捷键失效 | Owner 已知并同意重绑；DEC-075 明确接续旧保留契约 | 自动注册断言与实际命令面板确认；保留入口可打开 | Verified |
 | F-02 | Preservation boundary | discuss handoff 共用 action token / AbortController | 状态收窄为 handoff，保留共用有效性与取消机制 | Pagelet 2 suites / 198 tests PASS；另一 GPT 独立审查无问题 | Verified |
 | F-03 | Data compatibility | deprecated projection 单独触发一次规范化保存 | 仅剔除退役 Operations key，保留其他设置与历史 | Operations/settings 10 suites / 1045 tests PASS，含 standalone true/false、失败重试与陈旧保存 | Verified |
+| F-04 | Tooling contract | Pagelet smoke runner 仍要求并执行第三批退役的后台状态命令 | 从当前清单移入 retired 清单、删除执行及伪 PASS，保留当前 provider-free smoke 检查 | GPT 复核两文件 diff；GLM tooling 1 suite / 22 tests PASS，覆盖该命令消失及复活反例 | Verified |
 
 ## Validation Log
+
+### Third Batch
+
+| Date | Requirement / AC | Check | Result | Evidence / residual risk |
+| --- | --- | --- | --- | --- |
+| 2026-10-25 | B-189/AC-15–21 | GLM authentication / tool preflight | Ready | Codex CLI 0.155.1，现有 pa-glm/ZAI endpoint，请求 glm-5.3 / max；本次认证 AUTH_OK，复用同机 read/patch/exit-code 工具预检。服务端实际模型未独立确认；这些是执行准备，不是产品验证 |
+| 2026-10-25 | B-189/AC-19–20 | 清理前桌面显示基线 | Recorded | 相同临时样本：气泡 x=421.5、y=605、380×232.15625、15px；创建预览 x=466、y=255.15625、526×449.9375、15px。实际 Cancel 返回 cancelled、目标不存在；气泡关闭后焦点回到 Pet。样本不调用 provider、不写入文件，尚无清理后结论 |
+| 2026-10-25 | B-189/AC-15–21 | GLM 定向回归与过时 fixture 修复 | PASS | settings/plugin lifecycle/record/Agent write action 4 suites / 667 tests；Pagelet commands/orchestrator/hints/bubble/B136 5 / 136；retrieval tooling 1 / 437。初次旧 Metadata UI 断言及已删 FsProbe.read fixture 按退役范围修正，未削弱保留行为断言；最终 build 覆盖类型检查 |
+| 2026-10-25 | B-189/AC-15–21 | GPT 独立 diff 与消费者复核 | PASS | 三个非对应原 writer 评审范围覆盖配置投影、provider 身份、Pagelet/提示、preview/stale/confinement、Agent、日志及混合测试；实际内容摘要复核无漂移，F-04 由主控再审。43 个退役英文 locale key 无直接源码消费者；无未解决 actionable finding |
+| 2026-10-25 | B-189/AC-15–21 | lint、生产构建 | PASS | GLM 运行相同范围 `node --stack-size=8192 node_modules/eslint/bin/eslint.js 'src/**/*.{ts,tsx}' '__mocks__/**/*.ts'` 与 `npm run build`，均 exit 0；未改 lint 规则。build 含 TypeScript、Tailwind 与 bundle |
+| 2026-10-25 | B-189/AC-15–21 | `npm run test:all -- --runInBand` 及环境失败补验 | PASS with environment retry | 原始全量 natural exit 1：395/396 suites、9470/9515 tests PASS；仅 Ghost client 45 tests 因 `listen EPERM 127.0.0.1` 及后续 server-not-running 失败。GPT 在允许本机监听的环境只补该 suite，53/53 PASS，未改代码/断言/超时；不宣称单次全量命令全绿 |
+| 2026-10-25 | B-189/AC-15 | F-04 最后 tooling 变更 | PASS | GLM `npm run test:tooling -- --runInBand pagelet-smoke-runner-script`：1 suite / 22 tests PASS；仅两工具文件变化，不使已通过源码/构建证据失效 |
+| 2026-10-25 | B-189/AC-15–21 | `make deploy-current` 与当前运行构建 | PASS after environment recovery | 初次部署后窗口 hidden、截图不刷新；用户恢复前台后发现同一测试库资产又为旧构建，覆盖原因未确认。重新 deploy-current、reload 后核对 main.js/styles.css 与当前 dist 一致，metadata 实例及两个退役命令均不存在。隐藏窗口及旧构建结果不作最终显示验收 |
+| 2026-10-25 | B-189/AC-15–17 | 真实命令面板、设置与数据 | PASS within scope | 实际搜索 metadata/background 均无命令；Settings Pagelet 用量显示 `Discoveries today: 0 of 36.`，无 Metadata Management。选定 savedInsights、scopeRecap 与 quietRecall 历史字段摘要前后一致；归一化保留边界另由确定性测试覆盖 |
+| 2026-10-25 | B-189/AC-19–20 | Pet、发现气泡与创建预览实际显示/取消 | PASS within scope | Pet 实际打开 Cat 阅读页，仍为已有内容不可检查状态。相同临时样本经当前 builder/renderer 显示，气泡和预览的尺寸、位置、字号、文字均与初始桌面基线完全一致；关闭气泡焦点回 Pet，Cancel 返回 cancelled、目标不存在。仅渲染样本，不代表真实模型生成/完整阅读/保存验收 |
+| 2026-10-25 | B-189/AC-15–21 | 最终 app 错误捕获与状态恢复 | PASS | 设置准备曾因错误使用 Obsidian openTab(string) 产生宿主错误，改用 openTabById 后清空捕获再验收，最终 No errors captured、console 仅 CLI 诊断。最后只读恢复探针误用 require('obsidian') 不可用，改查 app.isMobile 后确认 debug/mobile=false。以用户恢复前台后的 Cat/Chat 草稿为基线均保留；不宣称其与最初 Dog/旧会话状态相同 |
+| 2026-10-25 | B-189/AC-15–21 | 文档、社区源码与 diff 检查 | PASS | docs:check、git diff --check 通过；禁止 DOM 注入扫描 exit 1 / 无匹配为 PASS。最终仅补本 Tracker 证据后复查文档/diff；保留两个无关索引及无关 active 包，不执行 Git 写入 |
+
+本批证据目录为 `/private/tmp/pa-cleanup-batch3-20261025/`；GLM 任务、原始事件与
+验证日志在 `glm-worker/`（含 `result.md`、`f04-result.md`、`test-all.log`、
+`f04-pagelet-smoke-tooling.log`）；环境补验为 `ghost-client-retry.log`，独立审查身份核对为
+`review-identity.json`。桌面前后证据为 `bubble-before.*` / `bubble-after.*`、
+`preview-before.*` / `preview-after.*`、取消/关闭结果及 `final-comparison.json`；另有
+`deploy-current-visible.log`、`settings-usage-after.png`、`pagelet-reading-after.png`、
+`historical-data-before.json` / `historical-data-after.json`、`app-errors.log`、`app-console.log`、
+`app-visible-baseline.json` 与 `app-restored.json`。最初 `commands-before.json` 包含更早构建
+的第二批旧命令，不能将其全量差集当作第三批移除数量；本批两个命令以当前源码/面板证据判定。
+以上不是 CI、发布、移动端或真实模型效果证据。
 
 ### Second Batch
 
@@ -141,8 +209,8 @@ SDD: [Software Design Document](./sdd.md)
 
 ## Closeout Readiness
 
-- [x] Owning contract 与实际行为一致。
-- [x] Required review 与相关自动检查、app 交互证据已记录。
-- [x] 未完成项已明确处理；批准范围无未解决阻塞，app 阅读状态证据边界已说明。
-- [x] 稳定结论已吸收到 current contract/tests。
+- [x] 第三批 owning contract 与实际行为一致；前两批已完成。
+- [x] 第三批 required review 与相关自动检查、app 交互证据已记录。
+- [x] 第三批未完成项已明确处理，批准范围无未解决阻塞。
+- [x] 第三批稳定结论已吸收到 current contract/tests。
 - [ ] 过程文档处置已按另行授权处理；本轮不得宣称 closeout。

@@ -9,6 +9,28 @@ Tracker: [Development Tracker](./tracker.md)
 
 ## Current Source Baseline
 
+第三批基线 `58128d0b`；Owner 已逐项批准 DEC-075 第三批并授权实施。以下为源代码已核实
+事实和 GPT 的实现安排，没有未决产品选择，也不将设计方法冒充额外用户决定。
+
+| 第三批范围 | 当前 owner / 事实依据 | 保留边界 |
+| --- | --- | --- |
+| B-189/REQ-15 / B-189/AC-15 状态命令 | command registration；Owner 明确退役 | 用量由 settings getter 展示，实际预算保持 |
+| B-189/REQ-16 / B-189/AC-16 metadata 更新 | metadata updater；Owner 明确退役 | Agent 工具、已有属性、Capture 和状态栏独立 |
+| B-189/REQ-17 / B-189/AC-17 设置 | type/default/normalize；旧字段无运行时消费者 | 只剔除列明旧配置；历史记录和 provider 身份原算法/前缀保持 |
+| B-189/REQ-18 / B-189/AC-18 coalescer | compat/debounce 无生产实例；当前 scheduler/controller/cache 各自持有状态 | 不动现行请求合并、缓存、AbortController、lease 预算 |
+| B-189/REQ-19 / B-189/AC-19 写入 | 唯一生产 capability 为 create-file；旧 appendContext/content-hash 无消费者 | preview目标一致性、确认后目标存在性复核、来源/bodyHash、Operations append/Undo 保持 |
+| B-189/REQ-20 / B-189/AC-20 提示 | 当前 coordinator 持有 ticket 并在 visible 后记录展示；旧 pending 无外部消费者 | admission、quiet hours、cooldown、关闭/切笔记、当前 CSS 保持 |
+| B-189/REQ-21 / B-189/AC-21 helper | 旧全文判断/observer组合无生产调用；合并settings入口仅测试使用 | 当前工具和日志直接链保留；有效测试迁到真实 renderer |
+
+起初三名 GPT writer 分工实施，Owner 随后恢复 GPT + GLM 工作流；已停止 GPT 写入并
+保留现有 Pagelet/settings 部分补丁，一个 GLM writer 在当前树接续全部源代码和测试，
+GPT 处理权威文档、独立审查及实际 app 验收。写入分支删除
+不改变 Agent 的语义决策、能力注册或效果/撤销协议。没有新抽象、兼容别名或迁移框架。
+验证使用一次冻结输入的 lint/build/full Jest，必要失败定向补验；部署后核查入口/设置和
+当前 Pagelet 实际显示/预览取消，未改变的真实模型行为不重新采样。证据由 Tracker 记录。
+
+### 第二批基线
+
 第二批基线为 `315212f8`；Owner 已批准 DEC-075 第二批与 REQ/AC-07–14，以下补充
 设计由 GPT 承担，不把方法选择冒充新的用户决定。
 
@@ -53,6 +75,8 @@ Tracker: [Development Tracker](./tracker.md)
   当前自主发现无该 directAction 生产生成方；Chat 共享 Operations 仍有生产调用。
 
 ## Design And Ownership
+
+以下保留第一批设计与证据映射；被后续批次接续的保留项以本文顶部和 DEC-075 为准。
 
 遵守 [Command Architecture Contract](../../../architecture/pa-agent-architecture-plan.md#command-architecture-contract)。
 不创建替代 pipeline、通用兼容路由或新的设置迁移。
@@ -109,7 +133,7 @@ Tracker: [Development Tracker](./tracker.md)
 ## Open Design Findings And Approval
 
 - 当前限定范围无未决产品选择。新发现有效消费者则保留并反馈，不擅自删除或扩大范围。
-- Product authority: Owner 2026-10-25 的第一批实施批准，见 DEC-075。
+- Product authority: Owner 2026-10-25 的三批逐项决定与分别实施批准，见 DEC-075。
 - Design responsibility: GPT 对批准边界内的具体接线与验证设计负责；本文不把实现方法记为 Owner 的逐项批准。
 - Design adopted on: 2026-10-25。
 - Authorized scope: 本 SDD 列出的有界实施和相应验证；不包含 Git、发布或 closeout。

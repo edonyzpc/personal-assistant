@@ -15,6 +15,8 @@ Tracker: [Development Tracker](./tracker.md)
 - Delivery class: L2。复用既有清理规范，以短 SDD 说明多模块兼容与共享边界，不另建 Plan。
 - 第二批按 DEC-075 与规范 REQ/AC-07–14 接续：旧生成/气泡、外围旧命令、无效开关、
   匿名事件链、旧 append/StatsStore 与专用资源退役；当前功能、显示和数据保留。
+- 第三批按 DEC-075 与 REQ/AC-15–21 接续：旧状态命令/metadata链、无效设置兼容、
+  coalescer、append预览/hash、提示pending和三个辅助入口退役；明确保留项不变。
 - 不包含批准范围外的功能退役、测试 vault 数据清理、Git 推送或发布；第二批本地提交
   已获 Owner 后续授权，具体范围见 Tracker。
 

@@ -4,6 +4,10 @@
 > 第二批删除无当前消费者的旧 append-action 实现及专用测试。Agent/Chat 的
 > `vault_append` 与 Undo 继续由 Operations controller 执行；Quick Capture 共用路径
 > 校验和 Pagelet 正常保存执行器保留，不改变写权限或任何已有数据。
+> 第三批进一步删除旧追加预览、appendContext、content-hash 复核分支和无消费者的
+> observer 组合函数。当前 create-file 预览与确认后目标存在性复核保持；下文 Mode B
+> 预留/未来升级描述仅为历史设计，不要求保留当前未使用接口。来源正文身份校验、
+> Operations 追加/Undo 和实际调试记录仍由现行 owner 执行。
 
 > **Scoped successors (2026-10-05):** This document retains the v1 framework and
 > historical implementation rationale. Its future Operations audit plans in

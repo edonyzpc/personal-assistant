@@ -13,7 +13,6 @@ export interface ProactiveHintsConfig {
 export class ProactiveHints {
     private _config: ProactiveHintsConfig;
     private _lastHintAt: number | null = null;
-    private _pendingInsights = false;
 
     constructor(config: ProactiveHintsConfig) {
         this._config = {
@@ -28,23 +27,16 @@ export class ProactiveHints {
 
     toggle(): boolean {
         this._config.enabled = !this._config.enabled;
-        if (!this._config.enabled) {
-            this._pendingInsights = false;
-        }
         return this._config.enabled;
     }
 
     setEnabled(enabled: boolean): void {
         this._config.enabled = enabled;
-        if (!enabled) {
-            this._pendingInsights = false;
-        }
     }
 
     updateConfig(config: Partial<ProactiveHintsConfig>): void {
         if (config.enabled !== undefined) {
             this._config.enabled = config.enabled;
-            if (!config.enabled) this._pendingInsights = false;
         }
         if (config.cooldownMinutes !== undefined) this._config.cooldownMinutes = config.cooldownMinutes;
         if (config.quietHours !== undefined) this._config.quietHours = config.quietHours;
@@ -60,28 +52,12 @@ export class ProactiveHints {
         if (!this._isCooldownElapsed()) return false;
         if (this._isInQuietHours()) return false;
 
-        this._pendingInsights = true;
         return true;
     }
 
     /** Advance the shared clock only after an admitted hint is actually shown. */
     recordHintPresented(): void {
         this._lastHintAt = Date.now();
-        this._pendingInsights = false;
-    }
-
-    /** @deprecated Use recordHintPresented at the successful presentation seam. */
-    onHintViewed(): void {
-        if (this._pendingInsights) this.recordHintPresented();
-    }
-
-    /** Drop an unrenderable pending signal without advancing the cooldown. */
-    discardPendingHint(): void {
-        this._pendingInsights = false;
-    }
-
-    get hasPendingHint(): boolean {
-        return this._pendingInsights;
     }
 
     get quietHoursActive(): boolean {

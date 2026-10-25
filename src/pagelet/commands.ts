@@ -12,7 +12,6 @@ export const PAGELET_DISCOVER_COMMAND_ID = "pa-pagelet:discover-connections" as 
 export const PAGELET_MAINTENANCE_REVIEW_COMMAND_ID = "pa-pagelet:maintenance-review" as const;
 export const PAGELET_GRAPH_DISCOVERY_COMMAND_ID = "pa-pagelet:graph-discovery" as const;
 export const PAGELET_TOGGLE_HINTS_COMMAND_ID = "pa-pagelet:toggle-proactive-hints" as const;
-export const PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID = "pa-pagelet:background-preparation-status" as const;
 export const PAGELET_MOVE_PET_COMMAND_ID = "pa-pagelet:move-pet-corner" as const;
 export const PAGELET_TOGGLE_PET_COMMAND_ID = "pa-pagelet:toggle-pet-visibility" as const;
 
@@ -26,7 +25,6 @@ export interface PageletCommandCallbacks {
     onMaintenanceReview: () => void | Promise<void>;
     onGraphDiscovery: () => void | Promise<void>;
     onToggleProactiveHints: () => void | Promise<void>;
-    onShowBackgroundPreparationStatus: () => void | Promise<void>;
     onMovePetCorner: () => void | Promise<void>;
     onTogglePetVisibility: () => void | Promise<void>;
 }
@@ -76,12 +74,6 @@ export function registerPageletCommands(
         id: PAGELET_TOGGLE_HINTS_COMMAND_ID,
         name: pageletT("pagelet.command.toggleHints", locale),
         callback: safeCallback(callbacks.onToggleProactiveHints),
-    });
-
-    host.addCommand({
-        id: PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID,
-        name: pageletT("pagelet.command.preloadStatus", locale),
-        callback: safeCallback(callbacks.onShowBackgroundPreparationStatus),
     });
 
     host.addCommand({

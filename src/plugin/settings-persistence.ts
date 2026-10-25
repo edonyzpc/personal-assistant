@@ -30,8 +30,7 @@ import { pageletT } from "../locales/pagelet";
 export type SettingsPermissionPatch = Partial<Pick<PluginManagerSettings,
     | "memoryEnabled" | "memoryExtractionEnabled" | "memoryExtractionConsent"
     | "memoryExtractionIncludeVaultInsights" | "memoryApprovalPolicy"
-    | "webSearchEnabled" | "enableMetadataUpdating"
-    | "vssCacheExcludePath" | "metadataExcludePath"
+    | "webSearchEnabled" | "vssCacheExcludePath"
 >> & {
     retrievalHabitProfile?: Partial<Pick<PluginManagerSettings["retrievalHabitProfile"], "enabled" | "state">>;
     quickCapture?: Partial<Pick<PluginManagerSettings["quickCapture"], "postProcessingEnabled">>;

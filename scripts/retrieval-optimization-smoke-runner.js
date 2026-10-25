@@ -886,17 +886,13 @@
     "memoryExtractionEnabled",
     "qwenThinkingEnabled", "webSearchEnabled",
     "licenseTier",
-    "focusMode", "quietRecall",
+    "focusMode",
   ]);
   const PAGELET_EXECUTION_SETTING_KEYS = Object.freeze([
     "enabled", "reviewsFolder", "outputLanguage",
     "temperature", "maxInputTokens", "maxOutputTokens",
     "proactiveHints", "proactiveHintsCooldown", "proactiveHintsQuietHours",
     "backgroundDiscoveryEnabled",
-    "preloadInterval", "preloadPerHourCap",
-    "preloadPerDayCap", "preloadTokenBudget",
-    "scopeRecapPreparationEnabled", "scopeRecapBackgroundAuthorization",
-    "scopeRecapAuthorizationContextId", "scopeRecapHighValueHints",
     "excludedFolders", "excludedTags", "excludedPatterns",
     "foregroundPerHourCap", "foregroundPerDayCap",
   ]);

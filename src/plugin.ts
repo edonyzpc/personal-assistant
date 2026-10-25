@@ -54,7 +54,6 @@ import { CalloutModal } from './callout';
 import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
 import { registerObsidianCommands, registerObsidianViews } from './plugin/obsidian-registration';
 import { RecordActions } from './plugin/record-actions';
-import { MetadataUpdater } from './plugin/metadata-updater';
 import { CalloutIntegration } from './plugin/callout-integration';
 import { MemoryStatusNotifier } from './plugin/memory-status';
 import { LocalGraphIntegration } from './plugin/local-graph-integration';
@@ -968,24 +967,6 @@ export class PluginManager extends Plugin {
         this.settingsPersistence.setBackgroundDiscoveryPersistenceUncertainForCompatibility(value);
     }
     private readonly recordActions = new RecordActions({ app: this.app });
-    private readonly metadataUpdater = new MetadataUpdater({
-        workspace: this.app.workspace,
-        metadataCache: this.app.metadataCache,
-        fileManager: this.app.fileManager,
-        getSettings: () => this.settings,
-        log: (message, ...args) => this.log(message, ...args),
-        setActive: (active) => {
-            const statusBar = getPlatformDocument().getElementById("personal-assistant-statusbar");
-            statusBar?.removeClass("personal-assistant-statusbar-breathing");
-            if (active) statusBar?.addClass("personal-assistant-statusbar-breathing");
-        },
-        notifyDisabled: () => {
-            new Notice(this.t("plugin.notice.metadataCommandDisabled"));
-        },
-        registerEvent: (eventRef) => {
-            this.registerEvent(eventRef);
-        },
-    });
     private readonly calloutIntegration = new CalloutIntegration({
         pluginId: 'callout-manager',
         registry: {
@@ -2098,15 +2079,6 @@ export class PluginManager extends Plugin {
         });
 
         registerObsidianCommands(obsidianRegistration, [{
-            id: 'update-metadata',
-            name: this.t("plugin.command.updateMetadata"),
-            callback: async () => {
-                this.metadataUpdater.toggle();
-            },
-        }]);
-
-
-        registerObsidianCommands(obsidianRegistration, [{
             id: "list-callouts",
             name: this.t("plugin.command.listCallouts"),
             callback: () => {
@@ -2676,7 +2648,6 @@ export class PluginManager extends Plugin {
             onMaintenanceReview: () => dispatch((callbacks) => callbacks.onMaintenanceReview()),
             onGraphDiscovery: () => dispatch((callbacks) => callbacks.onGraphDiscovery()),
             onToggleProactiveHints: () => dispatch((callbacks) => callbacks.onToggleProactiveHints()),
-            onShowBackgroundPreparationStatus: () => dispatch((callbacks) => callbacks.onShowBackgroundPreparationStatus()),
             onMovePetCorner: () => dispatch((callbacks) => callbacks.onMovePetCorner()),
             onTogglePetVisibility: () => dispatch((callbacks) => callbacks.onTogglePetVisibility()),
         };
@@ -6321,7 +6292,6 @@ export class PluginManager extends Plugin {
         this.ghostPublishingConfiguration = undefined;
         this.agentDebugIntegration?.beginUnload();
         this.pageletIntegration.beginUnload();
-        this.metadataUpdater.dispose();
         this.calloutIntegration.dispose();
         this.invalidateLegacyProfileContext();
         this.activeFeatureOptionsModal?.close();

@@ -557,9 +557,8 @@ export class BubbleCoordinator {
         if (this.pendingNudgeTicket?.key === ticket.key) this.pendingNudgeTicket = null;
         this.activeNudgeTicket = ticket;
         this.presentedNudgeKeys.add(ticket.key);
-        // Admission ownership lives outside the old global pending bit, so
-        // presentation must advance the clock even if a generic toggle
-        // cleared that bit after this ticket was admitted.
+        // An admitted ticket starts the shared cooldown only when visible,
+        // even if the generic hint setting changed after admission.
         this.proactiveHints.recordHintPresented();
         this.callbacks.onNudgePresented(ticket);
     }

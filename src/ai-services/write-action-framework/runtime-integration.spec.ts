@@ -40,7 +40,6 @@ function makeContext(overrides: Partial<AgentCapabilityContext> = {}): AgentCapa
 
 type TestFsProbe = FsProbe & {
     _existsMock: jest.MockedFunction<FsProbe["exists"]>;
-    _readMock: jest.MockedFunction<FsProbe["read"]>;
 };
 
 type TestWriteActionCapability = WriteActionCapability & {
@@ -50,12 +49,9 @@ type TestWriteActionCapability = WriteActionCapability & {
 
 function makeFsProbe(existsMap: Record<string, boolean> = {}): TestFsProbe {
     const existsMock = jest.fn(async (path: string) => existsMap[path] ?? false) as jest.MockedFunction<FsProbe["exists"]>;
-    const readMock = jest.fn(async () => "") as jest.MockedFunction<FsProbe["read"]>;
     return {
         exists: existsMock,
-        read: readMock,
         _existsMock: existsMock,
-        _readMock: readMock,
     };
 }
 
@@ -308,7 +304,6 @@ describe("ActionExecutor (4-gate orchestration, framework SDD §3.2)", () => {
                 calls.push(`exists:${path}`);
                 return path === ".pagelet";
             },
-            read: async () => "",
         };
         const exec = createActionExecutor(defaultExecutorOptions({ fsProbe }));
 
@@ -434,7 +429,6 @@ describe("ActionExecutor (gate rejection paths)", () => {
         const existsMap: Record<string, boolean> = { ".pagelet": true, ".pagelet/foo.md": false };
         const fsProbe: FsProbe = {
             exists: jest.fn(async (path: string) => existsMap[path] ?? false) as FsProbe["exists"],
-            read: jest.fn(async () => "") as FsProbe["read"],
         };
         const cap = makeCapability();
         createActionExecutor(defaultExecutorOptions({
@@ -460,48 +454,6 @@ describe("ActionExecutor (gate rejection paths)", () => {
         expect(driftEvent).toBeDefined();
         expect(driftEvent?.errorCategory).toBe("stale_target");
         expect((driftEvent?.extra as { drift?: Record<string, boolean> } | undefined)?.drift?.targetAppeared).toBe(true);
-    });
-
-    it("uses content-hash stale re-read mode when the capability requests it", async () => {
-        const events: DebugEvent[] = [];
-        let targetExistsChecks = 0;
-        let content = "before preview";
-        const readMock = jest.fn(async () => content) as jest.MockedFunction<FsProbe["read"]>;
-        const fsProbe: FsProbe = {
-            exists: jest.fn(async (path: string) => {
-                if (path === ".pagelet") return true;
-                if (path === ".pagelet/foo.md") {
-                    targetExistsChecks += 1;
-                    return targetExistsChecks > 1;
-                }
-                return false;
-            }) as FsProbe["exists"],
-            read: readMock,
-        };
-        const renderer: PreviewRenderer = {
-            show: jest.fn(async () => {
-                content = "after preview";
-                return { outcome: "confirmed" as ConfirmationOutcome };
-            }) as PreviewRenderer["show"],
-        };
-        const cap = makeCapability({
-            staleRereadMode: "content-hash",
-        });
-        const exec = createActionExecutor(defaultExecutorOptions({
-            debugObserver: makeObserver(events),
-            fsProbe,
-            previewRenderer: renderer,
-        }));
-
-        const result = await exec.execute(cap, {}, makeContext());
-
-        expect(result.status).toBe("failed");
-        expect(readMock).toHaveBeenCalledTimes(2);
-        const driftEvent = events.find((e) => e.type === "gate.stale-reread.drift");
-        expect(driftEvent?.errorCategory).toBe("stale_target");
-        expect((driftEvent?.extra as { drift?: Record<string, boolean> } | undefined)?.drift?.contentChanged)
-            .toBe(true);
-        expect(cap._executeWriteMock).not.toHaveBeenCalled();
     });
 
     it("captures buildPreview throwing as execute.fail with stage=buildPreview", async () => {
@@ -636,7 +588,6 @@ describe("ActionExecutor (execute & rollback)", () => {
         const removeCalls: string[] = [];
         const fsProbe: FsProbe = {
             exists: jest.fn(async (path: string) => path === ".pagelet") as FsProbe["exists"],
-            read: jest.fn(async () => "") as FsProbe["read"],
             remove: jest.fn(async (path: string) => {
                 removeCalls.push(path);
             }) as NonNullable<FsProbe["remove"]>,
@@ -665,7 +616,6 @@ describe("ActionExecutor (execute & rollback)", () => {
         const events: DebugEvent[] = [];
         const fsProbe: FsProbe = {
             exists: jest.fn(async (path: string) => path === ".pagelet") as FsProbe["exists"],
-            read: jest.fn(async () => "") as FsProbe["read"],
             remove: jest.fn(async () => undefined) as NonNullable<FsProbe["remove"]>,
         };
         const rollback = jest.fn(async () => undefined) as WriteActionCapability["rollback"];
@@ -694,7 +644,6 @@ describe("ActionExecutor (execute & rollback)", () => {
         const events: DebugEvent[] = [];
         const fsProbe: FsProbe = {
             exists: jest.fn(async (path: string) => path === ".pagelet") as FsProbe["exists"],
-            read: jest.fn(async () => "") as FsProbe["read"],
             remove: jest.fn(async () => {
                 throw new Error("permission denied");
             }) as NonNullable<FsProbe["remove"]>,

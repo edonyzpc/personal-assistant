@@ -375,7 +375,6 @@ import { RetainedReviewPluginIntegration } from '../src/pagelet/plugin-review-ac
 import { PageletFeatureIntegration } from '../src/pagelet/plugin-integration';
 import { PageletOrchestrator } from '../src/pagelet/orchestrator';
 import { RecordActions } from '../src/plugin/record-actions';
-import { MetadataUpdater } from '../src/plugin/metadata-updater';
 import { StatsPluginIntegration } from '../src/stats/plugin-integration';
 import { pluginField } from '../src/stats/editor-plugin';
 import { ShareCardActions } from '../src/plugin/share-card-actions';
@@ -1125,7 +1124,7 @@ describe('plugin startup view registration', () => {
                 on: jest.fn(() => ({})),
                 getCache: jest.fn(),
             },
-            fileManager: { processFrontMatter: jest.fn() },
+            fileManager: {},
             vault: {
                 configDir: '.obsidian',
                 on: jest.fn((event: string, callback: (file: unknown) => unknown) => {
@@ -1143,7 +1142,6 @@ describe('plugin startup view registration', () => {
             showAdvancedMemoryControls: false,
             targetPath: 'records',
             fileFormat: 'YYYY-MM-DD',
-            enableMetadataUpdating: true,
             dataBoundary: {
                 excludedFolders: [], excludedTags: [], generatedNotePolicy: 'exclude-generated',
                 providerDisclosureReasons: [], cleanupGroups: [],
@@ -1210,18 +1208,6 @@ describe('plugin startup view registration', () => {
             log: (...args: unknown[]) => plugin.log(args[0] as string, ...args.slice(1)),
         };
         plugin.calloutHost = calloutHost;
-        plugin.metadataUpdater = new MetadataUpdater({
-            workspace: plugin.app.workspace as never,
-            metadataCache: plugin.app.metadataCache as never,
-            fileManager: plugin.app.fileManager as never,
-            getSettings: () => plugin.settings,
-            log: (...args: unknown[]) => plugin.log(args[0] as string, ...args.slice(1)),
-            setActive: jest.fn(),
-            notifyDisabled: () => {
-                new Notice('metadata command disabled');
-            },
-            registerEvent: (eventRef) => plugin.registerEvent(eventRef),
-        });
         plugin.statsIntegration = new StatsPluginIntegration({
             app: plugin.app,
             statViewType: 'stat-preview',
@@ -1292,12 +1278,11 @@ describe('plugin startup view registration', () => {
                 .map(([command]: [RegisteredPluginCommand]) => command.id);
             expect(commandIds).not.toEqual(expect.arrayContaining([
                 'startup-recording', 'update-plugins', 'update-themes',
-                'switch-on-or-off-plugin', 'batch-switch-on-or-off-plugins',
+                'switch-on-or-off-plugin', 'batch-switch-on-or-off-plugins', 'update-metadata',
             ]));
             expect(commandIds.indexOf('pa-quick-capture')).toBe(0);
             expect(commandIds).toContain('open-agent-debug-history');
             expect(commandIds.indexOf('preview-records')).toBeLessThan(commandIds.indexOf('show-statistics'));
-            expect(commandIds).toContain('update-metadata');
             const locale = getPluginUiLanguage();
             expect(getRegisteredCommand(plugin, 'ai-assistant-summary')?.name)
                 .toBe(pluginT('plugin.command.aiSummary', locale));
@@ -1317,23 +1302,6 @@ describe('plugin startup view registration', () => {
             await getRegisteredCommand(plugin, 'set-local-graph-view-colors')?.callback?.();
             expect(localGraphIntegration.startup).toHaveBeenCalledTimes(1);
             expect(localGraphIntegration.updateGraphColors).toHaveBeenCalledTimes(1);
-            const metadataWorkspaceOnBeforeToggle = plugin.app.workspace.on as jest.Mock;
-            const fileOpenReferenceCountBeforeToggle = metadataWorkspaceOnBeforeToggle.mock.calls
-                .filter(([event]) => event === 'file-open').length;
-            const metadataCommand = getRegisteredCommand(plugin, 'update-metadata');
-            await metadataCommand?.callback?.();
-            await metadataCommand?.callback?.();
-            await metadataCommand?.callback?.();
-            const metadataWorkspaceOn = plugin.app.workspace.on as jest.Mock;
-            const fileOpenReferences = metadataWorkspaceOn.mock.calls
-                .filter(([event]) => event === 'file-open')
-                .map((_, index) => metadataWorkspaceOn.mock.results[index]?.value);
-            expect(fileOpenReferences).toHaveLength(fileOpenReferenceCountBeforeToggle + 1);
-            mockNoticeMessages.length = 0;
-            plugin.settings.enableMetadataUpdating = false;
-            await metadataCommand?.callback?.();
-            expect(mockNoticeMessages).toHaveLength(1);
-            expect(mockNoticeMessages[0]?.toLowerCase()).toContain('metadata');
             const activateStatsView = jest.spyOn(plugin.statsIntegration, 'activateView');
             activateStatsView.mockImplementation(async () => undefined);
             await getRegisteredCommand(plugin, 'show-statistics')?.callback?.();
@@ -7074,7 +7042,6 @@ describe('Pagelet Discover provider first-use admission', () => {
         plugin.settings = {
             pagelet: {},
             contextPager: {},
-            quietRecall: {},
             focusMode: false,
             confirmedMemoryCount: 0,
         };

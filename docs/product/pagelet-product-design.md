@@ -5,7 +5,9 @@
 > 两个回顾设置 UI、无效每周扫描设置跳转及 Pagelet 专用自动关联链；保留发现、阅读、
 > 保存、完整 Chat 交接、共享 Operations 和历史数据。第二批进一步退役旧 Recall/Recap
 > 生成与专用查看/保存/关联、双 Ctrl、旧气泡卡片栈和 PreloadBudget 残留；当前 Pet、
-> Agent Insight/状态气泡、共享布局/动画/触摸、实际预算及数据保持。旧命令快捷键需重绑。
+> Agent Insight/状态气泡、共享布局/动画/触摸、实际预算及数据保持。第三批接续删除后台
+> 准备状态命令、无效旧配置及其兼容恢复、旧 coalescer 与提示 pending 残留；当前设置
+> 用量、调度/cache/取消、提示冷却/安静时段和所有历史结果保留。旧命令快捷键需重绑。
 > 这是已批准范围，实施和验证只由 [B-189 Tracker](../development/active/legacy-surface-cleanup/tracker.md) 记录。
 
 > 2026-10-17 当前 Detail UI 契约：[DEC-067](./decisions/dec-067-pagelet-note-detail-tabs.md) /
@@ -1257,7 +1259,7 @@ Retained Pagelet commands (command palette, registered with `Pagelet:` prefix pe
   anchor and existing admission/cache behavior; allowed cross-note evidence remains available.
 - `Pagelet: Open Pagelet` — opens existing reading without triggering provider analysis.
 - `Pagelet: Toggle proactive hints` — toggles 主动提示 on/off.
-- `Pagelet: Show background preparation status` — retains current discovery diagnostics; the old preload alias is retired.
+- `Pagelet: Show background preparation status` — retired by DEC-075 third batch; current usage remains visible in Settings and actual invocation budgets remain enforced.
 - `Pagelet: Move Pet to corner` — switches Pet corner position.
 - `Pagelet: Toggle Pet visibility` — replaces `Toggle mascot visibility`.
 

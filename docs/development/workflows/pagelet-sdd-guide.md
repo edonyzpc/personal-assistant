@@ -716,7 +716,7 @@ All commands registered with `Pagelet:` prefix (D029).
 | `Pagelet: Discover connections` | Current beta: run current-note analysis and open the discovery Panel layout; dedicated cross-note discovery is future work |
 | `Pagelet: Generate periodic summary` | Trigger Scenario 4 |
 | `Pagelet: Toggle proactive hints` | Toggle generic 主动提示 on/off |
-| `Pagelet: Show background preparation status` | Show background preparation engine diagnostics |
+| `Pagelet: Show background preparation status` | Retired by DEC-075 third batch; current usage remains in Settings |
 | `Pagelet: Move Pet to corner` | Switch the saved desktop/iPad corner preference |
 | `Pagelet: Toggle Pet visibility` | Show/hide Pet |
 
@@ -733,9 +733,9 @@ DEC-018 的高价值 Recap 提示通过 Settings 中的独立开关控制；当�
 ## 12. Settings Schema
 
 This is a partial schema reference. Read `src/settings/pagelet/index.ts` for the
-complete current schema and defaults. Under DEC-033/B-106, retired enable keys
-are stripped; retained legacy numeric values remain internal rather than user
-controls.
+complete current schema and defaults. DEC-075 third batch removes the obsolete
+preload numeric values and Scope Recap/Quiet Recall preferences and compatibility
+restoration. Current discovery budgets and historical result records remain.
 
 ```typescript
 interface PageletSettings {
@@ -746,7 +746,6 @@ interface PageletSettings {
   // Pet
   petCorner: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left'; // default: 'bottom-right'
   proactiveHints: boolean;             // generic hints; default: false (OFF)
-  scopeRecapHighValueHints: boolean;   // default: true only after DEC-017 authorization
   proactiveHintsCooldown: 15 | 30 | 60 | 120; // minutes, default: 30
   proactiveHintsQuietHours: {
     enabled: boolean;                  // default: false
@@ -756,10 +755,6 @@ interface PageletSettings {
 
   // Automatic discovery only; explicit discovery remains available when false.
   backgroundDiscoveryEnabled: boolean; // default: true; no inheritance from retired keys
-  // Legacy numeric preparation values retained internally.
-  preloadInterval: 5 | 15 | 30 | 60 | 120 | 240; // minutes, default: 30
-  preloadPerHourCap: number;           // default: 2
-  preloadPerDayCap: number;            // default: 20
 
   // Storage
   reviewsFolder: string;               // default: '.pagelet'
@@ -778,8 +773,6 @@ interface PageletSettings {
   foregroundPerHourCap: number;        // default: 10
   foregroundPerDayCap: number;         // default: 100
 
-  // Cost — Background preparation (stored under preload* keys for migration compatibility)
-  preloadTokenBudget: { input: number; output: number }; // internal legacy default/max: {4000, 1000}
 }
 ```
 

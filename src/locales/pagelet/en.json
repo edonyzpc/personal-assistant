@@ -86,7 +86,6 @@
     "pagelet.settings.proactiveHintsCooldown.name": "Hint cooldown (minutes)",
     "pagelet.settings.proactiveHintsCooldown.desc": "Minimum minutes between proactive hints. Range 1–120; default 30.",
 
-    "pagelet.settings.preload.heading": "Background Review Preparation",
     "pagelet.settings.preloadEnabled.name": "Prepare reviews in the background",
     "pagelet.settings.preloadEnabled.desc": "Quietly prepares review context in the background so Pagelet can respond faster. Note text may be sent to your configured AI provider and may use credits.",
     "pagelet.settings.deepDiscover.heading": "Deep Discover",
@@ -103,7 +102,6 @@
     "pagelet.deepDiscover.functionCallingUnsupported": "The current model does not support Function Calling, so Deep Discover could not finish. Choose a model that supports it.",
     "pagelet.deepDiscover.noToolCalls": "The model did not use any tools in this attempt, so Deep Discover could not finish. A model that follows tool calls may work better.",
     "pagelet.deepDiscover.boundaryDenied": "This note is outside PA's current data boundary.",
-    "pagelet.deepDiscover.usageUnavailable": "Deep Discover usage is temporarily unavailable.",
     "pagelet.deepDiscover.noInsight": "No findings in this analysis.",
     "pagelet.deepDiscover.noNewResults": "This analysis has no new results to show.",
     "pagelet.deepDiscover.cancelled": "Analysis cancelled.",
@@ -141,19 +139,6 @@
     "pagelet.panel.agentInsight.handoffBusy": "Chat is busy. Finish the current response, then try again.",
     "pagelet.panel.agentInsight.handoffDraft": "Chat already has a draft. Send or clear it before opening this insight.",
     "pagelet.panel.agentInsight.handoffUnavailable": "Chat could not open this insight right now.",
-    "pagelet.settings.scopeRecap.heading": "Scope Recap",
-    "pagelet.settings.scopeRecapPreparation.name": "Prepare Scope Recap in the background",
-    "pagelet.settings.scopeRecapPreparation.desc": "After a one-time data and cost disclosure, quietly prepare source-backed Recaps for the scope you are working in. This is separate from background review preparation.",
-    "pagelet.settings.preloadInterval.name": "Preparation interval (minutes)",
-    "pagelet.settings.preloadInterval.desc": "Minutes between background preparation cycles. Range 5–240; default 30.",
-    "pagelet.settings.preloadPerHourCap.name": "Background AI calls per hour",
-    "pagelet.settings.preloadPerHourCap.desc": "Maximum AI calls made by generic background preparation per rolling hour. Range 1–2; default 2.",
-    "pagelet.settings.preloadPerDayCap.name": "Background AI calls per day",
-    "pagelet.settings.preloadPerDayCap.desc": "Maximum AI calls made by generic background preparation per local day. Range 1–20; default 20.",
-    "pagelet.settings.preloadTokenBudgetInput.name": "Preparation input token budget",
-    "pagelet.settings.preloadTokenBudgetInput.desc": "Maximum input tokens per background preparation call. Range 1000–4000; default 4000.",
-    "pagelet.settings.preloadTokenBudgetOutput.name": "Preparation output token budget",
-    "pagelet.settings.preloadTokenBudgetOutput.desc": "Maximum output tokens per background preparation call. Range 500–1000; default 1000.",
 
     "pagelet.settings.reviews.heading": "Reviews",
 
@@ -172,7 +157,6 @@
     "pagelet.settings.quietHoursEnd.name": "End time",
     "pagelet.settings.quietHoursEnd.desc": "When quiet hours end (HH:mm, e.g. 08:00).",
 
-    "pagelet.settings.quietRecall.heading": "Quiet Recall",
     "pagelet.settings.foreground.heading": "Foreground Cost",
     "pagelet.settings.foregroundPerHourCap.name": "Per-hour foreground cap",
     "pagelet.settings.foregroundPerHourCap.desc": "Maximum foreground review calls per hour. Range 1–60; default 10.",
@@ -363,7 +347,6 @@
     "pagelet.status.no": "no",
     "pagelet.status.unknown": "unknown",
     "pagelet.command.toggleHints": "Pagelet: Toggle proactive hints",
-    "pagelet.command.preloadStatus": "Pagelet: Show background preparation status",
     "pagelet.command.movePet": "Pagelet: Move Pet to corner",
     "pagelet.command.togglePet": "Pagelet: Toggle Pet visibility",
 
@@ -383,18 +366,6 @@
 
 
 
-    "pagelet.preload.status.title": "Background Preparation Status",
-    "pagelet.preload.status.running": "Running",
-    "pagelet.preload.status.stopped": "Stopped",
-    "pagelet.preload.status.lastCycle": "Last preparation",
-    "pagelet.preload.status.budgetHourly": "Hourly budget remaining",
-    "pagelet.preload.status.budgetDaily": "Daily budget remaining",
-    "pagelet.preload.status.cached": "Cached results available",
-    "pagelet.preload.status.notRunning": "Background preparation is not running.",
-    "pagelet.preload.status.never": "never",
-    "pagelet.preload.status.cacheYes": "yes",
-    "pagelet.preload.status.cacheNo": "no",
-    "pagelet.preload.status.notice": "Background preparation: {state}\nLast: {last}\nBudget: {hourly}h / {daily}d\nCache: {cache}\nFindings: {findings}",
 
     "pagelet.panel.layout.review": "Recent Review",
     "pagelet.panel.layout.current": "Current Note Analysis",

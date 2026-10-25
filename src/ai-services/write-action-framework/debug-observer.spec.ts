@@ -1,12 +1,11 @@
 import { describe, expect, it, jest } from "@jest/globals";
 
 import {
-    combineDebugObservers,
     ConsoleDebugObserver,
     NOOP_DEBUG_OBSERVER,
     NoopDebugObserver,
 } from "./debug-observer";
-import type { DebugEvent, DebugEventType, DebugObserver } from "./types";
+import type { DebugEvent, DebugEventType } from "./types";
 
 /**
  * Canonical list of every DebugEventType (framework SDD §2.4). Asserted in the
@@ -98,42 +97,5 @@ describe("ConsoleDebugObserver (framework SDD §2.4)", () => {
         obs.emit(buildEvent("rollback.ok"));
         expect(spy).toHaveBeenCalledTimes(1);
         spy.mockRestore();
-    });
-});
-
-describe("combineDebugObservers", () => {
-    it("returns NOOP when given zero observers", () => {
-        expect(combineDebugObservers()).toBe(NOOP_DEBUG_OBSERVER);
-    });
-
-    it("returns the single observer unchanged when given one", () => {
-        const obs = new NoopDebugObserver();
-        expect(combineDebugObservers(obs)).toBe(obs);
-    });
-
-    it("fan-outs to every observer", () => {
-        const a = jest.fn();
-        const b = jest.fn();
-        const observerA: DebugObserver = { emit: a };
-        const observerB: DebugObserver = { emit: b };
-        const combined = combineDebugObservers(observerA, observerB);
-        const evt = buildEvent("execute.ok");
-        combined.emit(evt);
-        expect(a).toHaveBeenCalledWith(evt);
-        expect(b).toHaveBeenCalledWith(evt);
-    });
-
-    it("isolates a throwing observer from the rest", () => {
-        const good = jest.fn();
-        const bad: DebugObserver = {
-            emit: () => {
-                throw new Error("observer crashed");
-            },
-        };
-        const goodObserver: DebugObserver = { emit: good };
-        const combined = combineDebugObservers(bad, goodObserver);
-        const evt = buildEvent("execute.fail");
-        expect(() => combined.emit(evt)).not.toThrow();
-        expect(good).toHaveBeenCalledWith(evt);
     });
 });

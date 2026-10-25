@@ -28,7 +28,6 @@ export type {
 } from "./target-confinement";
 
 export {
-    combineDebugObservers,
     ConsoleDebugObserver,
     NOOP_DEBUG_OBSERVER,
     NoopDebugObserver,

@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { describe, expect, it, beforeEach, afterEach, jest } from "@jest/globals";
+import { describe, expect, it, afterEach, jest } from "@jest/globals";
 
 import { ProactiveHints } from "../src/pagelet/hints/ProactiveHints";
 
@@ -40,13 +40,6 @@ describe("ProactiveHints", () => {
             expect(h.toggle()).toBe(true);
         });
 
-        it("clears pending when disabled", () => {
-            const h = makeHints({ enabled: true });
-            h.onInsightsReady(); // sets pending
-            expect(h.hasPendingHint).toBe(true);
-            h.toggle(); // disables -> clears pending
-            expect(h.hasPendingHint).toBe(false);
-        });
     });
 
     describe("onInsightsReady", () => {
@@ -62,9 +55,7 @@ describe("ProactiveHints", () => {
 
         it("returns false when cooldown not elapsed", () => {
             const h = makeHints({ enabled: true, cooldownMinutes: 60 });
-            // Force a lastHintAt by calling onInsightsReady + onHintViewed
-            h.onInsightsReady();
-            h.onHintViewed(); // sets lastHintAt to Date.now()
+            h.recordHintPresented();
             // Immediately call again -- cooldown (60 min) not elapsed
             expect(h.onInsightsReady()).toBe(false);
         });
@@ -79,51 +70,36 @@ describe("ProactiveHints", () => {
             expect(h.onInsightsReady()).toBe(false);
         });
 
-        it("sets pendingInsights flag", () => {
-            const h = makeHints({ enabled: true, cooldownMinutes: 0 });
-            expect(h.hasPendingHint).toBe(false);
-            h.onInsightsReady();
-            expect(h.hasPendingHint).toBe(true);
-        });
     });
 
     describe("configuration updates", () => {
-        it("clears pending shared work when disabled through updateConfig", () => {
+        it("blocks new admission when disabled through updateConfig", () => {
             const h = makeHints({ enabled: true });
             expect(h.onInsightsReady()).toBe(true);
-            expect(h.hasPendingHint).toBe(true);
 
             h.updateConfig({ enabled: false });
 
             expect(h.enabled).toBe(false);
-            expect(h.hasPendingHint).toBe(false);
+            expect(h.onInsightsReady()).toBe(false);
             expect(h.delayUntilEligibleMs()).toBeNull();
         });
     });
 
-    describe("onHintViewed", () => {
-        it("clears pending flag", () => {
-            const h = makeHints();
-            h.onInsightsReady();
-            expect(h.hasPendingHint).toBe(true);
-            h.onHintViewed();
-            expect(h.hasPendingHint).toBe(false);
-        });
-
-        it("updates lastHintAt timestamp", () => {
+    describe("recordHintPresented", () => {
+        it("starts cooldown only when an admitted hint is presented", () => {
             const h = makeHints({ cooldownMinutes: 999 });
             // First insight always passes (lastHintAt null)
             expect(h.onInsightsReady()).toBe(true);
-            h.onHintViewed(); // sets lastHintAt = Date.now()
+            expect(h.onInsightsReady()).toBe(true);
+            h.recordHintPresented();
             // Second insight should fail because cooldown is 999 min
             expect(h.onInsightsReady()).toBe(false);
         });
 
-        it("records presentation even after a generic toggle cleared pending ownership", () => {
+        it("records presentation even after generic hints were disabled", () => {
             const h = makeHints({ enabled: true, cooldownMinutes: 60 });
             expect(h.onInsightsReady()).toBe(true);
             h.updateConfig({ enabled: false });
-            expect(h.hasPendingHint).toBe(false);
 
             h.recordHintPresented();
             h.updateConfig({ enabled: true });
@@ -174,8 +150,7 @@ describe("ProactiveHints", () => {
 
             try {
                 const h = makeHints({ cooldownMinutes: 10 });
-                h.onInsightsReady();
-                h.onHintViewed(); // sets lastHintAt
+                h.recordHintPresented();
 
                 // Immediately: cooldown not elapsed
                 expect(h.onInsightsReady()).toBe(false);
@@ -194,7 +169,7 @@ describe("ProactiveHints", () => {
 
         it("first hint always passes (lastHintAt null)", () => {
             const h = makeHints({ cooldownMinutes: 999 });
-            // No prior hint viewed, so lastHintAt is null -> cooldown passes
+            // No prior hint presented, so lastHintAt is null -> cooldown passes
             expect(h.onInsightsReady()).toBe(true);
         });
     });

@@ -169,7 +169,6 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 onboardingShown: true,
                 maintenanceScanSuggested: false,
                 quickCaptureExplained: false,
-                quietAcknowledged: false,
                 pageletProviderFirstUseNotified: false,
             },
             contextPager: {
@@ -3190,27 +3189,6 @@ describe("PageletOrchestrator detail expansion", () => {
 
 
 
-});
-
-describe("PageletOrchestrator background status command", () => {
-    it("reports unified Deep Discover usage through the stable status command", async () => {
-        jest.mocked(Notice).mockClear();
-        const getDeepDiscoverUsage = jest.fn(async () => ({
-            runs: 4,
-            dailyCap: 36,
-            modelTurns: 12,
-            toolCalls: 31,
-        }));
-        const host = makeHost({ getDeepDiscoverUsage });
-        const orchestrator = new PageletOrchestrator(host);
-
-        orchestrator.getCommandCallbacks().onShowBackgroundPreparationStatus();
-        await flushAsyncWork();
-
-        expect(getDeepDiscoverUsage).toHaveBeenCalledTimes(1);
-        const message = jest.mocked(Notice).mock.calls.at(-1)?.[0] as string;
-        expect(message).toBe("Discoveries today: 4 of 36.");
-    });
 });
 
 describe("PageletOrchestrator review panel context flow", () => {

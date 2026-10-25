@@ -4,7 +4,31 @@ Decision ID: DEC-075
 Status: Accepted
 Updated: 2026-10-25
 Work item: B-189
-Authority: Owner 于 2026-10-25 在只读盘点和逐项讨论后，分别明确批准本记录的第一批及第二批实施，并接受所列旧命令退役。第二批不包含范围外功能退役、历史数据清理或新的 Git 提交、推送、发布授权。
+Authority: Owner 于 2026-10-25 在只读盘点和逐项讨论后，分别明确批准本记录的三批实施，并接受所列旧命令退役。第三批不包含范围外功能退役、历史数据清理或新的 Git 提交、推送、发布授权。
+
+## 第三批决定 — 2026-10-25
+
+Owner 逐项确认以下范围后，明确要求实施并完成必要验证；实施开始后又明确允许恢复
+GPT + GLM 工作流，GPT 负责设计与独立验收，GLM 接续开发和测试。
+
+1. 删除“拾页：显示后台审阅准备状态”命令及专用接线，保留设置页用量和真实调用预算。
+2. 删除“一键更新 metadata”命令、自动更新器及专用设置；保留已有属性、Quick Capture
+   模板、Agent 属性操作和共用状态栏。
+3. 删除无效旧 Pagelet 设置及兼容恢复：ribbonPosition、四个 preload 调优字段、四个
+   scopeRecap 准备/授权/提示字段、quietRecall 配置及其旧 mode 迁移、quietRecallExplained、
+   quietAcknowledged。Owner 明确放弃这些旧设置值的兼容恢复；历史 suppression、attempt、
+   diagnostics、acceptedCount、savedInsights 和已有结果保留。
+4. 删除无生产消费者的旧请求合并/短期缓存模块、导出及专用测试；现行调度、缓存、取消和预算保留。
+5. 删除旧追加专用预览、样式、类型和 content-hash 复核分支；保留当前创建文件预览、确认/取消、
+   目标/路径/来源复核、Chat/Agent 追加和 Undo、Quick Capture 共享路径检查。
+6. 删除主动提示旧 pending 标记、三个旧接口及专用断言；保留当前提示准入、实际展示计时、
+   冷却、安静时段、当前提示队列及显示效果。
+7. 删除 shouldUseFullCurrentNoteContext、combineDebugObservers、旧合并 renderPageletSection
+   辅助入口及专用残留；当前全文读取、范围约束、日志、分开的设置入口及有效测试保留。
+
+明确保留 AI 摘要、局部图谱增强、Callout 快捷插入、Records Preview、模拟权益、当前 Pagelet
+和 PA Agent 全部能力。旧 provider/凭据迁移、统计导入等有效历史兼容不属于本批。
+上述决定局部接续前两批对已退役设置与实现的保留约定；不重写历史事实，也不授权清理用户数据。
 
 ## Context
 
