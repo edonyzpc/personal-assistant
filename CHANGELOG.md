@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [3.0.3](https://github.com/edonyzpc/personal-assistant/compare/3.0.2...3.0.3) (2026-10-26)
+
+### Fix
+- agent: align tool diagnostics and result contracts
+- release: refresh Pi codemode source fingerprint
+
+### Improvements
+- retire legacy Pagelet surfaces and Operations settings
+- retire legacy generation and management paths
+- cleanup: retire third batch of legacy surfaces
+
 ## [3.0.2](https://github.com/edonyzpc/personal-assistant/compare/3.0.1...3.0.2) (2026-10-24)
 
 ### Features
