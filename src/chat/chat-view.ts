@@ -1004,18 +1004,21 @@ export class LLMView extends ItemView {
         const originalPicker = buttonDiv.createEl('input', { attr: { type: 'file', multiple: '' } });
         originalPicker.hidden = true;
         createChatMenuLabel(imageOptionsMenu, t('plugin.chat.createImage.options'), 'sliders-horizontal');
-        const imageOptionsSummary = imageOptionsMenu.createDiv({
-            cls: 'pa-chat-create-image-options-summary',
-        });
         const imageOptionsRow = imageOptionsMenu.createDiv({ cls: 'pa-chat-create-image-option-row' });
-        const imageModelLabel = imageOptionsRow.createEl('label', { text: t('plugin.chat.createImage.model') });
+        const imageModelLabel = imageOptionsRow.createEl('label', {
+            cls: 'pa-chat-create-image-model-label',
+            text: t('plugin.chat.createImage.model'),
+        });
         const imageModelSelect = imageModelLabel.createEl('select', {
             cls: 'pa-chat-create-image-model-select',
         });
         for (const value of ['wan2.7-image', 'wan2.7-image-pro'] as const) {
             imageModelSelect.createEl('option', { text: value, attr: { value } });
         }
-        const imageCountLabel = imageOptionsRow.createEl('label', { text: t('plugin.chat.createImage.count') });
+        const imageCountLabel = imageOptionsRow.createEl('label', {
+            cls: 'pa-chat-create-image-count-label',
+            text: t('plugin.chat.createImage.count'),
+        });
         const imageCountSelect = imageCountLabel.createEl('select', {
             cls: 'pa-chat-create-image-count-select',
         });
@@ -1871,7 +1874,6 @@ export class LLMView extends ItemView {
                 : { model: 'wan2.7-image', count: 1 };
             const model = currentOptions?.model ?? 'wan2.7-image';
             const count = currentOptions?.count ?? 1;
-            imageOptionsSummary.setText(`${model} · ${count}`);
             imageModelSelect.value = model;
             imageCountSelect.value = String(count);
             imageModelSelect.disabled = !sourceBasedRequest;

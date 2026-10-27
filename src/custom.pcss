@@ -10286,10 +10286,12 @@ body.is-mobile .pa-chat-view .pa-chat-create-image-intent .pa-chat-icon-button::
     left: 18px;
     right: auto;
 }
-.pa-chat-create-image-options-summary {
-    color: var(--text-muted);
-    padding: 0 11px;
-    font-size: var(--font-ui-small);
+/* Keep request options above Obsidian's floating mobile navbar. */
+body.is-mobile .pa-chat-create-image-options-menu {
+    bottom: calc(100% + 10px + var(--mobile-toolbar-height, 52px));
+}
+body.is-mobile .pa-chat-create-image-options-menu::after {
+    display: none;
 }
 .pa-chat-view .pa-chat-create-image-option-row label {
     display: inline-flex;
@@ -10299,20 +10301,32 @@ body.is-mobile .pa-chat-view .pa-chat-create-image-intent .pa-chat-icon-button::
 }
 .pa-chat-menu .pa-chat-create-image-option-row {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: 8px;
     padding: 8px 6px;
 }
 .pa-chat-menu .pa-chat-create-image-option-row label {
-    min-width: 0;
     flex-direction: column;
     align-items: stretch;
     gap: 4px;
+}
+.pa-chat-menu .pa-chat-create-image-model-label {
+    min-width: 0;
+}
+.pa-chat-menu .pa-chat-create-image-option-row .pa-chat-create-image-count-label {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    min-width: 0;
 }
 .pa-chat-menu .pa-chat-create-image-option-row select {
     box-sizing: border-box;
     width: 100%;
     min-height: 34px;
+}
+.pa-chat-menu .pa-chat-create-image-count-label select {
+    flex: 0 0 72px;
+    width: 72px;
 }
 .pa-chat-view .pa-ghost-publishing-card {
     min-width: 0;
