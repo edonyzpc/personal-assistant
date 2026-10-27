@@ -1279,7 +1279,7 @@ describe('B157 independent context harness contracts (offline)', () => {
         } finally { await handle.cleanup(); }
     }, 20_000);
 
-    it('uses only this call\'s typed Ghost result and never scans previous operations to recover a failed admission', async () => {
+    it('uses this call\'s typed Ghost result for sequential retry and never scans previous operations to recover a failed admission', async () => {
         for (const boundary of ['existing', 'thrown', 'revoked']) {
             const record: any = { id: `ghost-${boundary}`, submissions: [], domainEvents: [] };
             const app = harness.createSyntheticApp(), store = new MemoryChatHistoryStore();
@@ -1291,9 +1291,11 @@ describe('B157 independent context harness contracts (offline)', () => {
                 isNoteDomainAllowed: () => current, isWebAllowed: () => false, captureSourceValidity: () => () => current };
             const submit = () => domains.bindings('Prepare this fixture.', 0).ghostPublishing.submit(
                 { intent: 'prepare', path: 'B157-context-eval/source.md' }, guard, () => current);
+            let unknownResult: any;
             try {
                 if (boundary === 'existing') {
-                    expect(await submit()).toMatchObject({ status: 'outcome_unknown' });
+                    unknownResult = await submit();
+                    expect(unknownResult).toMatchObject({ status: 'outcome_unknown', executionState: 'acceptance_unknown' });
                 } else if (boundary === 'thrown') {
                     const prior = await domains.ghost.contextFor('B157-context-eval/source.md', guard, () => current);
                     await domains.ghost.service.prepare(prior.noteKey, prior.postId, prior.context);
@@ -1301,11 +1303,24 @@ describe('B157 independent context harness contracts (offline)', () => {
                 } else {
                     current = false;
                 }
-                if (boundary === 'existing') await expect(submit()).rejects.toMatchObject({ code: 'result-unknown' });
-                else await expect(submit()).rejects.toThrow(boundary === 'thrown'
-                    ? 'Current call failed before returning an operation.' : 'SOURCE_REVOKED');
-                expect(record.submissions.filter((event: any) => event.method === 'create')).toHaveLength(boundary === 'revoked' ? 0 : 1);
-                expect(record.domainEvents.filter((event: any) => event.owner === 'ghost-binding')).toHaveLength(boundary === 'existing' ? 1 : 0);
+                if (boundary === 'existing') {
+                    const retried = await submit();
+                    expect(retried).toMatchObject({ status: 'prepared', executionState: 'succeeded' });
+                    expect(retried.operationId).not.toBe(unknownResult.operationId);
+                    const bindings = record.domainEvents.filter((event: any) => event.owner === 'ghost-binding');
+                    expect(bindings).toHaveLength(2);
+                    expect(bindings[0]).toMatchObject({ operationId: unknownResult.operationId,
+                        state: 'outcome_unknown', evidence: 'actual-owned-session-result' });
+                    expect(bindings[1]).toMatchObject({ operationId: retried.operationId,
+                        state: 'draft_saved', evidence: 'actual-owned-session-result' });
+                } else {
+                    await expect(submit()).rejects.toThrow(boundary === 'thrown'
+                        ? 'Current call failed before returning an operation.' : 'SOURCE_REVOKED');
+                }
+                expect(record.submissions.filter((event: any) => event.method === 'create'))
+                    .toHaveLength(boundary === 'revoked' ? 0 : boundary === 'existing' ? 2 : 1);
+                expect(record.domainEvents.filter((event: any) => event.owner === 'ghost-binding'))
+                    .toHaveLength(boundary === 'existing' ? 2 : 0);
             } finally { await domains.dispose(); await store.dispose(); }
         }
     });

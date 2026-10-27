@@ -66,7 +66,7 @@
 ## Share And Reuse
 
 - [Note Image Removal](./specs/pa-note-image-removal-product-spec.md) — B-160：联合移除笔记图片与附件、共享引用保护和临时一键撤销。
-- [Ghost Blog Publishing](./specs/pa-ghost-blog-publishing-product-spec.md) — B-163 精简目标：note 全量同步、真实 URL 人工预览、Ghost Publish / PA 确认更新；B-153 历史验收不代表新方案已实现。
+- [Ghost Blog Publishing](./specs/pa-ghost-blog-publishing-product-spec.md) — note 全量同步、人工上线；包含图片限额、失败事实、草稿重试与分隔线，见 [B-190 最终验证](../archive/2026/b190-ghost-publishing-reliability-validation.md)。
 - [Share Card](./specs/pa-share-card-product-spec.md)
 - [Share Card Print Styles](./specs/pa-share-card-print-styles-product-spec.md)
 

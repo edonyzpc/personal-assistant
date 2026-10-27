@@ -22,7 +22,7 @@
 
 - [Discovery Registry](./discovery/README.md) — 需要跨会话讨论、研究或方案选择的活跃主题。
 - [Decision Index](../product/decisions/README.md) — Accepted/Deferred/Rejected/Superseded 的 repo-local 决策入口。
-- [Ghost 发布精简方案](./ghost-blog-publishing-design.md) — B-163 已接受的目标流程、字段、最小校验与实施边界；[B-153 最终验证](../archive/2026/b153-ghost-blog-publishing-validation.md)仅为旧实现的历史验收与限制。
+- [Ghost 发布设计](./ghost-blog-publishing-design.md) — 当前同步、图片限额、重试与内容转换职责；[B-190 最终验证](../archive/2026/b190-ghost-publishing-reliability-validation.md)保留自动化及应用观察的证据边界。
 
 ## Engineering Governance
 

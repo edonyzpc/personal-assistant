@@ -51,6 +51,7 @@ export interface ChatHost {
         revision: number;
         state: import('../ghost-publishing/state-schema').GhostLocalOperation['state'];
         verified: boolean;
+        facts?: import('../ghost-publishing/state-schema').GhostOperationFacts;
     } | undefined>;
     clearGhostContextPersistence?(conversationId: string): void;
     openAgentDebug?(target?: string | AgentDebugRouteTarget): void | Promise<void>;

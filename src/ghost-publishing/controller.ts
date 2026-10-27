@@ -6,7 +6,7 @@ import { GhostPublishingConfiguration, type GhostConnection } from "./configurat
 import { GhostTabPreview } from "./preview";
 import { GhostPublishingService, type GhostActionContext } from "./service";
 import { GhostPreviewStore, ghostDatabaseName } from "./state-store";
-import type { GhostLocalOperation } from "./state-schema";
+import type { GhostLocalOperation, GhostOperationFacts } from "./state-schema";
 import type { GhostNoteSelection } from "./binding";
 import type { GhostPublishingSourceGuard } from "./types";
 import { ghostMetadataFailureReason, type GhostMetadataFailureReason } from "../ai-services/ghost-tool-receipt";
@@ -26,6 +26,8 @@ export interface GhostCardState {
     busy: boolean;
     errorKey?: string;
     warningKeys?: string[];
+    facts?: GhostOperationFacts;
+    sourceLocation?: { path: string; line: number };
     actions: GhostCardAction[];
 }
 export interface GhostContextReceipt {
@@ -33,6 +35,7 @@ export interface GhostContextReceipt {
     revision: number;
     state: GhostLocalOperation["state"];
     verified: boolean;
+    facts?: GhostOperationFacts;
 }
 export interface GhostPublishingSession {
     getState(): GhostCardState;
@@ -59,6 +62,10 @@ export interface GhostControllerOptions {
 export interface GhostControllerRequest {
     path: string;
     intent: "prepare";
+    requestIdentity?: {
+        conversationId: string;
+        stableMessageId: string;
+    };
     authority: GhostActionAuthority;
     createActionAuthority(): GhostActionAuthority;
     onSession(session: GhostPublishingSession): void;
@@ -68,6 +75,7 @@ export interface GhostControllerResult {
     operationId?: string;
     executionState: "not_started" | "succeeded" | "failed" | "acceptance_unknown";
     failureReason?: GhostMetadataFailureReason;
+    facts?: GhostOperationFacts;
 }
 
 const KEY = "plugin.ghost.card.";
@@ -92,6 +100,7 @@ function errorKey(code: string): string {
     if (["storage-unavailable", "invalid-state"].includes(code)) return `${KEY}error.storage`;
     if (code === "comment-unclosed") return `${KEY}error.commentUnclosed`;
     if (code === "cover-ambiguous") return `${KEY}error.coverChoice`;
+    if (code === "unsupported-syntax") return `${KEY}error.unsupportedSyntax`;
     if (code === "enable-web-viewer") return `${KEY}error.webViewer`;
     if (code === "provider_failure") return `${KEY}error.metadataProvider`;
     if (code === "input_too_large") return `${KEY}error.metadataInput`;
@@ -102,7 +111,8 @@ function errorKey(code: string): string {
 interface Runtime { client: GhostClient; service: GhostPublishingService; previews: GhostPreviewStore }
 interface ActionScope { context: GhostActionContext; selection: GhostNoteSelection; noteKey: string; postId?: string; release(): void }
 function receipt(operation: GhostLocalOperation): GhostContextReceipt {
-    return { operationId: operation.operationId, revision: operation.revision, state: operation.state, verified: Boolean(operation.verified) };
+    return { operationId: operation.operationId, revision: operation.revision, state: operation.state,
+        verified: Boolean(operation.verified), ...(operation.facts ? { facts: operation.facts } : {}) };
 }
 
 /** Owns live sessions and one resource-pointer store per configured site. */
@@ -181,7 +191,9 @@ export class GhostPublishingController {
                 siteId: connection.siteId, siteUrl: connection.siteUrl, getConnectionIdentity: () => this.options.configuration.getIdentity(),
                 getProfile: () => connection.profile, getSourceRevision: path => this.options.getSourceRevision(path),
                 isResourcePathAllowed: (resourcePath, ownerPath) => this.options.isPathAllowed(ownerPath) && this.options.isPathAllowed(resourcePath),
-                defaultVisibility: connection.defaultVisibility, signal: abort.signal, generateMetadata: this.options.generateMetadata,
+                defaultVisibility: connection.defaultVisibility,
+                ...(connection.maxUploadBytes !== undefined ? { maxUploadBytes: connection.maxUploadBytes } : {}),
+                signal: abort.signal, generateMetadata: this.options.generateMetadata,
                 metadataDebug: authority.metadataDebug });
             return { ...created, release };
         } catch (error) { release(); throw error; }
@@ -200,7 +212,7 @@ export class GhostPublishingController {
             session = new PublishingSession(this, connection, runtime, scope, request, lifetime, () => this.sessions.delete(session!));
             this.sessions.add(session);
             request.onSession(session);
-            await session.initialize(scope);
+            await session.initialize(scope, request.requestIdentity);
             return session.result();
         } catch (error) {
             if (session) { session.report(error); return session.result(); }
@@ -259,8 +271,8 @@ class PublishingSession implements GhostPublishingSession {
         }
     }
     report(error: unknown): void { this.errorCode = errorCode(error); this.error = errorKey(this.errorCode); this.emit(); }
-    async initialize(scope: ActionScope): Promise<void> {
-        try { this.operation = await this.runtime.service.prepare(scope.noteKey, scope.postId, scope.context); }
+    async initialize(scope: ActionScope, requestIdentity?: GhostControllerRequest["requestIdentity"]): Promise<void> {
+        try { this.operation = await this.runtime.service.prepare(scope.noteKey, scope.postId, scope.context, requestIdentity); }
         catch (error) { this.report(error); }
         finally { this.busy = false; this.emit(); }
     }
@@ -272,6 +284,7 @@ class PublishingSession implements GhostPublishingSession {
         return { status: operation?.state === "outcome_unknown" ? "outcome_unknown"
             : this.error || operation?.state === "failed" || operation?.warnings?.length ? "needs_attention" : "prepared",
             ...(operation ? { operationId: operation.operationId } : {}), executionState,
+            ...(operation?.facts ? { facts: operation.facts } : {}),
             ...(failureReason ? { failureReason } : {}) };
     }
     getState(): GhostCardState {
@@ -295,6 +308,8 @@ class PublishingSession implements GhostPublishingSession {
         return { title: this.selection.path.split("/").pop()?.replace(/\.md$/i, "") ?? "", site: this.connection.siteUrl,
             operationId: operation?.operationId, status, busy: this.busy,
             errorKey: this.error ?? (operation?.error ? errorKey(operation.error) : undefined), warningKeys,
+            ...(operation?.facts ? { facts: operation.facts } : {}),
+            ...(operation?.sourceLocation ? { sourceLocation: operation.sourceLocation } : {}),
             actions: this.disposed ? [] : actions };
     }
     getContextReceipt(): GhostContextReceipt | undefined { return this.operation ? receipt(this.operation) : undefined; }

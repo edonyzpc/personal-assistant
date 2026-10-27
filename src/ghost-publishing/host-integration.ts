@@ -138,6 +138,7 @@ export class GhostPublishingIntegration {
                     });
                 }
                 return this.controller.prepare({ path, intent: input.intent,
+                    requestIdentity: { conversationId: request.conversationId, stableMessageId: request.stableMessageId },
                     authority: { guard, sourceValidity, signal, metadataDebug: debug }, createActionAuthority,
                     onSession: session => {
                         if (!current()) { session.dispose(); return; }

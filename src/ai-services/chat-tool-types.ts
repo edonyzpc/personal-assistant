@@ -195,6 +195,7 @@ export interface GhostPostToolReceipt {
     operationId?: string;
     executionState: "not_started" | "succeeded" | "failed" | "acceptance_unknown";
     failureReason?: import("./ghost-tool-receipt").GhostMetadataFailureReason;
+    facts?: import("../ghost-publishing/state-schema").GhostOperationFacts;
 }
 
 /** Granted only by the Chat host for one explicit publishing request. */

@@ -22,7 +22,8 @@ import { validatePageletInputEvidence } from "../pagelet/agent/pagelet-agent-qua
 import { stableHash } from "../pa/helpers";
 import { MemorySearchTool } from "./memory-search-tool";
 import { TaskSourceRun, historyInputLineage } from "./task-source-run";
-import { isGhostPreparationMessage, isGhostPreparationResult } from "./ghost-tool-receipt";
+import { hasGhostPreparationRecoveryActions, isGhostOperationFacts, isGhostPreparationMessage,
+    isGhostPreparationResult } from "./ghost-tool-receipt";
 import { ImagePreacceptError } from '../chat/image-generation-types';
 import { parseRunSourceSelection } from './chat-source-scope';
 import { cloneInputLineage, completeInputLineage, sourceRecordsInputLineage,
@@ -718,7 +719,7 @@ const GHOST_ADMISSION_RECOVERY = {
     ghost_source_guard_missing: { message: "The Ghost request or its source guard is no longer current. Start from the current user request; no preparation was started.", actions: ["none"] },
 } as const;
 const GHOST_UNKNOWN_RECOVERY = {
-    ghost_preparation_acceptance_unknown: { message: "The preparation result is unknown. Verify an existing Ghost operation if one is verifiable; otherwise say it cannot be verified. Do not retry or claim publication.", actions: ["query_operation", "needs_user"] },
+    ghost_preparation_outcome_unknown: { message: "The preparation result is unknown. Preserve the Ghost operation identity; this receipt allows a sequential retry by the same authorized request. Do not claim publication.", actions: ["retry", "needs_user"] },
 } as const;
 
 /** B153 publishes only a closed Host status, never article content or remote addresses. */
@@ -782,7 +783,7 @@ function isSafeGhostPublishingStatusObservation(
     if (!observation) return false;
     const metadataRecovery = asRecord(metadata.recovery);
     const actualExecutionState = executionState ?? metadata.executionState;
-    const isCurrentReceipt = isGhostPreparationMessage(observation.status, actualExecutionState, observation.message, observation.failureReason);
+    const isCurrentReceipt = isGhostPreparationMessage(observation.status, actualExecutionState, observation.message, observation.failureReason, observation.facts);
     if (observation.failureReason !== undefined && !isCurrentReceipt) return false;
     const expectedExecutionState = isCurrentReceipt ? actualExecutionState
         : observation.status === "prepared" ? "succeeded" : "acceptance_unknown";
@@ -799,9 +800,10 @@ function isSafeGhostPublishingStatusObservation(
     if (isCurrentReceipt && observation.status !== "prepared"
         && (executionRecovery?.code !== (observation.status === "outcome_unknown"
             ? "ghost_preparation_outcome_unknown" : "ghost_attention_required")
-            || JSON.stringify(executionRecovery?.allowedActions) !== (actualExecutionState === "acceptance_unknown"
-                ? '["query_operation","needs_user"]' : '["needs_user"]'))) return false;
-    if (!observation || !hasOnlyKeys(observation, ["status", "operationId", "message", "failureReason"])
+            || !hasGhostPreparationRecoveryActions(observation.status, actualExecutionState,
+                observation.failureReason, observation.facts, executionRecovery?.allowedActions))) return false;
+    if (!observation || !hasOnlyKeys(observation, ["status", "operationId", "message", "failureReason", "facts"])
+        || observation.facts !== undefined && !isGhostOperationFacts(observation.facts)
         || !isCurrentReceipt && observation.message !== (observation.status === "prepared" ? GHOST_STATUS_MESSAGES.prepared
             : observation.status === "outcome_unknown" ? GHOST_STATUS_MESSAGES.outcome_unknown
                 : observation.status === "needs_attention"

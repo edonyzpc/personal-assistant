@@ -137,6 +137,24 @@ describe("Lean Ghost controller and human actions", () => {
         expect(mockService.confirm).not.toHaveBeenCalled();
     });
 
+    it("projects closed operation facts to the result, context receipt, and card state", async () => {
+        const facts = { stage: "resource" as const, reason: "site-upload-limit" as const,
+            postEffect: "not_sent" as const, uploadedCount: 0,
+            resource: { id: "resource-1", role: "cover" as const, actualBytes: 3, limitBytes: 2 } };
+        mockService.prepare.mockImplementation(async () => {
+            mockOperation = { ...operation("failed"), executionState: "not_started", verified: undefined,
+                error: "unsupported-syntax", facts,
+                sourceLocation: { path: "Nested.md", line: 6 } };
+            return mockOperation;
+        });
+        const f = fixture();
+        const result = await f.controller.prepare(f.request);
+        expect(result).toMatchObject({ status: "needs_attention", executionState: "not_started", facts });
+        expect(f.session().getContextReceipt()).toMatchObject({ state: "failed", verified: false, facts });
+        expect(JSON.stringify(f.session().getContextReceipt())).not.toContain("Nested.md");
+        expect(f.session().getState()).toMatchObject({ facts, sourceLocation: { path: "Nested.md", line: 6 } });
+    });
+
     it.each(["draft_saved", "prepared"] as const)("opens the returned public preview for %s and keeps the editor on the admin site", async state => {
         mockService.prepare.mockImplementation(async () => { mockOperation = operation(state); return mockOperation; });
         const f = fixture();
@@ -295,6 +313,10 @@ describe("Lean Ghost card rendering", () => {
     it("keeps accessible ordinary buttons, busy feedback and subscription cleanup without replacement or preview-check prompts", async () => {
         const container = domFixture();
         let state: GhostCardState = { title: "Note", site: SITE, status: "prepared", busy: false,
+            errorKey: "plugin.ghost.card.error.unsupportedSyntax",
+            sourceLocation: { path: "Nested.md", line: 6 },
+            facts: { stage: "image-upload", reason: "http", httpStatus: 413, postEffect: "not_sent",
+                uploadedCount: 1, resource: { id: "resource-1", role: "body", actualBytes: 3, limitBytes: 2 } },
             actions: ["open-preview", "confirm"] };
         let listener: () => void = () => {};
         const unsubscribe = jest.fn();
@@ -302,7 +324,8 @@ describe("Lean Ghost card rendering", () => {
         const dispose = jest.fn();
         const session: GhostPublishingSession = { getState: () => state, getContextReceipt: () => undefined,
             subscribe: value => { listener = value; return unsubscribe; }, run, dispose };
-        const cleanup = renderGhostPublishingCard(container as unknown as HTMLElement, session, key => key);
+        const cleanup = renderGhostPublishingCard(container as unknown as HTMLElement, session, (key, params) =>
+            params ? `${key}:${JSON.stringify(params)}` : key);
         let buttons = findAllByTag(container, "button");
         const ownerDocument = (container as DomStubNode & { ownerDocument: unknown }).ownerDocument;
         expect([container.children[0], ...buttons].every(node =>
@@ -312,6 +335,10 @@ describe("Lean Ghost card rendering", () => {
             "plugin.ghost.card.action.open-preview", "plugin.ghost.card.action.confirm",
         ]);
         expect(findAllByTag(container, "input")).toHaveLength(0);
+        expect(findAllByTag(container, "p").some(node => node.textContent?.includes('"path":"Nested.md"')
+            && node.textContent.includes('"line":6'))).toBe(true);
+        expect(findAllByTag(container, "p").some(node => node.textContent?.includes("plugin.ghost.card.error.uploadTooLarge"))).toBe(true);
+        expect(findAllByTag(container, "p").some(node => node.textContent?.includes('"actualBytes":3'))).toBe(true);
         buttons[1].dispatch("click");
         await Promise.resolve();
         expect(run).toHaveBeenCalledWith("confirm");

@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-10-25
+Updated: 2026-10-28
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-10-28 | `docs/development/active/ghost-publishing-reliability/**` | deleted-after-absorption | [DEC-053](../product/decisions/dec-053-lean-ghost-publishing.md), [Spec](../product/specs/pa-ghost-blog-publishing-product-spec.md), [Design](../development/ghost-blog-publishing-design.md), [B-190 validation](./2026/b190-ghost-publishing-reliability-validation.md) | Owner 授权文档收尾及本地 master 提交。稳定图片限额／失败事实／草稿重试／原生横线契约与回滚已吸收；保留原完整命令失败、后续定向通过、R11 应用观察及 R12/R13 未部署的边界。删除 Home/Plan/SDD/Tracker，终态快照留本机；无待修实现 blocker，不包含推送或发布。 |
 | 2026-10-25 | `docs/development/active/obsidian-code-interface-consistency/**` | deleted-after-absorption | [SDK Architecture](../architecture/obsidian-resource-sdk.md), [Agent Architecture](../architecture/pa-agent-architecture-plan.md#b-140-note-memory-and-insight-capabilities), [接口验证](./2026/b174-interface-consistency-validation.md) | Owner 授权收尾及本地 master 提交。F-01 至 F-07 已按批准范围验收；根入口与局部合同已吸收，保留无效构建样本、定向复验和模型证据限制。删除 Home/SDD/Tracker，终态快照留本机；行号表述残余并入 B-148，不追加实现、推送或发布。 |
 | 2026-10-24 | `docs/development/active/chat-mermaid-auto-enable/**` | deleted-after-absorption | [DEC-074](../product/decisions/dec-074-chat-mermaid-auto-enable.md), [Spec](../product/specs/pa-chat-mermaid-auto-enable-product-spec.md), [B-188 validation](./2026/b188-chat-mermaid-auto-enable-validation.md) | Owner 授权清理已完成 Active 记录。任务和 findings 已完成；原生宿主开关责任吸收至当前契约，保留完整测试的环境失败、定向复验和真实交互边界。删除 Home/SDD/Tracker，原包及终态 Tracker 留本机副本；无本范围未完成项，本轮不提交或推送。 |
 | 2026-10-24 | `docs/development/active/pagelet-chat-continuation/**` | deleted-after-absorption | [DEC-072](../product/decisions/dec-072-pagelet-chat-continuation.md), [Spec](../product/specs/pagelet-chat-continuation-product-spec.md), [B-187 validation](./2026/b187-pagelet-chat-continuation-validation.md) | Owner 授权清理已完成 Active 记录。来源导航、完整附件与精确返回责任吸收；保留实际 Remove、阅读连续性修复及分阶段验证边界。删除 Home/SDD/Tracker，原包及终态 Tracker 留本机副本；无本范围未完成项，不推进 B-182/B-183，本轮不提交或推送。 |

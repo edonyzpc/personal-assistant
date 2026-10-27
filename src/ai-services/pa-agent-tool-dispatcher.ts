@@ -440,6 +440,7 @@ export class ToolExecutionDispatcher {
         const toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>> = [];
         const diagnostics: Array<Record<string, unknown>> = [];
         const meaningfulToolCallNames = collectMeaningfulToolCallNames(parsedToolCalls);
+        const handledToolCallKeys = new Set<string>();
 
         for (const toolCall of parsedToolCalls) {
             if (this.config.isAborted()) {
@@ -455,14 +456,17 @@ export class ToolExecutionDispatcher {
 
             const preparedResult = preparedToolResults.get(toolCall.id);
             const completedOperationsResult = finiteOperationsResult(preparedResult, toolCall.id);
+            const toolCallKey = this.normalizeToolCallKey(toolCall);
             const skipResult = completedOperationsResult ? undefined : this.consumeExpiredSourceGuardAttempt(readGuard)
-                ?? this.classifyPreflightSkip(toolCall, meaningfulToolCallNames, turnToolMode, turnControlSnapshot);
+                ?? this.classifyPreflightSkip(toolCall, meaningfulToolCallNames, turnToolMode, turnControlSnapshot,
+                    handledToolCallKeys);
+            handledToolCallKeys.add(toolCallKey);
             let executionResult: PaAgentToolExecutionResult;
             if (skipResult) {
                 executionResult = skipResult;
             } else {
                 if (toolCall.name === "get_writing_context") this.lastSuccessfulWritingContextKey = undefined;
-                this.seenToolCallKeys.add(this.normalizeToolCallKey(toolCall));
+                this.seenToolCallKeys.add(toolCallKey);
                 this._toolCallCount += 1;
                 executionResult = completedOperationsResult ?? (!isReadGuardCurrent(readGuard) ? sourceGuardRejection()
                     : preparedResult
@@ -506,18 +510,22 @@ export class ToolExecutionDispatcher {
         }
 
         const meaningfulToolCallNames = collectMeaningfulToolCallNames(parsedToolCalls);
+        const handledToolCallKeys = new Set<string>();
         // Pre-flight pass: classify each tool call in deterministic order so state mutations
         // (seenToolCallKeys, toolCallCount) mirror the sequential path. Only the "real" executes run concurrently.
         const entries: ParallelToolEntry[] = [];
         for (const toolCall of parsedToolCalls) {
+            const toolCallKey = this.normalizeToolCallKey(toolCall);
             const skipResult = this.consumeExpiredSourceGuardAttempt(readGuard)
-                ?? this.classifyPreflightSkip(toolCall, meaningfulToolCallNames, turnToolMode, turnControlSnapshot);
+                ?? this.classifyPreflightSkip(toolCall, meaningfulToolCallNames, turnToolMode, turnControlSnapshot,
+                    handledToolCallKeys);
+            handledToolCallKeys.add(toolCallKey);
             if (skipResult) {
                 entries.push({ toolCall, skipResult });
                 continue;
             }
             if (toolCall.name === "get_writing_context") this.lastSuccessfulWritingContextKey = undefined;
-            this.seenToolCallKeys.add(this.normalizeToolCallKey(toolCall));
+            this.seenToolCallKeys.add(toolCallKey);
             this._toolCallCount += 1;
             entries.push({ toolCall });
         }
@@ -579,6 +587,7 @@ export class ToolExecutionDispatcher {
         meaningfulToolCallNames: Set<string>,
         turnToolMode: PaAgentToolMode | undefined,
         turnControlSnapshot: AgentControlSnapshot | undefined,
+        handledToolCallKeys: ReadonlySet<string>,
     ): PaAgentToolExecutionResult | null {
         // Ops Agent prerequisite: when toolMode=final_answer_only, the runtime exports zero tool
         // schemas (see pa-agent-runtime.ts `tool_definitions: input.toolMode === "final_answer_only" ? []`)
@@ -658,6 +667,8 @@ export class ToolExecutionDispatcher {
             }
             if (recorded?.executionState === "acceptance_unknown"
                 || recorded?.executionState === "partially_succeeded") {
+                if (!handledToolCallKeys.has(toolCallKey)
+                    && this.allowsGhostPreparationRetry(toolCall, recorded)) return null;
                 return this.blockUnknownOrPartialReplay(toolCall, recorded);
             }
             return {
@@ -679,6 +690,16 @@ export class ToolExecutionDispatcher {
         // The generic successful-result hook below checks the current owner receipt.
         if (toolCall.name === "get_writing_context" && key !== this.lastSuccessfulWritingContextKey) return false;
         return seen.has(key);
+    }
+
+    private allowsGhostPreparationRetry(
+        toolCall: ParsedBufferedToolCall,
+        recorded: PaAgentToolExecutionResult,
+    ): boolean {
+        return toolCall.name === "prepare_ghost_post"
+            && recorded.executionState === "acceptance_unknown"
+            && recorded.recovery?.code === "ghost_preparation_outcome_unknown"
+            && recorded.recovery.allowedActions.includes("retry");
     }
 
     private reuseSuccessfulResult(
@@ -736,7 +757,7 @@ export class ToolExecutionDispatcher {
         if (result.metadata?.preflightOnly === true || result.outcome === "budget_exceeded"
             || result.outcome === "schema_invalid" || result.outcome === "policy_rejected"
             || result.outcome === "duplicate_skipped" || result.outcome === "reused_result"
-            || result.outcome === "control_applied") return;
+            || result.outcome === "control_applied" || result.metadata?.replayBlocked === true) return;
         const key = this.normalizeToolCallKey(call);
         const executionState = result.executionState
             ?? (result.outcome === "success"

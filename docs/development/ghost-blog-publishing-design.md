@@ -1,9 +1,14 @@
 # blog2ghost 精简优化方案
 
 Document status: Approved
-Updated: 2026-10-24
-Work item: B-163
+Updated: 2026-10-28
+Work item: B-190
 Authority: [DEC-053](../product/decisions/dec-053-lean-ghost-publishing.md) 与 [Product Spec](../product/specs/pa-ghost-blog-publishing-product-spec.md) 下的当前完整设计与职责边界。字段规则由 Product Spec 维护；历史实现和验收范围见 [B-163 最终验证](../archive/2026/b163-lean-ghost-publishing-validation.md)。本文不授予新的实施或 Git/release 权限。
+
+当前设计已吸收 B-190 的根级分隔线、可选站点限额、失败事实与草稿顺序重试：失败后
+普通重新准备，同站图片保持原有校验，嵌套横线明确报错。实现与验证边界见
+[B-190 最终验证](../archive/2026/b190-ghost-publishing-reliability-validation.md)；B-163 的
+历史验收不作为这些增量的验证证据。
 
 ## 1. 目标与已确认边界
 
@@ -106,6 +111,30 @@ flowchart TD
 - 同站可用图片 URL、本次相同内容去重复用不依赖历史 baseline；不为跨次资源缓存另建
   历史账本，也不删除已上传图片来模拟事务回滚。
 
+### Markdown 分隔线
+
+现有 parser 识别的根级 `---`、`***`、`___` 输出 Ghost 原生横线节点，保留前后块与
+来源映射。引用、普通列表及任务列表内的嵌套横线返回 `unsupported-syntax`，本地卡片
+显示来源位置；不静默丢弃，也不把整个容器转换为 HTML。YAML、setext、代码与普通
+`—-` 保持原语义，不修改源笔记。原始路径和行号仅用于本地诊断，不进入闭合工具回执、
+历史 actionState 或持久预览指针。
+
+### 单文件上传限额
+
+`maxUploadBytes` 是当前配置站点的可选正整数 bytes，设置界面使用十进制 MB；留空表示
+未知。限额属于当前输入对应的 canonical site，实际换站立即清空，等价 URL 格式变化
+不清空；换站后可填写新值，不维护历史站点限额表。新值参与现有设置身份检查，每次
+prepare 传入，不固化在按站点复用的 client/service 中。
+
+`createGhostActionContext` 在 export 和资源准入之后、metadata AI 之前调用
+`preflightGhostResources`：先检查当前路径权限，再用本地文件 stat 拦截已知超限。
+零或缺失 stat 仍属未知；读取实际 bytes 后复核，等于限额允许。本地已知超限时本次
+不调用 metadata AI、不上传图片、不写文章；远程图片在已有下载后检查，不承诺提前发现。
+
+同站图片仍完成下载、空内容/MIME/本地处理上限校验及字节哈希；仅在正常准备取得可复用
+URL、实际免上传时豁免站点上传限额。其他图片在上传前按实际 bytes 检查，不增加 URL-only
+资源类型，不改变既有本地处理上限。未知站点限额不擅加 5 MB，也不探测套餐、压缩或改原图。
+
 ## 4. 校验收敛
 
 | 保留的边界检查 | 目的 | 删除的旧前置 |
@@ -117,7 +146,7 @@ flowchart TD
 | published 人工确认及 API updated_at | 明确上线动作、处理真实请求碰撞 | 预览必须自动验证通过、额外恢复确认 |
 | 取消、连接变化、同目标并发与返回身份/状态 | 避免已取消动作继续执行或重复点击重发 | Ghost 专用持久阶段/补偿队列、后置 guard 抹掉远端成功 |
 
-**候选语义：**准备时固定本次实际读取并转换的内容。之后编辑主 note、嵌入或图片，
+**候选语义：**成功准备后固定本次实际读取并转换的内容。之后编辑主 note、嵌入或图片，
 不会在确认时偷偷换入新版；用户要包含新修改就再次同步。该选择不解除当前来源权限：
 权限撤销、取消或连接变化仍阻止尚未发送的动作。准备过程中各依赖读取需保持一致，
 防止混用正在修改的不同内容；只核对实际参与本次准备的依赖，PA 关联属性不属于文章内容。
@@ -177,9 +206,32 @@ Ghost 来源时效修正只影响其真实调用边界；不得因此关闭其�
   事实，状态为 preparing、prepared、draft_saved、updated、failed 或 outcome_unknown。
   已建立操作后的失败保留其 ID 和 executionState；回写/清理失败是已知成功的附加事实。
   Session 关闭只撤销当前确认权，不改写已保存事实；重启不恢复候选或旧确认。
+- Host 将现有 conversationId/stableMessageId 作为请求身份传入 controller/service，
+  不加入模型参数。同请求成功或在途调用复用；允许重试的失败建立新 scope，走普通 prepare，
+  重新读取当前获准 note、嵌入与图片，接受 metadata 再生成和重复上传。旧 scope 每次
+  释放，不另存失败候选资源计划、来源准入副本或上传 URL 缓存。
 - 唯一 Ghost 专用持久数据是站点、原 post ID 与 preview ID 的资源指针。
   旧操作文件不读、不迁移、不删除；新触发不扫描认领未知草稿。Chat 通过现有结果事实
   通道呈现已发生效果，工具仅 prepare，不能用参数代替 UI 确认。
+
+### 失败事实与回执
+
+领域 operation 记录当前 `stage`、白名单 `reason`、可选 HTTP status、`postEffect`、
+已确认上传数 `uploadedCount`，以及失败图片的局部 ID、位置和实际/限制 bytes。
+`postEffect` 独立区分 not_sent、failed、unknown、saved；图片成功不意味着文章成功，
+URL 复用不计为新上传，新尝试的计数也不冒充站点累计资源数。
+
+这些闭合事实经 controller 的 result/getState/context receipt、工具、runtime/result-facts
+和历史 actionState 传递。消费者校验并呈现同一事实，不从任意异常文本反推原因；普通
+模型上下文、来源排除后的上下文和历史摘要保持同一投影，不包含正文、vault 路径、URL、
+Key 或原始响应。`resource.role=body` 指正文中的一张图片，bytes 指该图片大小；
+`post-save` 仅表示阶段，是否已保存以 `postEffect` 为准。
+
+大小判断由程序完成。`ghostPreparationMessage` 根据合法 `site-upload-limit` 失败事实
+选择固定说明，明确是单张图片超过当前配置的单文件限额，建议缩小或替换图片；Agent
+只转述，不将本地预检解释为 Ghost 已拒绝。HTTP 413 可说明远端大小拒绝，普通网络错误、
+422 或 timeout 不推断超限，也不补造未知远端限额。已确认保存不被后续绑定/清理失败
+覆盖；读回核实成功时清除已失效的失败原因和 HTTP status，保留保存事实。
 
 ## 6. UI 与 URL
 
@@ -209,12 +261,36 @@ Ghost 来源时效修正只影响其真实调用边界；不得因此关闭其�
 | 准备部分成功 | 例如图片已上传，但转换/生成未完成 | 不报告文章就绪，不补偿删除共享图片 |
 | Ghost 已确认写入，本地关联失败 | 草稿/文章已保存，关联保存失败 | 展示真实 ID/入口，当前动作复用已知 ID |
 | 明确 API 拒绝 | 请求失败及真实原因 | 不伪装为成功，不无条件新建替代文章 |
-| 请求已发出，响应丢失 | 保存结果未确认 | 已知 ID 可做一次有界只读核实；无可靠 ID 引导后台核实；不自动重发 |
+| 图片上传响应丢失，文章尚未发送 | 图片结果未确认，文章 not_sent，保留已确认上传数 | 可顺序重新上传；不提示“可能重复草稿” |
+| 草稿写入响应丢失 | 文章结果未确认，保留已知图片效果 | 已知文章 ID 先核对受管内容，成功直接复用；仍未知可顺序重试。无可靠 ID 可再次 POST，提示可能重复草稿，无需重启或确认重试 |
+| 已发布原文更新响应丢失 | 线上更新结果未确认 | 按 ID 核实；不自动重放，不用草稿重试规则代替人工更新确认 |
 | 原文章更新成功，预览删除失败 | 更新成功、预览稿尚未清理 | 附资源入口；无恢复队列、无重复 PUT |
 | 取消或来源/连接变化 | 已完成部分与尚未执行部分 | 停止后续发送，已知远端结果不变 |
 
 只有真实写入已发送且无法确定结果时才使用“结果未确认”。删除来源时效误判不等于承诺
-网络永远可确认；同时不以“简化错误处理”为由重放未知 POST/PUT。
+网络永远可确认。草稿准备接受顺序重试及重复资源风险，同一有效请求也可再次调用。
+已知 ID 先用旧候选核实上次实际写入目标：普通草稿为正式 ID，线上文章的准备为预览
+draft ID，并核对既有预览标记。受管内容匹配才恢复保存成功；仍为 draft 但不匹配时
+重新准备，以最新 updated_at 更新同 ID。旧远端正文为空或无法比较，只表示不匹配，
+不能据此宣称成功或阻断正常重新准备。新用户请求仍读取当前来源，不能把上次已保存
+误报为本次修改已同步；后续成功也不能被同目标/用途的更早 unknown 覆盖。
+
+已知 ID 查询失败保留 ID，不能当作不存在而新建。source 阶段的 network、timeout 或
+HTTP 408/429/5xx 可顺序重试读取，不因 executionState=not_started 永久缓存为拒绝；
+真实来源/权限/取消拒绝继续有效。只有明确 post-not-found 才按既有规则处理资源消失。
+读回已被人工 Publish 的草稿走现有 published 准备语义，不把它改回 draft。
+
+`ghost-tool-receipt` 统一判断当前事实的重试资格，工具和 runtime/历史消费者复用。
+工具只保存在途/成功 Promise、固定目标和一份失败边界；可重试终态释放 Promise，下一次
+顺序调用重新提交。旧保守 `needs_user` 回执继续可读，历史回执不产生新执行权限。
+dispatcher 仅为当前 run 中允许 retry 的 Ghost preparation acceptance_unknown 放行
+再次调用；有效回执即使外层工具结果为 success 也按领域效果判断。批内相同调用保持
+去重，防重放跳过不覆盖最新执行事实。仍保留预算、准入、撤权、取消及同目标串行，
+不扩展其他工具的未知效果重放，也不自动重放未知线上更新。
+
+再次准备使用新 scope，成功供审阅的候选仍固定。无可靠 ID 的重复草稿提示仅在前次
+文章 `postEffect=unknown` 时产生；图片未知不冒充文章已发送。无需新增查询工具、
+持久账本、专用重试配额或后台重试循环。
 
 清理只针对确认属于本次 PA 预览资源且仍为 draft 的 exact ID，不能删除正式文章。
 清理前必要身份/状态核对不扩展为历史内容合并、站点扫描或跨设备锁。失败资源由用户
@@ -246,6 +322,16 @@ Ghost 来源时效修正只影响其真实调用边界；不得因此关闭其�
   status、url、uuid、updated_at；单 ID 足以从当前配置站点读取操作所需信息，无须回写整套属性。
 - [Ghost Admin API 更新](https://docs.ghost.org/admin-api/posts/updating-a-post)：更新需要 updated_at；
   save_revision 是更新时保存修订，不是把新版隔离等待上线。
+- B-190 的 [图片 API 依据](https://docs.ghost.org/admin-api/images/overview) 未提供可用上传
+  状态查询；无可靠 ID 的新建草稿也没有已验证的请求幂等保证，因此不按 slug/标题猜测
+  唯一结果。[Ghost(Pro) 文件限额](https://ghost.org/help/media-file-size-limits/) 仅为用户
+  配置参考，不能硬编码为所有站点的能力。
+- Koenig 固定快照 `4da831801b9ca065e4b30abe96c8b33227133e6c` 的
+  [横线序列化测试](https://github.com/TryGhost/Koenig/blob/4da831801b9ca065e4b30abe96c8b33227133e6c/packages/kg-default-nodes/test/nodes/horizontalrule.test.ts#L67)
+  定义 `{"type":"horizontalrule","version":1}`，
+  [renderer](https://github.com/TryGhost/Koenig/blob/4da831801b9ca065e4b30abe96c8b33227133e6c/packages/kg-default-nodes/src/nodes/horizontalrule/horizontalrule-renderer.ts#L6)
+  输出 `<hr>`；[卡片基类](https://github.com/TryGhost/Koenig/blob/4da831801b9ca065e4b30abe96c8b33227133e6c/packages/kg-default-nodes/src/generate-decorator-node.ts#L352)
+  定义顶层块边界。这是原生横线的源码兼容依据，不是用户站点呈现的实测证据。
 - [Ghost v6.65.0 编辑器](https://github.com/TryGhost/Ghost/blob/v6.65.0/apps/ember-admin/app/controllers/lexical-editor.js#L282-L324)：
   自动保存只对 draft；published 正文先进入编辑器 scratch，Update 才提交。
 - [Ghost v6.65.0 服务端](https://github.com/TryGhost/Ghost/blob/v6.65.0/ghost/core/core/server/services/posts/posts-service.js#L75-L110)：
@@ -264,6 +350,12 @@ Ghost 来源时效修正只影响其真实调用边界；不得因此关闭其�
 本机合成 Ghost、真实 AI/线上服务和设备证据分别记录，不能互相替代。后续变更按实际
 输入和具体风险选择验证并复用有效结果，不重建已完成的实施计划。
 
+[B-190 最终验证](../archive/2026/b190-ghost-publishing-reliability-validation.md) 保留限额、
+失败事实和重试的最终证据及限制：已观察的桌面流程使用 R11 资产；后续固定失败消息与
+共享重试资格修订只有对应自动化/源码验收，未重新 build、部署或观察 app。完整 Jest
+原命令的非零退出与两项旧断言修正后的定向通过分别记录，不合并为 full 命令通过。
+旧模型错误解释、真实 Ghost 编辑器/主题及原生预览未观察的限制保持，不由后续 PASS 覆盖。
+
 ## 10. 字段切换、回退与历史证据
 
 - 仅支持 `GHOST_ID`。旧 `pa_ghost_post_id`、`pa_ghost`、`pa_ghost_site`、
@@ -273,6 +365,12 @@ Ghost 来源时效修正只影响其真实调用边界；不得因此关闭其�
   不存在且新建成功后替换；非法 `GHOST_ID` 明确报错，不当作未关联处理。
 - 停止生成/依赖旧历史数据，不在此次功能改造中批量删除它们或远端未知旧稿。
 - 不做跨版本混用、跨设备协调或重启自动恢复承诺；仍不得把旧 Chat 当新写入授权。
+- 旧 settings 无限额正常读取；旧成功、无 facts 的旧结果与旧通用失败消息继续可读，
+  读取兼容不扩大当前重试权限。来源 freshness 豁免仍只适用于闭合已保存成功回执，
+  普通失败继续受来源撤权、取消及合法性检查。预览指针 schema 不变，不新增专用持久操作状态。
+- 分隔线、限额/事实和重试接线可按实际故障独立回退；降级到旧 strict settings 版本前，
+  经设置保存路径移除新限额键并保留其他配置/凭据。重试指引、工具缓存和领域行为须一致
+  回退，避免模型规则与实际能力相反；已发生的远端效果不回滚。
 - 改造前旧版 reader 不识别 `GHOST_ID`；不承诺新旧版本关联互通，不为降级保留旧字段双写。
   回退实现不自动改写 note 或重建 Ghost 文章。
 - 出现实际验收失败，保留外部文章/资源和真实回执，修复或回退实现变更；不删除用户文章，

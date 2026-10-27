@@ -141,6 +141,37 @@ describe("Ghost Settings UI", () => {
         app.dispose();
     });
 
+    it("keeps a decimal upload limit site-scoped without misreporting it as a site URL error", async () => {
+        const app = await setup();
+        const input = row(t("plugin.ghost.settings.uploadLimit")).text!;
+        input.edit("5");
+        await save();
+        expect(app.current()).toMatchObject({ maxUploadBytes: 5_000_000 });
+        input.edit("https://example.test/blog");
+        await save();
+        expect(app.node.text()).toContain(t("plugin.ghost.settings.invalidUploadLimit"));
+        expect(app.node.text()).not.toContain(t("plugin.ghost.settings.invalidSite"));
+        expect(app.saveConfiguration).toHaveBeenCalledTimes(1);
+        input.setValue("5");
+        row(t("plugin.ghost.settings.site")).text!.edit("https://example.test/blog");
+        expect(input.value).toBe("5");
+        row(t("plugin.ghost.settings.site")).text!.edit("https://second.test/");
+        expect(input.value).toBe("");
+        input.setValue("9");
+        row(t("plugin.ghost.settings.site")).text!.edit("https://second.test");
+        expect(input.value).toBe("9");
+        row(t("plugin.ghost.settings.site")).text!.edit("https://example.test/blog/");
+        expect(input.value).toBe("");
+        input.setValue("2");
+        row(t("plugin.ghost.settings.site")).text!.edit("https://example.test/blog");
+        expect(input.value).toBe("2");
+        row(t("plugin.ghost.settings.site")).text!.edit("https://second.test/");
+        expect(input.value).toBe("");
+        await save();
+        expect(app.current()).not.toHaveProperty("maxUploadBytes");
+        app.dispose();
+    });
+
     it("deletes the saved site's key without committing unsaved site or audience changes", async () => {
         const app = await setup();
         row(t("plugin.ghost.settings.site")).text!.edit("https://different.test/");

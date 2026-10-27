@@ -48,7 +48,7 @@ import {
 } from "./chat-tool-types";
 import type { SourceRecord } from "./chat-types";
 import { GhostHostAdmissionError } from "../ghost-publishing/types";
-import { ghostPreparationMessage } from "./ghost-tool-receipt";
+import { ghostPreparationMessage, isGhostOperationFacts, isGhostPreparationRetryAllowed } from "./ghost-tool-receipt";
 import { ImagePreacceptError, imageSubrequestOperationId, IMAGE_PREACCEPT_MESSAGES, IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE } from "../chat/image-generation-types";
 import { createSourceDedupKey } from "./source-store";
 import { memoryResultFact } from "./pa-agent-result-facts";
@@ -1989,16 +1989,13 @@ function createMetadataDependencyRecords(capabilityName: string, paths: Readonly
     }));
 }
 
-/** One explicit Host request permits one preparation attempt, never a publication. */
+/** One explicit Host request may continue a retryable preparation, never a publication. */
 export function createPrepareGhostPostTool(binding: GhostHostBinding): ChatToolDefinition<
     GhostPostToolInput, Omit<GhostPostToolReceipt, "executionState"> & { message: string }
 > {
-    let submission: {
-        input: GhostPostToolInput;
-        receipt: Promise<GhostPostToolReceipt>;
-        facts?: Pick<ChatToolResult<unknown>, "executionState" | "recovery">;
-        failureMessage?: string;
-    } | undefined;
+    let submission: Promise<GhostPostToolReceipt> | undefined;
+    let attemptedInput: GhostPostToolInput | undefined;
+    let failureBoundary: { facts: Pick<ChatToolResult<unknown>, "executionState" | "recovery">; message: string } | undefined;
     return {
         name: "prepare_ghost_post",
         description: "Save a user-requested Ghost draft or prepare an update preview. Provide path for a vault-relative Markdown path or name for a unique note when that is the selected target; omit both only for the submitted current note. Preparation saves current note content and required media; publication remains a human action.",
@@ -2007,7 +2004,7 @@ export function createPrepareGhostPostTool(binding: GhostHostBinding): ChatToolD
             "Use intent prepare for a draft or published-article update preview. An explicitly stated path or note name is authoritative: pass its locator even if the captured or contextual note appears to match. Omit both only when the selected target is the submitted current note; a locator need not be a literal quote from the user's prose.",
             "A missing or ambiguous structured target is correctable input: locate the intended note from the user's request and authorized context, or ask only when ambiguity remains. A permission or source rejection needs the user; do not select another note to bypass it.",
             "The host reads the complete authorized note. Never supply article content, a remote ID, URL, credentials, confirmed, or injection code.",
-            "One Host-bound preparation belongs to this user request; target correction may precede it. Report the returned execution facts and publishing card. Prepared means a draft or update preview is saved, not published. New drafts are published in Ghost; a published-article update needs the card's human confirmation. There is no restore, automatic preview check, or interrupted-operation continuation. Never repeat an unknown write.",
+            "One Host-bound preparation belongs to this user request; target correction may precede it. Report the returned execution facts and publishing card. Prepared means a draft or update preview is saved, not published. New drafts are published in Ghost; a published-article update needs the card's human confirmation. There is no restore, automatic preview check, or interrupted-operation continuation. When the owner receipt allows retry, call this same tool sequentially; otherwise preserve uncertainty and ask the user.",
         ],
         inputSchema: {
             type: "object", properties: {
@@ -2045,6 +2042,12 @@ export function createPrepareGhostPostTool(binding: GhostHostBinding): ChatToolD
         },
         execute: async (input, context) => {
             const inputSummary = input.intent;
+            const sameInput = (value: GhostPostToolInput | undefined): boolean =>
+                value !== undefined && JSON.stringify(value) === JSON.stringify(input);
+            const changedAttemptResult = () => ({ ok: false as const, tool: "prepare_ghost_post", inputSummary,
+                content: null, sources: [], error: failureBoundary?.message
+                    ?? "This request already attempted a different Ghost preparation. Use verified Host facts for that attempt or make a new explicit request.",
+                ...(failureBoundary ? failureBoundary.facts : {}) });
             try {
                 const initialGuard = context.taskSourceReadGuard;
                 if (!initialGuard) throw new GhostHostAdmissionError("stale", {
@@ -2068,36 +2071,48 @@ export function createPrepareGhostPostTool(binding: GhostHostBinding): ChatToolD
                     executionState: "not_started",
                     recovery: { code: "ghost_request_stale", allowedActions: ["none"] },
                 });
-                if (submission && JSON.stringify(submission.input) !== JSON.stringify(input)) {
+                if (!sameInput(attemptedInput)) {
+                    if (attemptedInput !== undefined) return changedAttemptResult();
+                    failureBoundary = undefined;
+                    attemptedInput = { ...input };
+                } else if (failureBoundary && !submission
+                    && failureBoundary.facts.recovery?.allowedActions.includes("retry") !== true) {
                     return { ok: false, tool: "prepare_ghost_post", inputSummary, content: null, sources: [],
-                        error: submission.failureMessage
-                            ?? "This request already attempted a different Ghost preparation. Use verified Host facts for that attempt or make a new explicit request.",
-                        ...(submission.facts ? submission.facts : {}) };
+                        error: failureBoundary.message, ...failureBoundary.facts };
                 }
-                submission ??= { input: { ...input }, receipt: Promise.resolve().then(() => {
+                if (!submission) failureBoundary = undefined;
+                submission ??= Promise.resolve().then(() => {
                     return binding.submit(input, guard, sourceValidity, context.signal, context.ghostMetadataDebug);
-                }) };
-                const receipt = await submission.receipt;
+                });
+                const receipt = await submission;
                 if (!receipt || !["prepared", "needs_attention", "outcome_unknown"].includes(receipt.status)
                     || !["not_started", "succeeded", "failed", "acceptance_unknown"].includes(receipt.executionState)
-                    || !ghostPreparationMessage(receipt.status, receipt.executionState, receipt.failureReason)
+                    || !ghostPreparationMessage(receipt.status, receipt.executionState, receipt.failureReason, receipt.facts)
                     || (receipt.operationId !== undefined && (typeof receipt.operationId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(receipt.operationId)))
-                    || (receipt.status !== "needs_attention" && !receipt.operationId)) {
+                    || (receipt.status !== "needs_attention" && !receipt.operationId)
+                    || (receipt.facts !== undefined && !isGhostOperationFacts(receipt.facts))) {
                     throw new Error("Ghost preparation receipt is invalid.");
                 }
                 const content = { status: receipt.status, ...(receipt.operationId ? { operationId: receipt.operationId } : {}),
                     ...(receipt.failureReason ? { failureReason: receipt.failureReason } : {}),
-                    message: ghostPreparationMessage(receipt.status, receipt.executionState, receipt.failureReason)! };
+                    ...(receipt.facts ? { facts: receipt.facts } : {}),
+                    message: ghostPreparationMessage(receipt.status, receipt.executionState, receipt.failureReason, receipt.facts)! };
                 const resultFact = receipt.executionState === "succeeded" && receipt.operationId
                     ? { kind: "approval_pending" as const, intentId: receipt.operationId }
                     : receipt.executionState === "acceptance_unknown" && receipt.operationId
                         ? { kind: "unknown" as const, operationId: receipt.operationId }
                         : { kind: "unavailable" as const, capability: "prepare_ghost_post", reason: "ghost_attention_required" };
                 const executionState = receipt.executionState;
+                const retryAllowed = isGhostPreparationRetryAllowed(
+                    receipt.status, executionState, receipt.failureReason, receipt.facts);
                 const recovery: ChatToolResult<unknown>["recovery"] = receipt.status === "prepared" ? undefined
                     : { code: receipt.status === "outcome_unknown" ? "ghost_preparation_outcome_unknown" : "ghost_attention_required",
-                        allowedActions: receipt.executionState === "acceptance_unknown" ? ["query_operation", "needs_user"] : ["needs_user"],
+                        allowedActions: retryAllowed ? ["retry", "needs_user"] : ["needs_user"],
                         ...(receipt.operationId ? { operationId: receipt.operationId } : {}) };
+                if (executionState !== "succeeded") submission = undefined;
+                if (executionState !== "succeeded" && recovery) {
+                    failureBoundary = { facts: { executionState, recovery }, message: content.message };
+                }
                 return { ok: true, tool: "prepare_ghost_post", inputSummary, content, sources: [], resultFact,
                     executionState, ...(recovery ? { recovery } : {}) };
             } catch (error) {
@@ -2109,31 +2124,29 @@ export function createPrepareGhostPostTool(binding: GhostHostBinding): ChatToolD
                             : "The Ghost request or its source guard is no longer current. Start from the current user request; no preparation was started.";
                     const correctable = error.facts.executionState === "not_started"
                         && error.facts.recovery?.allowedActions.includes("correct_input") === true;
-                    if (correctable && submission && JSON.stringify(submission.input) === JSON.stringify(input)) submission = undefined;
-                    else if (submission && JSON.stringify(submission.input) === JSON.stringify(input)) {
-                        submission.facts = error.facts;
-                        submission.failureMessage = message;
+                    if (correctable && sameInput(attemptedInput)) {
+                        submission = undefined;
+                        failureBoundary = undefined;
+                        attemptedInput = undefined;
+                    } else {
+                        submission = undefined;
+                        failureBoundary = { facts: error.facts, message };
                     }
                     return { ok: false, tool: "prepare_ghost_post", inputSummary, content: null, sources: [],
                         error: message, ...error.facts };
                 }
-                if (!submission) {
-                    return { ok: false, tool: "prepare_ghost_post", inputSummary, content: null, sources: [],
-                        error: "The Ghost source is unavailable or not authorized for this request. Ask the user; do not select another target to bypass admission.",
-                        executionState: "not_started",
-                        recovery: { code: "ghost_source_unavailable", allowedActions: ["needs_user"] } };
-                }
-                if (submission && JSON.stringify(submission.input) === JSON.stringify(input)) {
-                    submission.facts = {
+                submission = undefined;
+                failureBoundary = {
+                    facts: {
                         executionState: "acceptance_unknown",
-                        recovery: { code: "ghost_preparation_acceptance_unknown", allowedActions: ["query_operation", "needs_user"] },
-                    };
-                    submission.failureMessage = "The preparation result is unknown. Verify an existing Ghost operation if one is verifiable; otherwise say it cannot be verified. Do not retry or claim publication.";
-                }
+                        recovery: { code: "ghost_preparation_outcome_unknown", allowedActions: ["retry", "needs_user"] },
+                    },
+                    message: "The preparation result is unknown. Preserve the Ghost operation identity; this receipt allows a sequential retry by the same authorized request. Do not claim publication.",
+                };
                 return { ok: false, tool: "prepare_ghost_post", inputSummary, content: null, sources: [],
-                    error: "The preparation result is unknown. Verify an existing Ghost operation if one is verifiable; otherwise say it cannot be verified. Do not retry or claim publication.",
+                    error: "The preparation result is unknown. Preserve the Ghost operation identity; this receipt allows a sequential retry by the same authorized request. Do not claim publication.",
                     executionState: "acceptance_unknown",
-                    recovery: { code: "ghost_preparation_acceptance_unknown", allowedActions: ["query_operation", "needs_user"] } };
+                    recovery: { code: "ghost_preparation_outcome_unknown", allowedActions: ["retry", "needs_user"] } };
             }
         },
     };

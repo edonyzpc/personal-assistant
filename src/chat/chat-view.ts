@@ -7414,7 +7414,7 @@ export class LLMView extends ItemView {
                             if (!message || !isCurrentSession() || !message.messageDiv.isConnected) { session.dispose(); return; }
                             const container = message.messageDiv.createDiv({ cls: 'pa-ghost-publishing-card' });
                             message.messageDiv.insertBefore(container, message.actionDiv);
-                            const dispose = renderGhostPublishingCard(container, session, key => t(key));
+                            const dispose = renderGhostPublishingCard(container, session, (key, params) => t(key, params));
                             ghostSessions.set(stableMessageId, session);
                             const unsubscribeState = session.subscribe(() => {
                                 void refreshGhostHistoryState().catch(error => this.host.log('Could not refresh Ghost history state', error));

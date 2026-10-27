@@ -35,14 +35,26 @@ export interface GhostPreparedResource {
     filename: string;
 }
 
+export type GhostResourceRole = "body" | "cover" | "cover-and-body";
+export interface GhostResourceLimitFact {
+    id: string;
+    role: GhostResourceRole;
+    actualBytes: number;
+    limitBytes: number;
+}
+
 export type GhostResourceErrorCode = "desktop-required" | "cancelled" | "source-revoked"
     | "context-revoked" | "web-denied" | "invalid-resource" | "unsupported-image"
-    | "resource-too-large" | "read-failed" | "hash-failed";
+    | "resource-too-large" | "site-upload-limit" | "read-failed" | "hash-failed";
 
 export class GhostResourceError extends Error {
-    constructor(readonly code: GhostResourceErrorCode) {
+    readonly code: GhostResourceErrorCode;
+    readonly resource?: GhostResourceLimitFact;
+    constructor(code: GhostResourceErrorCode, resource?: GhostResourceLimitFact) {
         // No original error, source URL, bytes, request payload or credentials.
         super(`Ghost resource: ${code}.`);
+        this.code = code;
+        if (resource !== undefined) this.resource = resource;
         this.name = "GhostResourceError";
     }
 }
@@ -83,6 +95,31 @@ function directImageUrl(value: string, site: URL): string | undefined {
     if (url.pathname.endsWith("/")) return;
     url.hash = "";
     return url.href;
+}
+
+export function ghostResourceRole(plan: ExportResourcePlan): GhostResourceRole {
+    const cover = plan.occurrences.some(occurrence => occurrence.field === "feature_image");
+    const body = plan.occurrences.some(occurrence => occurrence.field !== "feature_image");
+    if (cover && body) return "cover-and-body";
+    return cover ? "cover" : "body";
+}
+
+/** Checks locally known file sizes before metadata work; missing stat remains unknown. */
+export function preflightGhostResources(
+    plans: readonly ExportResourcePlan[],
+    options: { host: GhostResourceOptions["host"]; maxUploadBytes?: number },
+): void {
+    const limit = options.maxUploadBytes;
+    if (limit === undefined) return;
+    for (const plan of plans) {
+        if (plan.kind !== "local" || !plan.resolvedPath) continue;
+        const file = options.host.vault.getAbstractFileByPath(plan.resolvedPath);
+        const actualBytes = file?.stat?.size;
+        if (typeof actualBytes !== "number" || !Number.isFinite(actualBytes) || actualBytes < 0 || actualBytes <= limit) continue;
+        throw new GhostResourceError("site-upload-limit", {
+            id: plan.id, role: ghostResourceRole(plan), actualBytes, limitBytes: limit,
+        });
+    }
 }
 
 /** Reads only an explicit export resource; never uploads or changes durable state. */

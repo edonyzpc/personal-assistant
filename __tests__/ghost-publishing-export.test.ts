@@ -228,6 +228,65 @@ describe("Ghost publishing deterministic export", () => {
         expect(await host.vault.read({ path: "fixtures/Embedded.md", extension: "md" })).toBe(embedded);
     });
 
+    it.each(["---", "***", "___"] as const)("exports a root %s horizontal rule with source mapping", async syntax => {
+        const result = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([fakeFile("Main.md", `Before\n\n${syntax}\n\nAfter`)]),
+            guard: allowAllGuard(),
+            siteProfile: profile,
+        });
+        const divider = result.lexical.root.children[1];
+        expect(divider).toEqual({ type: "horizontalrule", version: 1 });
+        expect(result.lexical.root.children.map(node => node.type)).toEqual(["paragraph", "horizontalrule", "paragraph"]);
+        expect(result.blocks[1]).toMatchObject({
+            nodeKind: "horizontalrule", sourcePath: "Main.md", sourceStartLine: 2, sourceEndLine: 3,
+        });
+    });
+
+    it.each([
+        { container: "quote", markdown: "> Intro\n> ***" },
+        { container: "list", markdown: "- Intro\n  ***" },
+        { container: "task list", markdown: "- [ ] Intro\n  ***" },
+    ])("rejects a horizontal rule nested in a $container with its source location", async ({ markdown }) => {
+        await expect(prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([fakeFile("Main.md", markdown)]),
+            guard: allowAllGuard(),
+            siteProfile: profile,
+        })).rejects.toMatchObject({
+            code: "unsupported-syntax", path: "Main.md", line: 2,
+        });
+    });
+
+    it("maps a nested horizontal rule in an embedded, frontmatter-bearing note to its original source", async () => {
+        await expect(prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([
+                fakeFile("Main.md", "---\nghost: {}\n---\n\n![[Nested.md]]"),
+                fakeFile("Nested.md", "---\ntags:\n  - nested\n---\n\n- Intro\n  ***"),
+            ], { parseYaml: () => ({ tags: ["nested"] }) }),
+            guard: allowAllGuard(),
+            siteProfile: profile,
+        })).rejects.toMatchObject({
+            code: "unsupported-syntax", path: "Nested.md", line: 7,
+        });
+    });
+
+    it("keeps setext headings and the ordinary unicode em-dash separator unchanged", async () => {
+        const result = await prepareGhostExport({
+            targetPath: "Main.md",
+            host: createHost([fakeFile("Main.md", "Setext\n======\n\n—-")]),
+            guard: allowAllGuard(),
+            siteProfile: profile,
+        });
+        expect(result.lexical.root.children).toEqual([
+            expect.objectContaining({ type: "extended-heading", tag: "h1" }),
+            expect.objectContaining({ type: "paragraph" }),
+        ]);
+        expect(JSON.stringify(result.lexical)).toContain("—-");
+        expect(JSON.stringify(result.lexical)).not.toContain("horizontalrule");
+    });
+
     it("fails closed for missing, cyclic, excluded, or changing source guards", async () => {
         await expect(prepareGhostExport({
             targetPath: "Missing.md",

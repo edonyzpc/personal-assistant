@@ -128,6 +128,20 @@ describe("Ghost current-source preparation and frozen candidate authority", () =
         expect(prepared.candidate.managedFields).toContain("feature_image_caption");
     });
 
+    it("stops a known local upload over the current site limit before metadata or image reads", async () => {
+        const f = fixture();
+        f.replace(f.files[0], body(f.files[0]), { feature_image: "cover.png" });
+        f.options.maxUploadBytes = f.files[2].bytes.byteLength - 1;
+        const action = await createGhostActionContext(f.options);
+        await expect(action.context.prepare(null)).rejects.toMatchObject({
+            code: "site-upload-limit",
+            resource: { id: "resource-1", role: "cover", actualBytes: f.files[2].bytes.byteLength,
+                limitBytes: f.options.maxUploadBytes },
+        });
+        expect(f.generateMetadata).not.toHaveBeenCalled();
+        expect(f.readBinary).not.toHaveBeenCalled();
+    });
+
     it.each(["missing", "unreadable"])("still rejects a %s selected cover", async availability => {
         const f = fixture();
         f.replace(f.files[0], body(f.files[0]), { feature_image: "cover.png" });
@@ -442,6 +456,8 @@ describe("Ghost current-source preparation and frozen candidate authority", () =
     it("rejects an excluded image before binary reads or metadata provider work", async () => {
         const f = fixture("Article.\n\n![Local](cover.png)");
         f.state.denied = "cover.png";
+        f.files[2].stat = { ...f.files[2].stat, size: 100 };
+        f.options.maxUploadBytes = 9;
         const action = await createGhostActionContext(f.options);
         await expect(action.context.prepare(null)).rejects.toMatchObject({ code: "source-revoked" });
         expect(f.readBinary).not.toHaveBeenCalled();

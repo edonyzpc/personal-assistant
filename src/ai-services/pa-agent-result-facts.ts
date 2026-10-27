@@ -7,13 +7,14 @@ import { isCoreWriteToolName } from './operations/input-validation';
 import type { NoteImageRemovalEffectStatus, ResourceEffectFacts } from './operations/types';
 import { IMAGE_PREACCEPT_MESSAGES, IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE } from '../chat/image-generation-types';
 import { PA_AGENT_RECOVERY_ACTIONS } from './pa-agent-types';
-import { isGhostPreparationMessage } from './ghost-tool-receipt';
+import { hasGhostPreparationRecoveryActions, isGhostOperationFacts, isGhostPreparationMessage } from './ghost-tool-receipt';
 import { isOperationsResultObservation, isResourceEffectFacts, type OperationsResultObservation } from './operations-status-tool';
 
 // Historical Chat receipts remain readable; these names cannot resume an operation.
 type GhostReceiptState = import('../ghost-publishing/state-schema').GhostLocalOperation['state']
     | 'ready' | 'pending' | 'succeeded_remote_pending_record' | 'cleanup_pending' | 'terminal';
 type GhostPreparationExecution = import('./chat-tool-types').GhostPostToolReceipt['executionState'];
+type GhostOperationFacts = import('../ghost-publishing/state-schema').GhostOperationFacts;
 
 export const PA_AGENT_RECOVERY_CODE_CHARS = 64;
 
@@ -57,6 +58,7 @@ export const PA_AGENT_DOMAIN_ACTION_STATE_RULES: Readonly<Record<PaAgentActionSt
     ],
     ghost: [
         'Ghost prepared does not mean published; ghostPublicationStatus:published records verified publication.',
+        'Ghost resource facts describe one image: role body means an image in the article body, not the article body itself. actualBytes and limitBytes are that image file’s byte sizes; site-upload-limit means shrink or replace that image, not delete article content. uploadedCount counts confirmed image uploads only and does not mean the body or article was saved. post-save is the article-save request stage; its result is postEffect.',
     ],
     operations: [
         'operationsEffectStatus:applied records that the Host applied the note operation, not merely staged its preview.',
@@ -76,6 +78,7 @@ export const PA_AGENT_EFFECT_RECOVERY_RULES: readonly string[] = [
 /** Ghost recovery semantics required whenever Ghost owner facts are projected. */
 export const PA_AGENT_GHOST_RECOVERY_RULES: readonly string[] = [
     'A verified Ghost draft_saved awaits human publishing in Ghost. Preview approval alone needs no more PA preparation. Published updates await PA confirmation.',
+    'Narrow exception to the general effect-retry rule: when prepare_ghost_post is currently bound for an authorized Ghost draft preparation and its current owner receipt explicitly allows retry, call that same tool sequentially with the same target, one call at a time. The Ghost owner verifies reliable IDs and builds a fresh preparation scope; never send a Ghost post ID to query_operation. All other effectful domains and published-article confirmation retain the general rule.',
 ];
 
 export function selectPaAgentActionStateExplanationRules(owners: Iterable<PaAgentActionState['owner']>): readonly string[] {
@@ -162,9 +165,9 @@ export interface PaAgentActionState {
         | { kind: 'writing-version'; versionId: string }
         | { kind: 'writing-save'; versionId: string; saveId: string; state: 'prepared' | 'partial' | 'completed' | 'failed'; noteState?: 'pending' | 'created' | 'completed' }
         | { kind: 'writing-saves'; versionId: string; saves: Array<{ saveId: string; state: 'prepared' | 'partial' | 'completed' | 'failed'; noteState?: 'pending' | 'created' | 'completed' }> }
-        | { kind: 'ghost-preparation'; operationId: string; status: 'prepared' | 'outcome_unknown' | 'needs_attention'; executionState?: GhostPreparationExecution }
+        | { kind: 'ghost-preparation'; operationId: string; status: 'prepared' | 'outcome_unknown' | 'needs_attention'; executionState?: GhostPreparationExecution; facts?: GhostOperationFacts }
         | { kind: 'ghost-operation'; operationId: string; operationRevision: number;
-            state: GhostReceiptState; verified: boolean }
+            state: GhostReceiptState; verified: boolean; facts?: GhostOperationFacts }
         | { kind: 'ghost-unavailable'; operationId: string; reason: 'operation_not_found' | 'status_read_unavailable' };
     actions?: Array<{ actionId: string; receiptId?: string;
         phase: 'applied' | 'unchanged' | 'failed' | 'partial' | 'skipped' | 'undone' | 'unknown';
@@ -189,6 +192,7 @@ export interface PaAgentActionSummaryFact {
     operationsEffectOutcome?: 'partial' | 'unknown';
     operationsBlockedReason?: 'shared_reference';
     ghostPublicationStatus?: 'published';
+    ghostOperationFacts?: GhostOperationFacts;
     effectOutcome?: 'unknown';
     sideEffectsMayHaveOccurred?: true;
 }
@@ -229,9 +233,11 @@ const actionStateSchema = z.object({
                 noteState: z.enum(['pending', 'created', 'completed']).optional() }).strict()).min(1).max(100) }).strict(),
         z.object({ kind: z.literal('ghost-preparation'), operationId: opaqueId,
             status: z.enum(['prepared', 'outcome_unknown', 'needs_attention']),
+            facts: z.custom<GhostOperationFacts>(isGhostOperationFacts).optional(),
             executionState: z.enum(['not_started', 'succeeded', 'failed', 'acceptance_unknown']).optional() }).strict(),
         z.object({ kind: z.literal('ghost-operation'), operationId: opaqueId, operationRevision: z.number().int().positive(),
             state: z.enum(['preparing', 'prepared', 'draft_saved', 'updated', 'failed', 'ready', 'pending', 'outcome_unknown', 'succeeded_remote_pending_record', 'cleanup_pending', 'terminal']),
+            facts: z.custom<GhostOperationFacts>(isGhostOperationFacts).optional(),
             verified: z.boolean() }).strict(),
         z.object({ kind: z.literal('ghost-unavailable'), operationId: opaqueId,
             reason: z.enum(['operation_not_found', 'status_read_unavailable']) }).strict(),
@@ -367,7 +373,8 @@ export function refreshGhostActionState(state: PaAgentActionState,
     if (state.receipt.kind === 'ghost-operation' && receipt.revision <= state.receipt.operationRevision) return state;
     return cloneActionStates([{ ...state, phase: ghostOperationPhase(receipt.state, receipt.verified), revision: state.revision + 1,
         receipt: { kind: 'ghost-operation', operationId: receipt.operationId,
-            operationRevision: receipt.revision, state: receipt.state, verified: receipt.verified } }])[0];
+            operationRevision: receipt.revision, state: receipt.state, verified: receipt.verified,
+            ...(receipt.facts ? { facts: receipt.facts } : {}) } }])[0];
 }
 
 export function markGhostStatusUnavailable(state: PaAgentActionState,
@@ -579,6 +586,9 @@ export function projectActionStates(states: readonly PaAgentActionState[],
         ...(state.owner === 'ghost' && state.phase === 'completed' && state.receipt.kind === 'ghost-operation'
             && ['updated', 'terminal', 'cleanup_pending'].includes(state.receipt.state) && state.receipt.verified
             ? { ghostPublicationStatus: 'published' as const } : {}),
+        ...(state.owner === 'ghost' && (state.receipt.kind === 'ghost-preparation' || state.receipt.kind === 'ghost-operation')
+            && state.receipt.facts ? { ghostOperationFacts: { ...state.receipt.facts,
+                ...(state.receipt.facts.resource ? { resource: { ...state.receipt.facts.resource } } : {}) } } : {}),
         contextOnly: true,
     }));
 }
@@ -599,6 +609,7 @@ export function projectActionSummaryFacts(states: readonly PaAgentActionState[])
         ...(state.operationsEffectOutcome ? { operationsEffectOutcome: state.operationsEffectOutcome } : {}),
         ...(state.operationsBlockedReason ? { operationsBlockedReason: state.operationsBlockedReason } : {}),
         ...(state.ghostPublicationStatus ? { ghostPublicationStatus: state.ghostPublicationStatus } : {}),
+        ...(state.ghostOperationFacts ? { ghostOperationFacts: state.ghostOperationFacts } : {}),
         ...(state.effectOutcome ? { effectOutcome: state.effectOutcome } : {}),
         ...(state.sideEffectsMayHaveOccurred ? { sideEffectsMayHaveOccurred: state.sideEffectsMayHaveOccurred } : {}),
     }));
@@ -797,7 +808,7 @@ export function collectActionStates(input: { runId: string; turnId: string;
                 const status = observation?.status;
                 const execution = envelope.execution;
                 const executionState = metadata.executionState as GhostPreparationExecution | undefined;
-                const isCurrentReceipt = isGhostPreparationMessage(status, executionState, observation?.message, observation?.failureReason);
+                const isCurrentReceipt = isGhostPreparationMessage(status, executionState, observation?.message, observation?.failureReason, observation?.facts);
                 const operationId = (status === 'prepared' || isCurrentReceipt && executionState === 'succeeded')
                     && fact?.kind === 'approval_pending' ? fact.intentId
                     : (status === 'outcome_unknown' || status === 'needs_attention') && fact?.kind === 'unknown'
@@ -821,16 +832,22 @@ export function collectActionStates(input: { runId: string; turnId: string;
                                 && (!isCurrentReceipt || ownerRecovery?.operationId === operationId)
                                 && ['ghost_attention_required', 'ghost_preparation_outcome_unknown'].includes(execution.recovery?.code)
                                 && JSON.stringify(execution.recovery?.allowedActions) === JSON.stringify(ownerRecovery?.allowedActions)
-                                && JSON.stringify(ownerRecovery?.allowedActions) === (isCurrentReceipt && executionState !== 'acceptance_unknown'
-                                    ? '["needs_user"]' : '["query_operation","needs_user"]'));
+                                && ((!isCurrentReceipt && JSON.stringify(ownerRecovery?.allowedActions) === '["retry","needs_user"]')
+                                    || hasGhostPreparationRecoveryActions(status, executionState,
+                                        observation.failureReason, observation.facts, ownerRecovery?.allowedActions)));
+                const expectedObservationKeys = [
+                    ...(observation.failureReason === undefined ? [] : ['failureReason']),
+                    ...(observation.facts === undefined ? [] : ['facts']),
+                    'message', 'operationId', 'status',
+                ].sort().join(',');
                 if (operationId && envelope.tool === 'prepare_ghost_post' && envelope.status === 'ok'
                     && (observation.failureReason === undefined || isCurrentReceipt)
+                    && (observation.facts === undefined || isGhostOperationFacts(observation.facts))
                     && envelope.input === metadata.inputSummary && observation.operationId === operationId
                     && executionValid
                     && Object.keys(envelope).sort().join(',') === (execution
                         ? 'execution,input,observation,status,tool' : 'input,observation,status,tool')
-                    && Object.keys(observation).sort().join(',') === (observation.failureReason === undefined
-                        ? 'message,operationId,status' : 'failureReason,message,operationId,status')
+                    && Object.keys(observation).sort().join(',') === expectedObservationKeys
                     && (isCurrentReceipt || observation.message === (status === 'prepared'
                         ? 'A draft or restoration preview is prepared. Check its publishing card and preview; publication has not been confirmed.'
                         : status === 'outcome_unknown'
@@ -840,7 +857,8 @@ export function collectActionStates(input: { runId: string; turnId: string;
                         phase: ghostPreparationPhase(status, isCurrentReceipt ? executionState : undefined),
                         origin: { runId: input.runId, turnId: input.turnId, assistantId, callId: message.toolCallId, resultId: message.id },
                         revision: 0, inputLineage: lineage, receipt: { kind: 'ghost-preparation', operationId, status,
-                            ...(isCurrentReceipt ? { executionState } : {}) } });
+                            ...(isCurrentReceipt ? { executionState } : {}),
+                            ...(isGhostOperationFacts(observation.facts) ? { facts: observation.facts } : {}) } });
                     continue;
                 }
             } catch { /* An invalid boundary envelope supplies no state proof. */ }

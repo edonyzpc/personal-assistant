@@ -11,7 +11,8 @@ const ACTION_ICONS: Record<GhostCardAction, string> = {
 
 /** Human action surface; article content, credentials and preview tokens stay out. */
 export function renderGhostPublishingCard(
-    container: HTMLElement, session: GhostPublishingSession, t: (key: string) => string,
+    container: HTMLElement, session: GhostPublishingSession,
+    t: (key: string, params?: Readonly<Record<string, string | number>>) => string,
 ): () => void {
     const document = container.ownerDocument;
     const card = document.win.createEl("section");
@@ -36,8 +37,27 @@ export function renderGhostPublishingCard(
         status.setAttribute("role", "status");
         status.setAttribute("aria-live", "polite");
         card.appendChild(status);
-        if (state.errorKey) card.appendChild(element("p", t(state.errorKey)));
+        if (state.errorKey) card.appendChild(element("p", t(state.errorKey,
+            state.sourceLocation ? { path: state.sourceLocation.path, line: state.sourceLocation.line } : undefined)));
+        if (state.facts?.httpStatus === 413) {
+            card.appendChild(element("p", t(state.facts.stage === "post-save"
+                ? "plugin.ghost.card.error.postTooLarge" : "plugin.ghost.card.error.uploadTooLarge")));
+        }
         for (const key of state.warningKeys ?? []) card.appendChild(element("p", t(key)));
+        if (state.facts) {
+            const facts = element("p");
+            facts.className = "setting-item-description";
+            const parts = [
+                t(`plugin.ghost.card.fact.stage.${state.facts.stage}`),
+                t(`plugin.ghost.card.fact.effect.${state.facts.postEffect}`),
+                t("plugin.ghost.card.fact.uploaded", { count: state.facts.uploadedCount }),
+            ];
+            if (state.facts.resource) parts.push(t(`plugin.ghost.card.fact.role.${state.facts.resource.role}`, {
+                actualBytes: state.facts.resource.actualBytes, limitBytes: state.facts.resource.limitBytes,
+            }));
+            facts.textContent = parts.join(" ");
+            card.appendChild(facts);
+        }
         const controls = element("div");
         controls.className = "setting-item-control pa-ghost-card-actions";
         for (const action of state.actions) {

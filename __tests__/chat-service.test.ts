@@ -1638,7 +1638,7 @@ describe('ChatService.streamLLM integration', () => {
         { name: 'needs attention', receipt: { status: 'needs_attention', executionState: 'failed', operationId: 'ghost-operation' },
             expected: ['ghost-operation', 'needs_attention', 'specific failure and advice'] },
         { name: 'outcome unknown', receipt: { status: 'outcome_unknown', executionState: 'acceptance_unknown', operationId: 'ghost-operation' },
-            expected: ['ghost-operation', 'outcome_unknown', 'needs verification in its publishing card'] },
+            expected: ['ghost-operation', 'outcome_unknown', 'acceptance_unknown', 'ghost_preparation_outcome_unknown', 'allowedActions', 'retry', 'needs_user'] },
         { name: 'target missing', errorCode: 'target-missing',
             expected: ['unavailable', 'ghost_target_missing', 'not_started', 'correct_input'] },
         { name: 'target ambiguous', errorCode: 'target-ambiguous',

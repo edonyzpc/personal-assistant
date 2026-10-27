@@ -10,6 +10,7 @@ const librarySchema = z.object({
 }).strict();
 const settingsSchema = z.object({
     siteUrl: z.string().max(2048), defaultVisibility: z.enum(["public", "members", "paid"]),
+    maxUploadBytes: z.number().int().positive().safe().optional(),
     profile: z.object({ prism: librarySchema.optional(), mermaid: librarySchema.optional(), katex: librarySchema.optional() }).strict(),
 }).strict();
 export type GhostPublishingSettings = z.infer<typeof settingsSchema>;
@@ -53,6 +54,7 @@ export interface GhostConnection {
     siteId: string;
     siteUrl: string;
     defaultVisibility: GhostPublishingSettings["defaultVisibility"];
+    maxUploadBytes?: number;
     profile: SitePublishingProfile;
     identity: string;
 }
@@ -88,6 +90,7 @@ export class GhostPublishingConfiguration {
         const siteId = await hash(settings.siteUrl);
         if (identity !== this.getIdentity() || !this.dependencies.isDesktop()) throw new GhostConfigurationError("changing");
         return { siteId, siteUrl: settings.siteUrl, defaultVisibility: settings.defaultVisibility,
+            ...(settings.maxUploadBytes !== undefined ? { maxUploadBytes: settings.maxUploadBytes } : {}),
             profile: { ...settings.profile, siteId }, identity };
     }
 

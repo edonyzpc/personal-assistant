@@ -107,6 +107,18 @@ describe("Ghost publishing configuration", () => {
         await expect(app.configuration.getAdminKey(old)).rejects.toThrow("changing");
     });
 
+    it("accepts an optional per-site upload limit and keeps absent limits unknown", async () => {
+        const app = setup();
+        expect(normalizeGhostSettings(settings)).not.toHaveProperty("maxUploadBytes");
+        await app.configuration.save({ ...settings, maxUploadBytes: 5_000_000 }, key);
+        expect(await app.configuration.connection()).toMatchObject({ maxUploadBytes: 5_000_000 });
+        await app.configuration.save({ ...settings, maxUploadBytes: 5_000_001 }, nextKey);
+        expect(await app.configuration.connection()).toMatchObject({ maxUploadBytes: 5_000_001 });
+        const accessesBeforeInvalidInput = app.accesses;
+        await expect(app.configuration.save({ ...settings, maxUploadBytes: 0 }, key)).rejects.toThrow("invalid-settings");
+        expect(app.accesses).toBe(accessesBeforeInvalidInput);
+    });
+
     it("requires manual valid site/key input and never accesses desktop secrets on mobile", async () => {
         const app = setup();
         expect(normalizeGhostSettings(undefined)).toEqual(DEFAULT_GHOST_SETTINGS);

@@ -151,6 +151,10 @@ function linebreakNode(): LexicalNodeJson {
     return { type: "linebreak", version: 1 };
 }
 
+function horizontalRuleNode(): LexicalNodeJson {
+    return { type: "horizontalrule", version: 1 };
+}
+
 function paragraphNode(children: LexicalNodeJson[]): LexicalNodeJson | null {
     return children.length === 0
         ? null
@@ -707,7 +711,40 @@ function taskListHtml(
     context: MarkdownExportContext,
     line: number,
 ): string {
+    const rule = tokens.slice(start, end).find(token => token.type === "hr");
+    if (rule) {
+        throw unsupportedHorizontalRule(context, lineForToken(rule), "task list");
+    }
     return renderListHtml(tokens, start, end, context, line, true);
+}
+
+function unsupportedHorizontalRule(
+    context: MarkdownExportContext,
+    expandedLine: number,
+    container: "quote, list, or task list" | "task list",
+): never {
+    const location = sourceLocationForExpandedLine(context, expandedLine);
+    throw new GhostExportError(
+        "unsupported-syntax",
+        `A horizontal rule is not supported inside a ${container}.`,
+        location.path,
+        location.line,
+    );
+}
+
+function sourceLocationForExpandedLine(
+    context: MarkdownExportContext,
+    line: number,
+): { path: string; line: number } {
+    const offsets = [0];
+    for (let index = 0; index < context.expandedMarkdown.length; index += 1) {
+        if (context.expandedMarkdown[index] === "\n") offsets.push(index + 1);
+    }
+    const offset = offsets[Math.min(line, offsets.length - 1)] ?? 0;
+    const owner = sourceSpanForOffset(context, offset);
+    if (!owner) return { path: context.sourcePath, line: line + 1 };
+    const expandedLines = context.expandedMarkdown.slice(owner.start, offset).match(/\n/g)?.length ?? 0;
+    return { path: owner.path, line: owner.sourceLine + expandedLines + 1 };
 }
 
 function convertRange(
@@ -716,6 +753,7 @@ function convertRange(
     end: number,
     context: MarkdownExportContext,
     recordSource = false,
+    allowHorizontalRule = true,
 ): LexicalNodeJson[] {
     const output: LexicalNodeJson[] = [];
     let index = start;
@@ -777,6 +815,14 @@ function convertRange(
                 if (recordSource) recordNodeRange(context, token, nodes.length);
             }
             index += 1;
+        } else if (token.type === "hr") {
+            if (!allowHorizontalRule) {
+                unsupportedHorizontalRule(context, line, "quote, list, or task list");
+            }
+            const nodes = [horizontalRuleNode()];
+            output.push(...nodes);
+            if (recordSource) recordNodeRange(context, token, nodes.length);
+            index += 1;
         } else if (token.type === "code_block") {
             const nodes = [codeblockNode(token.content, "")];
             output.push(...nodes);
@@ -793,7 +839,7 @@ function convertRange(
             index = close + 1;
         } else if (token.type === "blockquote_open") {
             const close = findClose(tokens, index, "blockquote_open", "blockquote_close", context);
-            const nodes = [quoteNode(convertRange(tokens, index + 1, close, context))];
+            const nodes = [quoteNode(convertRange(tokens, index + 1, close, context, false, false))];
             output.push(...nodes);
             if (recordSource) recordNodeRange(context, token, nodes.length);
             index = close + 1;
@@ -864,8 +910,10 @@ function listEntryNodes(tokens: Token[], start: number, end: number, context: Ma
         } else if (token.type.endsWith("_close")) {
             index += 1;
         } else if (token.type.endsWith("_open") || token.type === "paragraph_open" || token.type === "fence" || token.type === "code_block") {
-            nodes.push(...convertRange(tokens, index, end, context));
+            nodes.push(...convertRange(tokens, index, end, context, false, false));
             index = end;
+        } else if (token.type === "hr") {
+            unsupportedHorizontalRule(context, lineForToken(token), "quote, list, or task list");
         } else {
             throw new GhostExportError(
                 "unsupported-syntax",
@@ -945,7 +993,7 @@ export function convertMarkdownToLexical(options: {
     installGhostSourceRanges(markdownIt);
     markdownIt.inline.ruler.before("link", WIKI_TOKEN, wikiLinkRule);
     const tokens = parseGhostMarkdown(markdownIt, options.markdown);
-    const nodes = convertRange(tokens, 0, tokens.length, context, true);
+    const nodes = convertRange(tokens, 0, tokens.length, context, true, true);
     const blocks: ExportBlock[] = nodes.map((node, nodeIndex) => {
         const range = context.blockSourceRanges[nodeIndex] ?? { startLine: 0, endLine: 1 };
         const startLine = range.startLine;

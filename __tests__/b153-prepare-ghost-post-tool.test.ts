@@ -6,7 +6,7 @@ import { PolicyEngine } from "../src/ai-services/policy-engine";
 import { createPrepareGhostPostTool, isChatToolName, type ChatToolContext,
     type GhostHostBinding, type GhostPostToolReceipt } from "../src/ai-services/chat-tools";
 import { GhostHostAdmissionError } from "../src/ghost-publishing/types";
-import { GHOST_METADATA_FAILURE_MESSAGES, type GhostMetadataFailureReason } from "../src/ai-services/ghost-tool-receipt";
+import { GHOST_METADATA_FAILURE_MESSAGES, GHOST_PREPARATION_MESSAGES, type GhostMetadataFailureReason } from "../src/ai-services/ghost-tool-receipt";
 
 function fixture(submit: GhostHostBinding["submit"] = async () => ({ status: "prepared", operationId: "opaque-operation", executionState: "succeeded" })) {
     let current = true;
@@ -58,12 +58,19 @@ describe("B-153 fixed Ghost preparation capability", () => {
     });
 
     it("submits once with live boundaries and only returns a safe preparation fact", async () => {
-        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "prepared", operationId: "opaque-operation", executionState: "succeeded",
-            payload: "PRIVATE_BODY", previewUrl: "https://private.invalid/secret", message: "UNTRUSTED_MESSAGE" }));
+        let resolveSubmission: (receipt: GhostPostToolReceipt) => void = () => undefined;
+        const submitted = new Promise<GhostPostToolReceipt>(resolve => { resolveSubmission = resolve; });
+        const submit = jest.fn<GhostHostBinding["submit"]>(() => submitted);
         const app = fixture(submit);
         const input = app.tool.validateInput({ intent: "prepare", path: "private/note.md" });
-        const first = await app.tool.execute(input, app.context);
-        const repeated = await app.tool.execute(input, app.context);
+        const firstExecution = app.tool.execute(input, app.context);
+        const repeatedExecution = app.tool.execute(input, app.context);
+        const submittedFixture: GhostPostToolReceipt & { payload: string; previewUrl: string; message: string } = {
+            status: "prepared", operationId: "opaque-operation", executionState: "succeeded",
+            payload: "PRIVATE_BODY", previewUrl: "https://private.invalid/secret", message: "UNTRUSTED_MESSAGE" };
+        resolveSubmission(submittedFixture);
+        const [first, repeated] = await Promise.all([firstExecution, repeatedExecution]);
+        const reused = await app.tool.execute(input, app.context);
         const changed = await app.tool.execute({ intent: "prepare", name: "different" }, app.context);
         expect(submit).toHaveBeenCalledTimes(1);
         expect(submit.mock.calls[0][1]).toBe(app.guard);
@@ -71,6 +78,7 @@ describe("B-153 fixed Ghost preparation capability", () => {
         expect(submit.mock.calls[0][3]).toBe(app.signal.signal);
         expect(first.resultFact).toEqual({ kind: "approval_pending", intentId: "opaque-operation" });
         expect(repeated).toEqual(first);
+        expect(reused).toEqual(first);
         expect(changed.ok).toBe(false);
         expect(JSON.stringify(first)).not.toMatch(/PRIVATE_BODY|private\/note|private.invalid|UNTRUSTED_MESSAGE/);
         app.revokeInherited();
@@ -95,18 +103,23 @@ describe("B-153 fixed Ghost preparation capability", () => {
         expect((await app.tool.execute({ intent: "prepare" }, app.context)).ok).toBe(true);
     });
 
-    it("keeps unknown results non-published and does not automatically retry", async () => {
-        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "outcome_unknown", operationId: "pending-operation", executionState: "acceptance_unknown" }));
+    it("submits a sequential retry after unknown instead of returning the old receipt", async () => {
+        const submit = jest.fn<GhostHostBinding["submit"]>()
+            .mockResolvedValueOnce({ status: "outcome_unknown", operationId: "pending-operation", executionState: "acceptance_unknown" })
+            .mockResolvedValueOnce({ status: "prepared", operationId: "recovered-operation", executionState: "succeeded" });
         const app = fixture(submit);
         const result = await app.tool.execute({ intent: "prepare" }, app.context);
         expect(result.resultFact).toEqual({ kind: "unknown", operationId: "pending-operation" });
         expect(result.executionState).toBe("acceptance_unknown");
-        expect(result.recovery).toMatchObject({ allowedActions: ["query_operation", "needs_user"] });
-        await app.tool.execute({ intent: "prepare" }, app.context);
-        expect(submit).toHaveBeenCalledTimes(1);
+        expect(result.recovery).toMatchObject({ allowedActions: ["retry", "needs_user"] });
+        const retried = await app.tool.execute({ intent: "prepare" }, app.context);
+        expect(submit).toHaveBeenCalledTimes(2);
+        expect(retried).not.toEqual(result);
+        expect(retried.resultFact).toEqual({ kind: "approval_pending", intentId: "recovered-operation" });
+        expect(retried.executionState).toBe("succeeded");
     });
 
-    it("reports a known preparation failure without inventing an unknown write or resubmitting", async () => {
+    it("reports a known preparation failure and allows a sequential retry", async () => {
         const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "needs_attention", operationId: "attention-operation", executionState: "failed" }));
         const app = fixture(submit);
         const result = await app.tool.execute({ intent: "prepare" }, app.context);
@@ -117,7 +130,7 @@ describe("B-153 fixed Ghost preparation capability", () => {
         expect(JSON.stringify(result)).not.toContain('"status":"prepared"');
         expect(JSON.stringify(result)).not.toContain('"status":"published"');
         expect(await app.tool.execute({ intent: "prepare" }, app.context)).toEqual(result);
-        expect(submit).toHaveBeenCalledTimes(1);
+        expect(submit).toHaveBeenCalledTimes(2);
     });
 
     it("does not invent an operation identity when attention is required before ownership exists", async () => {
@@ -127,7 +140,7 @@ describe("B-153 fixed Ghost preparation capability", () => {
         expect(result.resultFact).toEqual({ kind: "unavailable", capability: "prepare_ghost_post", reason: "ghost_attention_required" });
         expect(result.content).not.toHaveProperty('operationId');
     });
-    it.each(Object.keys(GHOST_METADATA_FAILURE_MESSAGES) as GhostMetadataFailureReason[])("reports the exact safe %s metadata failure without repeating preparation", async failureReason => {
+    it.each(Object.keys(GHOST_METADATA_FAILURE_MESSAGES) as GhostMetadataFailureReason[])("reports the exact safe %s metadata failure and allows one sequential retry", async failureReason => {
         const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "needs_attention", executionState: "not_started", failureReason,
             operationId: "metadata-operation", message: "PRIVATE_PROVIDER_DETAIL", payload: "PRIVATE_BODY" }));
         const app = fixture(submit);
@@ -135,11 +148,56 @@ describe("B-153 fixed Ghost preparation capability", () => {
         expect(result.content).toEqual({ status: "needs_attention", operationId: "metadata-operation", failureReason,
             message: GHOST_METADATA_FAILURE_MESSAGES[failureReason] });
         expect(result.executionState).toBe("not_started");
-        expect(result.recovery).toMatchObject({ code: "ghost_attention_required", allowedActions: ["needs_user"] });
+        expect(result.recovery).toMatchObject({ code: "ghost_attention_required", allowedActions: ["retry", "needs_user"] });
         expect(JSON.stringify(result)).not.toMatch(/PRIVATE_PROVIDER_DETAIL|PRIVATE_BODY/);
         expect(await app.tool.execute({ intent: "prepare" }, app.context)).toEqual(result);
-        expect(submit).toHaveBeenCalledTimes(1);
+        expect(submit).toHaveBeenCalledTimes(2);
     });
+
+    it("explains only a configured site image upload limit as an image failure", async () => {
+        const facts = { stage: "resource", reason: "site-upload-limit", postEffect: "not_sent", uploadedCount: 0,
+            resource: { id: "resource-1", role: "body", actualBytes: 3, limitBytes: 2 } } as const;
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({ status: "needs_attention",
+            operationId: "image-limit-operation", executionState: "not_started", facts, message: "PRIVATE_IMAGE_RESPONSE" }));
+        const app = fixture(submit);
+        const result = await app.tool.execute({ intent: "prepare" }, app.context);
+        expect(result.content).toEqual({ status: "needs_attention", operationId: "image-limit-operation", facts,
+            message: GHOST_PREPARATION_MESSAGES.site_upload_limit });
+        expect(JSON.stringify(result)).not.toContain("PRIVATE_IMAGE_RESPONSE");
+
+        const networkApp = fixture(async () => ({ status: "needs_attention", operationId: "network-operation",
+            executionState: "not_started", facts: { ...facts, reason: "network" } }));
+        const networkResult = await networkApp.tool.execute({ intent: "prepare" }, networkApp.context);
+        expect(networkResult.content).toMatchObject({ message: GHOST_PREPARATION_MESSAGES.failed_attention });
+        expect(JSON.stringify(networkResult)).not.toContain("An image file exceeds the configured per-file upload limit");
+    });
+
+    it.each([
+        { reason: "network" as const, retry: true },
+        { reason: "timeout" as const, retry: true },
+        { reason: "http" as const, httpStatus: 408, retry: true },
+        { reason: "http" as const, httpStatus: 429, retry: true },
+        { reason: "http" as const, httpStatus: 503, retry: true },
+        { reason: "source-revoked" as const, retry: false },
+    ])("applies owner retry facts for a source $reason failure ($httpStatus)", async ({ reason, httpStatus, retry }) => {
+        const failure: GhostPostToolReceipt = { status: "needs_attention", operationId: `${reason}-operation`,
+            executionState: "not_started", facts: { stage: "source" as const, reason,
+                ...(httpStatus ? { httpStatus } : {}), postEffect: "not_sent" as const, uploadedCount: 0 } };
+        const submit = jest.fn<GhostHostBinding["submit"]>()
+            .mockResolvedValueOnce(failure)
+            .mockResolvedValueOnce({ status: "prepared", operationId: "recovered-operation", executionState: "succeeded" });
+        const app = fixture(submit);
+        const result = await app.tool.execute({ intent: "prepare" }, app.context);
+        expect(result.recovery?.allowedActions).toEqual(retry ? ["retry", "needs_user"] : ["needs_user"]);
+        const retried = await app.tool.execute({ intent: "prepare" }, app.context);
+        expect(submit).toHaveBeenCalledTimes(retry ? 2 : 1);
+        if (!retry) {
+            expect(result.content?.message).toBe(GHOST_PREPARATION_MESSAGES.failed_attention);
+            expect(retried).toMatchObject({ ok: false, executionState: "not_started",
+                recovery: result.recovery, error: GHOST_PREPARATION_MESSAGES.failed_attention });
+        }
+    });
+
     it.each([
         { status: "needs_attention", executionState: "not_started", failureReason: "PRIVATE_CODE" },
         { status: "needs_attention", executionState: "succeeded", failureReason: "provider_failure" },
@@ -212,7 +270,7 @@ describe("B-153 fixed Ghost preparation capability", () => {
             recovery: { code: "ghost_target_missing", allowedActions: ["correct_input"] } });
         expect(bridge(await app.tool.execute({ intent: "prepare" }, app.context))).toMatchObject({
             executionState: "acceptance_unknown",
-            recovery: { code: "ghost_preparation_acceptance_unknown", allowedActions: ["query_operation", "needs_user"] },
+            recovery: { code: "ghost_preparation_outcome_unknown", allowedActions: ["retry", "needs_user"] },
         });
     });
 
@@ -227,7 +285,9 @@ describe("B-153 fixed Ghost preparation capability", () => {
         const rejected = await app.tool.execute({ intent: "prepare", name: "Denied" }, app.context);
         expect(rejected).toMatchObject({ ok: false, executionState: "not_started",
             recovery: { allowedActions: reason === "source" ? ["needs_user"] : ["none"] } });
+        const same = await app.tool.execute({ intent: "prepare", name: "Denied" }, app.context);
         const changed = await app.tool.execute({ intent: "prepare", path: "A.md" }, app.context);
+        expect(same).toEqual(rejected);
         expect(changed.ok).toBe(false);
         expect(changed.error).toContain(reason === "source"
             ? "The Ghost source is unavailable or not authorized for this request"
@@ -244,12 +304,13 @@ describe("B-153 fixed Ghost preparation capability", () => {
         const app = fixture(submit);
         const first = await app.tool.execute({ intent: "prepare", path: "A.md" }, app.context);
         expect(first).toMatchObject({ ok: false, executionState: "acceptance_unknown",
-            recovery: { code: "ghost_preparation_acceptance_unknown", allowedActions: ["query_operation", "needs_user"] } });
+            recovery: { code: "ghost_preparation_outcome_unknown", allowedActions: ["retry", "needs_user"] } });
         const same = await app.tool.execute({ intent: "prepare", path: "A.md" }, app.context);
         const changed = await app.tool.execute({ intent: "prepare", name: "Different" }, app.context);
         expect(same.ok).toBe(false);
         expect(changed.ok).toBe(false);
-        expect(submit).toHaveBeenCalledTimes(1);
+        expect(changed).toMatchObject({ recovery: { code: "ghost_preparation_outcome_unknown", allowedActions: ["retry", "needs_user"] } });
+        expect(submit).toHaveBeenCalledTimes(2);
         expect(changed.error).toContain("The preparation result is unknown.");
     });
 

@@ -30,7 +30,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 | DEC-056 | 可选的柔和标签外观与固定自动配色 | Accepted | 默认关闭；完整名称固定九色；正文、Properties tags 与 PA 真实标签一致，关闭恢复用户主题 | [Record](./dec-056-opt-in-tag-appearance.md) |
 | DEC-055 | PA Agent 快照执行与完整 Debug | Accepted | 当前生成及重试固定快照、下一 loop 更新排除；完整文本历史与媒体引用指纹 | [Record](./dec-055-agent-snapshot-execution-and-debug-history.md) |
 | DEC-054 | Memory marker 异常优先复用本地数据 | Accepted | 同 scope 不以设备 ID 单项否决；缺 marker 先恢复兼容 SQLite 状态，保留 dirty/guard/policy | [Record](./dec-054-memory-marker-recovery.md) |
-| DEC-053 | 精简 Ghost 同步与人工上线 | Accepted | note 全量同步；草稿 Ghost Publish，已发布临时预览后 PA 确认；取消历史/恢复与自动 probe，目标尚待实施 | [Record](./dec-053-lean-ghost-publishing.md) |
+| DEC-053 | 精简 Ghost 同步与人工上线 | Accepted | note 全量同步与人工上线；B-190 接续可选站点限额及先核实、仍未知可重试的草稿规则，不增持久恢复 | [Record](./dec-053-lean-ghost-publishing.md) |
 | DEC-052 | Open prepared review 沿用深度发现 | Accepted | 2026-10-06 路由接受保留为历史；该 ID 由 DEC-075 局部接续并退役，Open Pagelet 零调用保持，不回填旧批准或验收 | [Record](./dec-052-prepared-review-deep-discover-route.md) |
 | DEC-051 | 必要确认、前后台预算与合同接续 | Accepted | 局部接续旧确认/容量条款，保留来源、Writing与Ghost边界；设计不等于实现 | [Record](./dec-051-proportionate-confirmation-and-contract-alignment.md) |
 | DEC-050 | 笔记图片联合删除与一键撤销 | Accepted | 共享引用阻止删除、临时快照一键撤销；不授予运行代码实施 | [Record](./dec-050-note-image-removal-and-undo.md) |

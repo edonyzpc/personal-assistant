@@ -1,7 +1,7 @@
 import { Setting } from "obsidian";
 import type { ButtonComponent, DropdownComponent, TextComponent, ToggleComponent } from "obsidian";
 import type { PluginMessageKey } from "../locales/plugin";
-import { GhostConfigurationError, normalizeGhostSettings } from "./configuration";
+import { canonicalGhostSite, GhostConfigurationError, normalizeGhostSettings } from "./configuration";
 import type { GhostAdminKeyStatus, GhostPublishingConfiguration, GhostPublishingSettings } from "./configuration";
 
 export interface GhostPublishingSettingsHost {
@@ -38,6 +38,8 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
     const initial = normalizeGhostSettings(host.getSettings());
     let siteUrl = initial.siteUrl;
     let visibility = initial.defaultVisibility;
+    let uploadLimitMb = initial.maxUploadBytes === undefined ? "" : String(initial.maxUploadBytes / 1_000_000);
+    let uploadLimitSite = initial.siteUrl;
     let adminKey = "";
     let alive = true;
     let busy = false;
@@ -47,6 +49,7 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
     const toggles = new Map<Library, ToggleComponent>();
     const dropdowns: DropdownComponent[] = [];
     let siteInput: TextComponent;
+    let uploadLimitInput: TextComponent;
     let keyInput: TextComponent;
     let saveButton: ButtonComponent;
     let deleteButton: ButtonComponent;
@@ -65,6 +68,14 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
                     confirmed[key] = false;
                     toggles.get(key)?.setValue(false);
                 }
+                try {
+                    const changedSite = canonicalGhostSite(value);
+                    if (changedSite !== uploadLimitSite) {
+                        uploadLimitMb = "";
+                        uploadLimitInput?.setValue("");
+                        uploadLimitSite = changedSite;
+                    }
+                } catch { /* Keep the value until a valid replacement site is entered. */ }
                 updateControls();
             });
         });
@@ -99,6 +110,17 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
     advanced.createEl("summary", { text: t("plugin.ghost.settings.advanced") });
     const body = advanced.createDiv({ cls: "pa-settings-detail__body" });
     body.createEl("p", { text: t("plugin.ghost.settings.librariesDescription") });
+    new Setting(body).setName(t("plugin.ghost.settings.uploadLimit"))
+        .setDesc(t("plugin.ghost.settings.uploadLimitDescription"))
+        .addText(text => {
+            uploadLimitInput = text;
+            text.inputEl.type = "text";
+            text.inputEl.inputMode = "decimal";
+            text.setPlaceholder(t("plugin.ghost.settings.uploadLimitPlaceholder"))
+                .setValue(uploadLimitMb).onChange(value => {
+                    if (alive && !busy) uploadLimitMb = value;
+                });
+        });
     for (const { key, label } of LIBRARIES) {
         const existing = initial.profile[key];
         if (existing?.compatible && existing.evidence !== "unknown"
@@ -149,6 +171,7 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
     function updateControls(): void {
         const disabled = busy || !alive || !host.isDesktop();
         siteInput.inputEl.disabled = disabled;
+        uploadLimitInput.inputEl.disabled = disabled;
         keyInput.inputEl.disabled = disabled;
         for (const dropdown of dropdowns) dropdown.setDisabled(disabled);
         for (const [key, toggle] of toggles) toggle.setDisabled(disabled || modes[key] === "pa");
@@ -170,13 +193,38 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
 
     async function save(removeKey: boolean): Promise<void> {
         if (!alive || busy || !host.isDesktop() || (!removeKey && needsConfirmation())) return;
+        let maxUploadBytes: number | undefined;
+        if (!removeKey) {
+            const value = uploadLimitMb.trim();
+            if (value) {
+                const megabytes = Number(value);
+                if (!/^\d+(?:\.\d{1,6})?$/.test(value) || !Number.isFinite(megabytes) || megabytes <= 0) {
+                    busy = true;
+                    updateControls();
+                    busy = false;
+                    updateControls();
+                    feedback.textContent = t("plugin.ghost.settings.invalidUploadLimit");
+                    return;
+                }
+                maxUploadBytes = Math.round(megabytes * 1_000_000);
+                if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes <= 0) {
+                    busy = true;
+                    updateControls();
+                    busy = false;
+                    updateControls();
+                    feedback.textContent = t("plugin.ghost.settings.invalidUploadLimit");
+                    return;
+                }
+            }
+        }
         const profile: GhostPublishingSettings["profile"] = {};
         for (const { key } of LIBRARIES) {
             const mode = modes[key];
             if (mode !== "pa") profile[key] = { compatible: true, evidence: "settings-whitelist", initialization: mode };
         }
         // Deletion acts on the saved site's key only, leaving this form's unsaved preferences alone.
-        const settings = removeKey ? normalizeGhostSettings(host.getSettings()) : { siteUrl, defaultVisibility: visibility, profile };
+        const settings = removeKey ? normalizeGhostSettings(host.getSettings())
+            : { siteUrl, defaultVisibility: visibility, ...(maxUploadBytes !== undefined ? { maxUploadBytes } : {}), profile };
         const key = removeKey ? "" : adminKey.trim() || undefined;
         busy = true;
         updateControls();

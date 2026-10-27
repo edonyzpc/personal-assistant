@@ -108,6 +108,34 @@ export type GhostSnapshot = z.infer<typeof ghostSnapshotSchema>;
 export type GhostStoredResource = z.infer<typeof ghostResourceSchema>;
 export type GhostOperationState = "preparing" | "prepared" | "draft_saved" | "updated" | "failed" | "outcome_unknown";
 
+export const ghostOperationFactReasons = [
+    "desktop-required", "cancelled", "source-revoked", "source-changed", "source-unavailable",
+    "connection-changed", "metadata-unavailable", "metadata-invalid", "provider_failure",
+    "input_too_large", "invalid_result", "invalid-resource", "unsupported-image",
+    "resource-too-large", "site-upload-limit", "read-failed", "hash-failed", "network",
+    "unsupported-syntax",
+    "timeout", "invalid-response", "redirect", "http", "conflict", "gate-rejected",
+    "write-failed", "guard-revoked", "remote-conflict", "invalid-binding", "invalid-state",
+] as const;
+export type GhostOperationFactReason = typeof ghostOperationFactReasons[number];
+export type GhostOperationFactStage = "source" | "metadata" | "resource" | "image-upload"
+    | "post-save" | "binding" | "cleanup";
+export type GhostOperationPostEffect = "not_sent" | "failed" | "unknown" | "saved";
+export type GhostOperationResourceRole = "body" | "cover" | "cover-and-body";
+
+export const ghostOperationFactsSchema = z.object({
+    stage: z.enum(["source", "metadata", "resource", "image-upload", "post-save", "binding", "cleanup"]),
+    reason: z.enum(ghostOperationFactReasons).optional(),
+    httpStatus: z.number().int().min(100).max(599).optional(),
+    postEffect: z.enum(["not_sent", "failed", "unknown", "saved"]),
+    uploadedCount: z.number().int().nonnegative(),
+    resource: z.object({
+        id: z.string().min(1).max(128), role: z.enum(["body", "cover", "cover-and-body"]),
+        actualBytes: z.number().int().nonnegative(), limitBytes: z.number().int().positive(),
+    }).strict().optional(),
+}).strict();
+export type GhostOperationFacts = z.infer<typeof ghostOperationFactsSchema>;
+
 export interface GhostLocalOperation {
     operationId: string;
     revision: number;
@@ -116,6 +144,12 @@ export interface GhostLocalOperation {
     noteKey: string;
     /** GHOST_ID observed when this action began, including a failed association write. */
     sourcePostId?: string;
+    requestIdentity?: {
+        conversationId: string;
+        stableMessageId: string;
+    };
+    /** Actual article write purpose retained only in the current in-memory operation. */
+    writePurpose?: "draft" | "preview" | "published";
     kind: "create" | "update";
     state: GhostOperationState;
     executionState: "not_started" | "succeeded" | "failed" | "acceptance_unknown";
@@ -125,8 +159,10 @@ export interface GhostLocalOperation {
         previewId?: string; previewUuid?: string; previewUrl?: string; previewVersion?: string; previewHash?: string;
     };
     verified?: { postId: string; postUrl: string; updatedAt: string; status: "draft" | "published" };
-    warnings?: Array<"binding-failed" | "cleanup-failed" | "preview-pointer-failed">;
+    warnings?: Array<"binding-failed" | "cleanup-failed" | "preview-pointer-failed" | "possible-duplicate">;
     error?: string;
+    facts?: GhostOperationFacts;
+    sourceLocation?: { path: string; line: number };
     updatedAt: string;
 }
 

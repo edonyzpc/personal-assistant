@@ -72,6 +72,7 @@ describe("Ghost Obsidian Host bridge", () => {
             recovery: { allowedActions: ["correct_input"] } });
         expect(corrected.ok).toBe(true);
         expect(mockPrepared.mock.calls[0][0].path).toBe("A.md");
+        expect(mockPrepared.mock.calls[0][0].requestIdentity).toEqual({ conversationId: "conversation", stableMessageId: "message" });
         expect(mockPrepared.mock.calls[0][0].authority.metadataDebug).toBe(debug);
         expect(mockPrepared).toHaveBeenCalledTimes(1);
         fixture.integration.dispose();

@@ -11,13 +11,17 @@ import { OperationsIntentController } from '../src/ai-services/operations/operat
 import { createPrepareGhostPostTool, type ChatToolContext } from '../src/ai-services/chat-tools';
 import { chatToolResultToPaAgentToolExecutionResult } from '../src/ai-services/pa-agent-host-tools';
 import type { PaAgentMessage } from '../src/ai-services/chat-types';
-import type { GhostMetadataFailureReason } from '../src/ai-services/ghost-tool-receipt';
+import { GHOST_PREPARATION_MESSAGES, type GhostMetadataFailureReason } from '../src/ai-services/ghost-tool-receipt';
+import type { GhostOperationFacts } from '../src/ghost-publishing/state-schema';
 
 async function ghostAttentionTranscript(operationId: string | null = 'attention-operation', failureReason?: GhostMetadataFailureReason,
-    status: 'needs_attention' | 'prepared' = 'needs_attention') {
+    status: 'needs_attention' | 'prepared' = 'needs_attention',
+    executionState?: import('../src/ai-services/chat-tool-types').GhostPostToolReceipt['executionState'],
+    facts?: GhostOperationFacts) {
     const tool = createPrepareGhostPostTool({ conversationId: 'conversation', stableMessageId: 'user',
-        submit: async () => ({ status, executionState: failureReason ? 'not_started' : 'succeeded',
-            ...(failureReason ? { failureReason } : {}), ...(operationId ? { operationId } : {}) }) });
+        submit: async () => ({ status, executionState: executionState ?? (failureReason ? 'not_started' as const : 'succeeded' as const),
+            ...(failureReason ? { failureReason } : {}), ...(operationId ? { operationId } : {}),
+            ...(facts ? { facts } : {}) }) });
     const call = { type: 'toolCall' as const, id: 'ghost-call', index: 0, name: 'prepare_ghost_post', input: { intent: 'prepare' as const } };
     const result = await tool.execute(call.input, { host: { log: () => undefined },
         taskSourceReadGuard: { isCurrent: () => true, isNoteDomainAllowed: () => true, isPathAllowed: () => true } } as unknown as ChatToolContext);
@@ -33,6 +37,77 @@ async function ghostAttentionTranscript(operationId: string | null = 'attention-
     ];
     return messages;
 }
+
+it('retains closed Ghost operation facts in the action-state receipt without source material', async () => {
+    const facts: GhostOperationFacts = { stage: 'image-upload', reason: 'network', postEffect: 'not_sent',
+        uploadedCount: 1, resource: { id: 'resource-1', role: 'body', actualBytes: 3, limitBytes: 2 } };
+    const messages = await ghostAttentionTranscript('facts-operation', undefined, 'needs_attention', 'failed', facts);
+    expect(collectActionStates({ runId: 'run', turnId: 'turn', messages })).toEqual([
+        expect.objectContaining({ owner: 'ghost', operationId: 'facts-operation', phase: 'failed',
+            receipt: { kind: 'ghost-preparation', operationId: 'facts-operation', status: 'needs_attention',
+                executionState: 'failed', facts } }),
+    ]);
+    expect(JSON.stringify(messages)).not.toMatch(/resource-1\.png|\/vault\/private|PRIVATE_API_RESPONSE/);
+});
+
+it('keeps transient source facts readable while rejecting a forged permission retry', async () => {
+    const facts: GhostOperationFacts = { stage: 'source', reason: 'network',
+        postEffect: 'not_sent', uploadedCount: 0 };
+    const messages = await ghostAttentionTranscript('source-network-operation', undefined,
+        'needs_attention', 'not_started', facts);
+    expect(collectActionStates({ runId: 'run', turnId: 'turn', messages })).toEqual([
+        expect.objectContaining({ owner: 'ghost', operationId: 'source-network-operation', phase: 'failed',
+            receipt: { kind: 'ghost-preparation', operationId: 'source-network-operation',
+                status: 'needs_attention', executionState: 'not_started', facts } }),
+    ]);
+
+    const setAllowedActions = (source: typeof messages, allowedActions: string[]) => {
+        const result = source[1] as Extract<PaAgentMessage, { role: 'toolResult' }>;
+        const envelope = JSON.parse(result.content.promptText) as { execution: { recovery: { allowedActions: string[] } } };
+        envelope.execution.recovery.allowedActions = allowedActions;
+        result.content.promptText = JSON.stringify(envelope);
+        result.content.previewText = JSON.stringify(envelope);
+        const metadata = result.content.metadata as { recovery?: { allowedActions?: string[] } };
+        metadata.recovery = { ...metadata.recovery, allowedActions };
+    };
+    const legacy = structuredClone(messages);
+    setAllowedActions(legacy, ['needs_user']);
+    expect(collectActionStates({ runId: 'run', turnId: 'turn', messages: legacy })).toEqual([
+        expect.objectContaining({ operationId: 'source-network-operation' }),
+    ]);
+
+    const denied = await ghostAttentionTranscript('source-revoked-operation', undefined,
+        'needs_attention', 'not_started', { ...facts, reason: 'source-revoked' });
+    setAllowedActions(denied, ['retry', 'needs_user']);
+    expect(collectActionStates({ runId: 'run', turnId: 'turn', messages: denied })).toEqual([]);
+});
+
+it('projects not-started resource facts and retry evidence through summary projections', async () => {
+    const facts: GhostOperationFacts = { stage: 'resource', reason: 'site-upload-limit',
+        postEffect: 'not_sent', uploadedCount: 0,
+        resource: { id: 'resource-1', role: 'cover', actualBytes: 3, limitBytes: 2 } };
+    const messages = await ghostAttentionTranscript('resource-facts-operation', undefined, 'needs_attention', 'not_started', facts);
+    const states = collectActionStates({ runId: 'run', turnId: 'turn', messages });
+    expect(states).toEqual([expect.objectContaining({ phase: 'failed',
+        receipt: { kind: 'ghost-preparation', operationId: 'resource-facts-operation',
+            status: 'needs_attention', executionState: 'not_started', facts } })]);
+    expect(projectActionStates(states, { sourceExcluded: true })).toEqual([expect.objectContaining({
+        ghostOperationFacts: facts,
+    })]);
+    expect(projectActionSummaryFacts(states)).toEqual([expect.objectContaining({ ghostOperationFacts: facts })]);
+    expect(JSON.stringify(projectActionStates(states))).not.toContain('receipt');
+    const result = messages[1] as Extract<PaAgentMessage, { role: 'toolResult' }>;
+    const envelope = JSON.parse(result.content.promptText) as { observation: { message: string; facts: GhostOperationFacts } };
+    expect(envelope.observation.message).toBe(GHOST_PREPARATION_MESSAGES.site_upload_limit);
+    envelope.observation.message = GHOST_PREPARATION_MESSAGES.failed_attention;
+    result.content.promptText = JSON.stringify(envelope);
+    expect(collectActionStates({ runId: 'run', turnId: 'turn', messages }))
+        .toEqual([expect.objectContaining({ operationId: 'resource-facts-operation', phase: 'failed' })]);
+    envelope.observation.message = GHOST_PREPARATION_MESSAGES.site_upload_limit;
+    envelope.observation.facts.reason = 'network';
+    result.content.promptText = JSON.stringify(envelope);
+    expect(collectActionStates({ runId: 'run', turnId: 'turn', messages })).toEqual([]);
+});
 
 function state(owner: PaAgentActionState['owner'], operationId: string, receipt: PaAgentActionState['receipt'], phase: PaAgentActionState['phase']): PaAgentActionState {
     return { schemaVersion: 1, owner, operationId, receipt, phase, revision: 0,

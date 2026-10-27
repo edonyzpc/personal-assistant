@@ -24,7 +24,7 @@ import { completeInputLineage } from "../src/ai-services/input-lineage";
 import { collectActionStates, projectActionStates, PA_AGENT_ACTION_STATE_CONTEXT_RULES, PA_AGENT_DOMAIN_ACTION_STATE_RULES,
     PA_AGENT_EFFECT_RECOVERY_RULES, PA_AGENT_GHOST_RECOVERY_RULES, isSafeImageFailureObservation } from '../src/ai-services/pa-agent-result-facts';
 import { PA_AGENT_HISTORY_ENCODING_RULES, PA_AGENT_HISTORY_INTERNAL_REPRESENTATION_RULES } from '../src/ai-services/pa-agent-prompts';
-import { GHOST_METADATA_FAILURE_MESSAGES } from "../src/ai-services/ghost-tool-receipt";
+import { GHOST_METADATA_FAILURE_MESSAGES, GHOST_PREPARATION_MESSAGES } from "../src/ai-services/ghost-tool-receipt";
 import { readFile } from 'node:fs/promises';
 import { inlineLauncher } from '../src/third_party/pi-codemode/runtime/inline';
 import type { VmChannel } from '../src/third_party/pi-codemode/runtime/execution';
@@ -919,7 +919,7 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(feedback).toContain(`"executionState": "${receipt.executionState}"`);
         expect(feedback).toContain(`"code": "${receipt.status === "outcome_unknown" ? "ghost_preparation_outcome_unknown" : "ghost_attention_required"}"`);
         expect(feedback).toContain('"allowedActions": [');
-        if (receipt.executionState === "acceptance_unknown") expect(feedback).toContain('"query_operation"');
+        if (receipt.executionState === "acceptance_unknown" || receipt.executionState === "failed") expect(feedback).toContain('"retry"');
         expect(feedback).toContain('"needs_user"');
         const toolResult = trace.toolResults[0];
         expect(toolResult?.isError).toBe(false);
@@ -927,7 +927,8 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
             executionState: receipt.executionState,
             recovery: {
                 code: receipt.status === "outcome_unknown" ? "ghost_preparation_outcome_unknown" : "ghost_attention_required",
-                allowedActions: receipt.executionState === "acceptance_unknown" ? ["query_operation", "needs_user"] : ["needs_user"],
+                allowedActions: receipt.executionState === "acceptance_unknown" || receipt.executionState === "failed"
+                    ? ["retry", "needs_user"] : ["needs_user"],
             },
         });
         expect(toolResult?.inputLineage).toMatchObject({
@@ -947,6 +948,48 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(trace.providerTexts[1]).not.toContain("PRIVATE_PROVIDER_DETAIL");
         expect(trace.toolResults[0].content.resultFact).toEqual({ kind: "unavailable", capability: "prepare_ghost_post", reason: "ghost_attention_required" });
         expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps structured not-started resource facts and retry recovery in the provider request", async () => {
+        const facts = { stage: "resource", reason: "site-upload-limit", httpStatus: 413,
+            postEffect: "not_sent", uploadedCount: 0,
+            resource: { id: "resource-1", role: "cover", actualBytes: 3, limitBytes: 2 } } as const;
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({
+            status: "needs_attention", operationId: "resource-facts-operation",
+            executionState: "not_started", facts,
+        }));
+        const trace = await runGhostRuntimeTrace(submit, [{ intent: "prepare", path: "notes/target.md" }]);
+        const feedback = trace.providerTexts[1]!;
+        expect(feedback).toContain(GHOST_PREPARATION_MESSAGES.site_upload_limit);
+        expect(feedback).toContain("site-upload-limit");
+        expect(feedback).toContain('"stage": "resource"');
+        expect(feedback).toContain('"httpStatus": 413');
+        expect(feedback).toContain('"retry"');
+        expect(feedback).toContain('"needs_user"');
+        const messages = trace.lifecycle.flatMap(event => event.type === "message_end" && event.message ? [event.message] : []);
+        expect(collectActionStates({ runId: "fixture-run", turnId: "fixture-turn", messages })).toEqual([
+            expect.objectContaining({ owner: "ghost", operationId: "resource-facts-operation",
+                receipt: expect.objectContaining({ facts }) }),
+        ]);
+    });
+
+    it("keeps a transient source-read failure and its retry recovery in the provider request", async () => {
+        const facts = { stage: "source", reason: "network", postEffect: "not_sent", uploadedCount: 0 } as const;
+        const submit = jest.fn<GhostHostBinding["submit"]>(async () => ({
+            status: "needs_attention", operationId: "source-network-operation",
+            executionState: "not_started", facts,
+        }));
+        const trace = await runGhostRuntimeTrace(submit, [{ intent: "prepare", path: "notes/target.md" }]);
+        const feedback = trace.providerTexts[1]!;
+        expect(feedback).toContain('"stage": "source"');
+        expect(feedback).toContain('"reason": "network"');
+        expect(feedback).toContain('"postEffect": "not_sent"');
+        expect(feedback).toContain('"retry"');
+        const messages = trace.lifecycle.flatMap(event => event.type === "message_end" && event.message ? [event.message] : []);
+        expect(collectActionStates({ runId: "fixture-run", turnId: "fixture-turn", messages })).toEqual([
+            expect.objectContaining({ owner: "ghost", operationId: "source-network-operation",
+                receipt: expect.objectContaining({ facts }) }),
+        ]);
     });
 
     it.each(['prepared', 'needs_attention'] as const)("retains accepted observations and the saved Ghost %s receipt after an ordinary note epoch change", async status => {
@@ -1152,13 +1195,13 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         for (const feedback of trace.providerTexts.slice(1)) {
             expect(feedback).toContain("The preparation result is unknown.");
             expect(feedback).toContain('"executionState": "acceptance_unknown"');
-            expect(feedback).toContain('"code": "ghost_preparation_acceptance_unknown"');
+            expect(feedback).toContain('"code": "ghost_preparation_outcome_unknown"');
         }
         expect(trace.toolResults).toHaveLength(2);
         for (const result of trace.toolResults) {
             expect(result.content.metadata).toMatchObject({
                 executionState: "acceptance_unknown",
-                recovery: { code: "ghost_preparation_acceptance_unknown", allowedActions: ["query_operation", "needs_user"] },
+                recovery: { code: "ghost_preparation_outcome_unknown", allowedActions: ["retry", "needs_user"] },
             });
         }
     });

@@ -6,7 +6,7 @@ import { prepareGhostExport } from "./exporter";
 import { GHOST_CUSTOM_EXCERPT_MAX, GHOST_META_DESCRIPTION_MAX, mergeGhostTagNames } from "./fields";
 import { isValidGhostSlug } from "./slug";
 import { resolveGhostWikiLinks } from "./wiki-links";
-import { prepareGhostResource, type GhostResourceOptions } from "./resources";
+import { ghostResourceRole, preflightGhostResources, prepareGhostResource, type GhostResourceOptions } from "./resources";
 import type { GhostActionContext, GhostPreparedImage } from "./service";
 import { prepareGhostSnapshot } from "./snapshot";
 import type { ExportResourcePlan, GhostExportResult, GhostPublishingHost, GhostPublishingSourceFile,
@@ -34,6 +34,7 @@ export interface GhostActionContextOptions {
     guard: GhostPublishingSourceGuard;
     sourceValidity(): boolean;
     siteId: string; siteUrl: string;
+    maxUploadBytes?: number;
     getConnectionIdentity(): string;
     getProfile(): SitePublishingProfile;
     /** Actual dependencies only, used for consistency while preparing a new candidate. */
@@ -233,7 +234,7 @@ export async function createGhostActionContext(options: GhostActionContextOption
         const image = await prepareGhostResource(plan, { host: trackedHost(), client: options.client, isDesktop,
             guard: resourceGuard, sourceValidity: () => sourceGuard.isCurrent(), gate, siteId, siteUrl: adapter.site });
         assertPreparing();
-        return image;
+        return { ...image, role: ghostResourceRole(plan) };
     }
     const context: GhostActionContext = {
         gate,
@@ -255,8 +256,10 @@ export async function createGhostActionContext(options: GhostActionContextOption
             for (const plan of exported.resources) {
                 if (plan.kind === "local" && plan.resolvedPath) {
                     resourceAdmissions.set(plan.resolvedPath, [...new Set(plan.occurrences.map(occurrence => occurrence.path))]);
+                    assertPath(plan.resolvedPath);
                 }
             }
+            preflightGhostResources(exported.resources, { host, maxUploadBytes: options.maxUploadBytes });
             await prepareMetadata(exported, remote);
             const images: GhostPreparedImage[] = [];
             for (const plan of exported.resources) images.push(await resource(plan));
@@ -264,7 +267,8 @@ export async function createGhostActionContext(options: GhostActionContextOption
                 remote: remote ?? undefined, defaultVisibility: options.defaultVisibility, allowPendingResources: true });
             assertPreparing();
             preparing = false;
-            return { candidate, images, slugCandidate: exported.fields.slug.mode === "manage" ? exported.fields.slug.value : undefined };
+            return { candidate, images, slugCandidate: exported.fields.slug.mode === "manage" ? exported.fields.slug.value : undefined,
+                ...(options.maxUploadBytes !== undefined ? { maxUploadBytes: options.maxUploadBytes } : {}) };
         },
         validate: async operation => {
             assertPreparing();

@@ -143,6 +143,64 @@ describe('complete tool batch Host preflight', () => {
         expect(f.execute).toHaveBeenCalledTimes(1);
     });
 
+    it('honors only the current Ghost owner receipt that explicitly allows sequential retry', async () => {
+        const ghostCall = (id: string) => call(id, 'prepare_ghost_post', '{"intent":"prepare"}');
+        const retryable: PaAgentToolExecutionResult = {
+            outcome: 'success' as const,
+            promptText: 'The Ghost preparation result is unknown.',
+            executionState: 'acceptance_unknown' as const,
+            recovery: {
+                code: 'ghost_preparation_outcome_unknown',
+                allowedActions: ['retry', 'needs_user'],
+                operationId: 'ghost-operation',
+            },
+        };
+        const admittedRetry = setup();
+        admittedRetry.executor.getRetrySafety = () => 'side_effect';
+        admittedRetry.execute.mockResolvedValueOnce(retryable)
+            .mockResolvedValueOnce({ outcome: 'success', promptText: 'Ghost draft saved.' });
+        const first = await admittedRetry.dispatcher.executeBufferedToolCalls('first', 0, [ghostCall('one')], 'normal', undefined);
+        const second = await admittedRetry.dispatcher.executeBufferedToolCalls('second', 1,
+            [ghostCall('two'), ghostCall('two-duplicate')], 'normal', undefined);
+        const third = await admittedRetry.dispatcher.executeBufferedToolCalls('third', 2, [ghostCall('three')], 'normal', undefined);
+        expect(first.toolResults[0].content.metadata?.outcome).toBe('success');
+        expect(admittedRetry.results[0]).toMatchObject({
+            outcome: 'success', executionState: 'acceptance_unknown',
+            recovery: { code: 'ghost_preparation_outcome_unknown', allowedActions: ['retry', 'needs_user'] },
+        });
+        expect(admittedRetry.execute).toHaveBeenCalledTimes(2);
+        expect(second.toolResults.map(result => result.content.metadata?.outcome)).toEqual(['success', 'recoverable_error']);
+        expect(second.toolResults[1].content.metadata).toMatchObject({
+            reason: 'unknown_replay_blocked', replayBlocked: true,
+        });
+        expect(third.toolResults[0].content.metadata?.outcome).toBe('reused_result');
+
+        for (const spec of [
+            { name: 'ghost without retry', toolName: 'prepare_ghost_post', executionState: 'acceptance_unknown' as const,
+                recovery: { code: 'ghost_preparation_outcome_unknown', allowedActions: ['needs_user' as const] },
+                reason: 'unknown_replay_blocked' },
+            { name: 'another domain with retry', toolName: 'vault_write', executionState: 'acceptance_unknown' as const,
+                recovery: { code: 'temporary_failure', allowedActions: ['retry' as const] },
+                reason: 'unknown_replay_blocked' },
+            { name: 'partial Ghost result with retry', toolName: 'prepare_ghost_post', executionState: 'partially_succeeded' as const,
+                recovery: { code: 'ghost_preparation_outcome_unknown', allowedActions: ['retry' as const, 'needs_user' as const] },
+                reason: 'partial_replay_blocked' },
+        ]) {
+            const f = setup();
+            f.executor.getRetrySafety = () => 'side_effect';
+            f.execute.mockResolvedValueOnce({
+                outcome: 'recoverable_error', promptText: `${spec.name} observation`,
+                executionState: spec.executionState, recovery: spec.recovery,
+            });
+            await f.dispatcher.executeBufferedToolCalls('first', 0, [call('one', spec.toolName)], 'normal', undefined);
+            const repeated = await f.dispatcher.executeBufferedToolCalls('second', 1, [call('two', spec.toolName)], 'normal', undefined);
+            expect(repeated.toolResults[0].content.metadata).toMatchObject({
+                outcome: 'recoverable_error', reason: spec.reason, replayBlocked: true,
+            });
+            expect(f.execute).toHaveBeenCalledTimes(1);
+        }
+    });
+
     it.each(['preflight', 'canonical', 'preparation', 'preparation-error'] as const)(
         'rejects the complete admitted batch when its guard fails at %s', async (phase) => {
             let current = phase !== 'preflight';
