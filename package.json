@@ -66,7 +66,7 @@
   },
   "dependencies": {
     "@langchain/core": "1.1.41",
-    "@langchain/openai": "1.4.4",
+    "@langchain/openai": "1.8.0",
     "@sqlite.org/sqlite-wasm": "3.53.0-build1",
     "@tanstack/react-virtual": "3.14.21",
     "@zumer/snapdom": "2.23.2",
