@@ -973,8 +973,6 @@ export function renderPageletPreferences(
 ): void {
     const t = makePageletTranslator(locale);
     const settings = host.settings.pagelet;
-    // Section heading + Beta callout. Using `createEl` directly so the
-    // markup matches existing PA conventions (h2 + p sibling).
     parentEl.createEl("h2", { text: t("pagelet.settings.section.title") });
     parentEl.createEl("p", {
         text: t("pagelet.settings.section.subtitle"),
@@ -984,37 +982,23 @@ export function renderPageletPreferences(
         text: t("pagelet.settings.beta.callout"),
         cls: "pa-pagelet-beta-callout",
     });
-
     const saveOnChange = createPageletSaveFeedback(parentEl, host, locale);
 
-    // Master toggle. Rendered at the top so a user who only wants to
-    // turn Pagelet off doesn't need to scroll past 6 other fields.
     factory.create(parentEl)
         .setName(t("pagelet.settings.enabled.name"))
         .setDesc(t("pagelet.settings.enabled.desc"))
-        .addToggle((toggle) =>
-            toggle
-                .setValue(settings.enabled)
-                .onChange((value) => saveOnChange(() => { settings.enabled = value; })));
+        .addToggle((toggle) => toggle
+            .setValue(settings.enabled)
+            .onChange((value) => saveOnChange(() => {
+                settings.enabled = value;
+                children.hidden = !value;
+            })));
 
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.outputLanguage.name"))
-        .setDesc(t("pagelet.settings.outputLanguage.desc"))
-        .addDropdown((dropdown) => {
-            dropdown
-                .addOption("auto", t("pagelet.settings.outputLanguage.option.auto"))
-                .addOption("zh", t("pagelet.settings.outputLanguage.option.zh"))
-                .addOption("en", t("pagelet.settings.outputLanguage.option.en"))
-                .setValue(settings.outputLanguage)
-                .onChange((value) => saveOnChange(() => {
-                    settings.outputLanguage = normalizeOutputLanguage(value);
-                }));
-        });
-
-    // ── Deep Discover ──────────────────────────────────────────────────
+    const children = parentEl.createDiv({ cls: "pa-pagelet-conditional" });
+    children.hidden = !settings.enabled;
 
     const backgroundDescription = t("pagelet.settings.backgroundDiscovery.desc");
-    const backgroundRow = factory.create(parentEl)
+    const backgroundRow = factory.create(children)
         .setName(t("pagelet.settings.backgroundDiscovery.name"))
         .setDesc(backgroundDescription);
     backgroundRow.addToggle((toggle) => {
@@ -1035,8 +1019,6 @@ export function renderPageletPreferences(
                 }
             } finally {
                 if (parentEl.isConnected !== false) {
-                    // Obsidian setValue synchronously invokes onChange. Keep
-                    // the guard active while reflecting the committed value.
                     toggle.setValue(host.settings.pagelet.backgroundDiscoveryEnabled);
                     toggle.setDisabled?.(false);
                 }
@@ -1045,7 +1027,7 @@ export function renderPageletPreferences(
         });
     });
 
-    const usageEl = parentEl.createEl("p", {
+    const usageEl = children.createEl("p", {
         text: t("pagelet.settings.deepDiscover.usage.fixed"),
         cls: "pa-settings-section-desc",
     });
@@ -1056,93 +1038,93 @@ export function renderPageletPreferences(
                     usageEl.textContent = t("pagelet.settings.deepDiscover.usage.value", usage);
                 }
             })
-            .catch((error) => {
-                host.log?.("Pagelet Deep Discover usage unavailable", error);
-            });
+            .catch((error) => host.log?.("Pagelet Deep Discover usage unavailable", error));
     }
 
-    const detailsEl = parentEl.createEl("details", { cls: "pa-settings-detail" });
-    detailsEl.createEl("summary", { text: t("pagelet.settings.preferences.details") });
-    const detailsBodyEl = detailsEl.createDiv({ cls: "pa-settings-detail__body" });
-
-    // ── Pet ────────────────────────────────────────────────────────────
-
-    factory.create(detailsBodyEl)
+    factory.create(children)
         .setName(t("pagelet.settings.petVisible.name"))
         .setDesc(t("pagelet.settings.petVisible.desc"))
-        .addToggle((toggle) =>
-            toggle
-                .setValue(settings.petVisible)
-                .onChange((value) => saveOnChange(() => {
-                    settings.petVisible = value;
-                    petCornerEl.hidden = !value;
-                })));
+        .addToggle((toggle) => toggle
+            .setValue(settings.petVisible)
+            .onChange((value) => saveOnChange(() => {
+                settings.petVisible = value;
+                petCornerEl.hidden = !value;
+            })));
 
-    const petCornerEl = detailsBodyEl.createDiv({ cls: "pa-pagelet-conditional" });
-    petCornerEl.hidden = !settings.petVisible;
-    factory.create(petCornerEl)
-        .setName(t("pagelet.settings.petCorner.name"))
-        .setDesc(t("pagelet.settings.petCorner.desc"))
-        .addDropdown((dropdown) => {
-            dropdown
-                .addOption("bottom-right", t("pagelet.settings.petCorner.option.bottom-right"))
-                .addOption("bottom-left", t("pagelet.settings.petCorner.option.bottom-left"))
-                .addOption("top-right", t("pagelet.settings.petCorner.option.top-right"))
-                .addOption("top-left", t("pagelet.settings.petCorner.option.top-left"))
-                .setValue(settings.petCorner)
-                .onChange((value) => saveOnChange(() => {
-                    settings.petCorner = normalizePetCorner(value);
-                }));
-        });
-
-    factory.create(detailsBodyEl)
+    factory.create(children)
         .setName(t("pagelet.settings.proactiveHints.name"))
         .setDesc(t("pagelet.settings.proactiveHints.desc"))
-        .addToggle((toggle) =>
-            toggle
-                .setValue(settings.proactiveHints)
-                .onChange((value) => saveOnChange(() => { settings.proactiveHints = value; })));
+        .addToggle((toggle) => toggle
+            .setValue(settings.proactiveHints)
+            .onChange((value) => saveOnChange(() => {
+                settings.proactiveHints = value;
+                hintChildren.hidden = !value;
+            })));
 
-    // ── Quiet Hours ───────────────────────────────────────────────────
-    factory.create(detailsBodyEl)
+    const hintChildren = children.createDiv({ cls: "pa-pagelet-conditional" });
+    hintChildren.hidden = !settings.proactiveHints;
+    factory.create(hintChildren)
         .setName(t("pagelet.settings.quietHoursEnabled.name"))
         .setDesc(t("pagelet.settings.quietHoursEnabled.desc"))
-        .addToggle((toggle) =>
-            toggle
-                .setValue(settings.proactiveHintsQuietHours.enabled)
-                .onChange((value) => saveOnChange(() => {
-                    settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, enabled: value };
-                    quietTimesEl.hidden = !value;
-                })));
-
-    const quietTimesEl = detailsBodyEl.createDiv({ cls: "pa-pagelet-conditional" });
+        .addToggle((toggle) => toggle
+            .setValue(settings.proactiveHintsQuietHours.enabled)
+            .onChange((value) => saveOnChange(() => {
+                settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, enabled: value };
+                quietTimesEl.hidden = !value;
+            })));
+    const quietTimesEl = hintChildren.createDiv({ cls: "pa-pagelet-conditional" });
     quietTimesEl.hidden = !settings.proactiveHintsQuietHours.enabled;
     factory.create(quietTimesEl)
         .setName(t("pagelet.settings.quietHoursStart.name"))
         .setDesc(t("pagelet.settings.quietHoursStart.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder("22:00")
-                .setValue(settings.proactiveHintsQuietHours.start)
-                .onChange((value) => saveOnChange(() => {
-                    if (/^\d{2}:\d{2}$/.test(value)) {
-                        settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, start: value };
-                    }
-                })));
-
+        .addText((text) => text
+            .setPlaceholder("22:00")
+            .setValue(settings.proactiveHintsQuietHours.start)
+            .onChange((value) => saveOnChange(() => {
+                if (/^\d{2}:\d{2}$/.test(value)) {
+                    settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, start: value };
+                }
+            })));
     factory.create(quietTimesEl)
         .setName(t("pagelet.settings.quietHoursEnd.name"))
         .setDesc(t("pagelet.settings.quietHoursEnd.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder("08:00")
-                .setValue(settings.proactiveHintsQuietHours.end)
-                .onChange((value) => saveOnChange(() => {
-                    if (/^\d{2}:\d{2}$/.test(value)) {
-                        settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, end: value };
-                    }
-                })));
+        .addText((text) => text
+            .setPlaceholder("08:00")
+            .setValue(settings.proactiveHintsQuietHours.end)
+            .onChange((value) => saveOnChange(() => {
+                if (/^\d{2}:\d{2}$/.test(value)) {
+                    settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, end: value };
+                }
+            })));
 
+    const displayDetails = children.createEl("details", { cls: "pa-settings-detail" });
+    displayDetails.createEl("summary", { text: t("pagelet.settings.preferences.details") });
+    const displayBody = displayDetails.createDiv({ cls: "pa-settings-detail__body" });
+    const petCornerEl = displayBody.createDiv({ cls: "pa-pagelet-conditional" });
+    petCornerEl.hidden = !settings.petVisible;
+    factory.create(petCornerEl)
+        .setName(t("pagelet.settings.petCorner.name"))
+        .setDesc(t("pagelet.settings.petCorner.desc"))
+        .addDropdown((dropdown) => dropdown
+            .addOption("bottom-right", t("pagelet.settings.petCorner.option.bottom-right"))
+            .addOption("bottom-left", t("pagelet.settings.petCorner.option.bottom-left"))
+            .addOption("top-right", t("pagelet.settings.petCorner.option.top-right"))
+            .addOption("top-left", t("pagelet.settings.petCorner.option.top-left"))
+            .setValue(settings.petCorner)
+            .onChange((value) => saveOnChange(() => {
+                settings.petCorner = normalizePetCorner(value);
+            })));
+    factory.create(displayBody)
+        .setName(t("pagelet.settings.outputLanguage.name"))
+        .setDesc(t("pagelet.settings.outputLanguage.desc"))
+        .addDropdown((dropdown) => dropdown
+            .addOption("auto", t("pagelet.settings.outputLanguage.option.auto"))
+            .addOption("zh", t("pagelet.settings.outputLanguage.option.zh"))
+            .addOption("en", t("pagelet.settings.outputLanguage.option.en"))
+            .setValue(settings.outputLanguage)
+            .onChange((value) => saveOnChange(() => {
+                settings.outputLanguage = normalizeOutputLanguage(value);
+            })));
 }
 
 export interface PageletNotePrivacyContainers {
@@ -1167,7 +1149,7 @@ export function renderPageletNotePrivacy(
     renderPageletSourceExclusions(containers.sourceExclusions, host, factory, locale, sourceScopeOptions);
 }
 
-function renderPageletSaveLocation(
+export function renderPageletSaveLocation(
     parentEl: HTMLElement,
     host: PageletSettingsHost,
     factory: PageletSettingFactory,
@@ -1238,7 +1220,7 @@ function renderPageletSaveLocation(
 
 }
 
-function renderPageletSourceExclusions(
+export function renderPageletSourceExclusions(
     parentEl: HTMLElement,
     host: PageletSettingsHost,
     factory: PageletSettingFactory,

@@ -14,7 +14,7 @@ import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
 import type { PluginManager } from '../src/plugin';
 import type { SettingsPermissionPatch } from '../src/plugin/settings-persistence';
 import type { ImageGenerationConnection } from '../src/ai-services/image-generation-connection';
-import type { FeaturedImageDefaults } from '../src/ai-services/featured-image-options';
+import type { FeaturedImageDefaultsPatch } from '../src/settings/featured-image-options-modal';
 import type { FeaturedImageOptionsModalHost } from '../src/settings/featured-image-options-modal';
 
 jest.mock("obsidian-callout-manager", () => ({ getApi: jest.fn() }));
@@ -73,7 +73,7 @@ function attachAIActions(plugin: unknown): void {
         aiTokenRevision: number;
         getConfiguredImageAPITokenSecret(): string | null;
         getAPIToken(): Promise<string>;
-        saveFeaturedImageDefaults(options: FeaturedImageDefaults): Promise<void>;
+        saveFeaturedImageDefaults(options: FeaturedImageDefaultsPatch): Promise<void>;
         log(...args: unknown[]): void;
     };
     const target = plugin as unknown as AIActionsPluginSurface;

@@ -1,6 +1,10 @@
 import type { App } from 'obsidian';
 import { DomStubNode, findAllByTag } from './helpers/dom-stub';
-import { FeaturedImageOptionsModal, type FeaturedImageOptionsModalHost } from '../src/settings/featured-image-options-modal';
+import {
+    FeaturedImageOptionsModal,
+    mountFeaturedImageOptionsEditor,
+    type FeaturedImageOptionsModalHost,
+} from '../src/settings/featured-image-options-modal';
 import type { FeaturedImageDefaults } from '../src/ai-services/featured-image-options';
 import { pluginT } from '../src/locales/plugin';
 
@@ -31,6 +35,10 @@ class ModalElement extends DomStubNode {
         return this.onclick?.();
     }
 }
+
+const nodes = (root: DomStubNode, tag: string) => findAllByTag(root, tag) as ModalElement[];
+const button = (root: DomStubNode, suffix: string) => nodes(root, 'button')
+    .find(node => node.textContent === pluginT(`plugin.settings.featuredImage.options.${suffix}`))!;
 
 const defaults: FeaturedImageDefaults = {
     featuredImageModel: 'wan2.7-image-pro',
@@ -65,7 +73,7 @@ describe('FeaturedImageOptionsModal', () => {
         expect(ui.nodes('input')[0].value).toBe('images/featured');
         ui.nodes('input')[0].value = 'attachments/ai';
         await ui.button('save').click();
-        expect(saveDefaults).toHaveBeenCalledWith({ ...defaults, featuredImagePath: 'attachments/ai' });
+        expect(saveDefaults).toHaveBeenCalledWith({ featuredImagePath: 'attachments/ai' });
         expect(ui.modal.close).toHaveBeenCalledTimes(1);
     });
 
@@ -73,6 +81,7 @@ describe('FeaturedImageOptionsModal', () => {
         const saved = deferred<void>();
         const saveDefaults = jest.fn(() => saved.promise);
         const ui = setup(saveDefaults);
+        ui.nodes('select')[0].value = 'wan2.7-image';
         const saving = ui.button('save').click();
         await ui.button('save').click();
         expect(saveDefaults).toHaveBeenCalledTimes(1);
@@ -80,6 +89,24 @@ describe('FeaturedImageOptionsModal', () => {
         saved.resolve();
         await saving;
         expect(ui.modal.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('advances the saved baseline for a same-session reverse edit', async () => {
+        const saveDefaults = jest.fn(async () => undefined);
+        const content = new ModalElement('div');
+        mountFeaturedImageOptionsEditor(content as unknown as HTMLElement, {
+            mode: 'edit',
+            defaults,
+            saveDefaults,
+        }, { close: jest.fn(), cancel: jest.fn() });
+
+        nodes(content, 'select')[0].value = 'wan2.7-image';
+        await button(content, 'save').click();
+        expect(saveDefaults).toHaveBeenLastCalledWith({ featuredImageModel: 'wan2.7-image' });
+
+        nodes(content, 'select')[0].value = 'wan2.7-image-pro';
+        await button(content, 'save').click();
+        expect(saveDefaults).toHaveBeenLastCalledWith({ featuredImageModel: 'wan2.7-image-pro' });
     });
 
     it('keeps the edited draft after failure', async () => {
@@ -98,6 +125,7 @@ describe('FeaturedImageOptionsModal', () => {
         const saved = deferred<void>();
         const saveDefaults = jest.fn(() => saved.promise);
         const ui = setup(saveDefaults);
+        ui.nodes('input')[0].value = 'attachments/ai';
         const saving = ui.button('save').click();
         await ui.button('cancel').click();
         saved.resolve();

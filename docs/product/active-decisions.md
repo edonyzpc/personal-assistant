@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-10-25
+Updated: 2026-10-28
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-076 | Settings 按任务分层与图谱初始自适应 | 沿用四组，保留 Policy model 和有效偏好；内部详情保护草稿，旧图谱宽高退出，兼顾双语双端；预览认可不等于代码验收 | [Decision](./decisions/dec-076-settings-ux-and-adaptive-graph.md), [Spec](./specs/pa-settings-ux-product-spec.md) | 有效配置不可达、草稿丢失、来源范围漂移，或图谱／窄屏操作越界 |
 | DEC-075 | 第一批旧入口与保留代码清理 | 仅退役指定七命令、无效设置/跳转、旧 Operations 设置链与 Pagelet 专用关联；热键兼容取舍已批准，历史数据和共享能力保持 | [Decision](./decisions/dec-075-legacy-surface-cleanup.md), [Spec](./specs/pa-bounded-code-cleanup-product-spec.md) | 发现有效生产/历史消费者，或用户明确需要恢复某个已退役入口 |
 | DEC-074 | Chat 原生 Mermaid 自动开启 | 渲染前确保当前设备当前 vault 的宿主开关开启；保留原生渲染，无后台或新设置 | [Decision](./decisions/dec-074-chat-mermaid-auto-enable.md), [Spec](./specs/pa-chat-mermaid-auto-enable-product-spec.md) | 宿主配置接口变化、Allow 回归或需要 Chat 独立信任范围 |
 | DEC-073 | Chat Canvas 生成时预览与原生打开 | Chat 保留生成时 JSON；默认路径可改，显式保存并在原生 tab 交互；后续打开最新文件 | [Decision](./decisions/dec-073-chat-canvas-preview-native-open.md), [Spec](./specs/pa-chat-canvas-preview-product-spec.md), [Architecture](../architecture/chat-canvas-preview.md) | 需要预览随文件更新、改变媒体/数据边界，或公共宿主接线无法兑现原生打开 |

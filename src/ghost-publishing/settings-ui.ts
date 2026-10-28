@@ -11,6 +11,17 @@ export interface GhostPublishingSettingsHost {
     t(key: PluginMessageKey, params?: Readonly<Record<string, string | number>>): string;
 }
 
+export interface GhostSettingsDisposer {
+    (): void;
+    clearSensitiveDraft(): void;
+}
+
+function createEmptyGhostDisposer(): GhostSettingsDisposer {
+    const dispose = () => {};
+    dispose.clearSensitiveDraft = () => {};
+    return dispose;
+}
+
 type Library = "prism" | "mermaid" | "katex";
 type LibraryMode = "pa" | "auto" | "explicit";
 const LIBRARIES: ReadonlyArray<{ key: Library; label: string }> = [
@@ -23,16 +34,19 @@ const KEY_STATUS_MESSAGES: Record<GhostAdminKeyStatus, PluginMessageKey> = {
 };
 
 /** Manual settings only. The UI receives key status, never a key value, and persists no key in preferences. */
-export function renderGhostPublishingSettings(container: HTMLElement, host: GhostPublishingSettingsHost): () => void {
+export function renderGhostPublishingSettings(
+    container: HTMLElement,
+    host: GhostPublishingSettingsHost,
+): GhostSettingsDisposer {
     const t = host.t.bind(host);
     if (!host.isDesktop()) {
         container.createEl("p", { text: t("plugin.ghost.settings.desktopRequired") });
-        return () => {};
+        return createEmptyGhostDisposer();
     }
     const configuration = host.configuration;
     if (!configuration) {
         container.createEl("p", { text: t("plugin.ghost.settings.unavailable") });
-        return () => {};
+        return createEmptyGhostDisposer();
     }
     const saveConfiguration = configuration.save.bind(configuration);
     const initial = normalizeGhostSettings(host.getSettings());
@@ -47,6 +61,7 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
     const modes: Record<Library, LibraryMode> = { prism: "pa", mermaid: "pa", katex: "pa" };
     const confirmed: Record<Library, boolean> = { prism: false, mermaid: false, katex: false };
     const toggles = new Map<Library, ToggleComponent>();
+    const confirmationRows = new Map<Library, HTMLElement>();
     const dropdowns: DropdownComponent[] = [];
     let siteInput: TextComponent;
     let uploadLimitInput: TextComponent;
@@ -141,7 +156,8 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
                     updateControls();
                 });
         });
-        new Setting(body).setName(t("plugin.ghost.settings.confirmCompatible", { library: label }))
+        const confirmation = new Setting(body)
+            .setName(t("plugin.ghost.settings.confirmCompatible", { library: label }))
             .addToggle((toggle) => {
                 toggles.set(key, toggle);
                 toggle.setValue(confirmed[key]).onChange((value) => {
@@ -150,6 +166,8 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
                     updateControls();
                 });
             });
+        const confirmationRow = (confirmation as Setting & { settingEl?: HTMLElement }).settingEl;
+        if (confirmationRow) confirmationRows.set(key, confirmationRow);
     }
 
     const feedback = container.createEl("p", { attr: { role: "status", "aria-live": "polite", "aria-atomic": "true" } });
@@ -175,6 +193,7 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
         keyInput.inputEl.disabled = disabled;
         for (const dropdown of dropdowns) dropdown.setDisabled(disabled);
         for (const [key, toggle] of toggles) toggle.setDisabled(disabled || modes[key] === "pa");
+        for (const [key, row] of confirmationRows) row.hidden = modes[key] === "pa";
         saveButton.setDisabled(disabled || needsConfirmation());
         deleteButton.setDisabled(disabled || !normalizeGhostSettings(host.getSettings()).siteUrl);
         if (!disabled) feedback.textContent = needsConfirmation() ? t("plugin.ghost.settings.compatibilityRequired") : "";
@@ -252,10 +271,17 @@ export function renderGhostPublishingSettings(container: HTMLElement, host: Ghos
 
     updateControls();
     void refreshKeyStatus();
-    return () => {
+    const clearSensitiveDraft = () => {
+        if (!alive) return;
+        adminKey = "";
+        keyInput.setValue("");
+    };
+    const dispose = () => {
         alive = false;
         adminKey = "";
         keyInput.setValue("");
         updateControls();
     };
+    dispose.clearSensitiveDraft = clearSensitiveDraft;
+    return dispose;
 }

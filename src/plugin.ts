@@ -40,9 +40,9 @@ import { createObsidianNoteImageHost } from "./ai-services/operations/obsidian-n
 import { VSS } from './vss'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeConfirmedMemoryCount, isMemoryExtractionConsentConfirmed } from './settings'
 import { LocalGraph } from './local-graph';
-import { GraphOptionsModal, type GraphOptions } from './settings/graph-options-modal';
+import { GraphOptionsModal, type GraphOptionsPatch } from './settings/graph-options-modal';
+import type { FeaturedImageDefaultsPatch } from './settings/featured-image-options-modal';
 import { FeaturedImageOptionsModal, type FeaturedImageOptionsModalHost } from './settings/featured-image-options-modal';
-import type { FeaturedImageDefaults } from './ai-services/featured-image-options';
 import type { ImageGenerationConnection } from './ai-services/image-generation-connection';
 import { GhostPublishingIntegration } from './ghost-publishing/host-integration';
 import { TagAppearanceIntegration } from './tag-appearance/integration';
@@ -1377,6 +1377,7 @@ export class PluginManager extends Plugin {
         isDesktop: () => Platform.isDesktop,
         createMutationObserver: (callback) => new MutationObserver(callback),
         getObservedBody: () => getPlatformDocument().body,
+        getStartupDocument: () => this.app.workspace.getActiveViewOfType(ItemView)?.containerEl.ownerDocument,
         setTimer: (callback, ms) => setPlatformTimeout(callback, ms),
         clearTimer: clearPlatformTimeout,
         log: (message, ...args) => this.log(message, ...args),
@@ -7873,8 +7874,12 @@ export class PluginManager extends Plugin {
         return modal;
     }
 
-    async saveGraphOptions(options: GraphOptions): Promise<void> {
+    async saveGraphOptions(options: GraphOptionsPatch): Promise<void> {
         await this.settingsPersistence.saveGraphOptions(options);
+    }
+
+    applyGraphOptionsToOpenGraphs(): Promise<void> {
+        return this.localGraphIntegration.applyOptionsToOpenGraphs();
     }
 
     openFeaturedImageOptions(): Modal | null {
@@ -7889,7 +7894,7 @@ export class PluginManager extends Plugin {
         return modal;
     }
 
-    async saveFeaturedImageDefaults(options: FeaturedImageDefaults): Promise<void> {
+    async saveFeaturedImageDefaults(options: FeaturedImageDefaultsPatch): Promise<void> {
         await this.settingsPersistence.saveFeaturedImageDefaults(options);
     }
 

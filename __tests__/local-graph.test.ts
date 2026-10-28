@@ -8,6 +8,7 @@ jest.mock('obsidian', () => ({
 }));
 
 import { LocalGraph, type LocalGraphHost } from '../src/local-graph';
+import { ViewResize, ViewType } from '../src/view';
 
 const pluginColorGroup = {
     query: 'path:/',
@@ -59,10 +60,6 @@ const createHarness = ({
                 showNeighbor: true,
                 collapse: false,
                 autoColors: false,
-                resizeStyle: {
-                    width: 550,
-                    height: 500,
-                },
             },
             enableGraphColors: false,
             colorGroups: [pluginColorGroup],
@@ -79,6 +76,28 @@ const createHarness = ({
         openLocalGraph,
     };
 };
+
+function createHoverTarget(viewport: { width: number; height: number }, containsGraph = true) {
+    const styles: Record<string, string> = {};
+    const cssProperties: Record<string, string> = {};
+    const classes: string[] = [];
+    const target = {
+        isConnected: true,
+        querySelector: jest.fn((selector: string) => (
+            containsGraph && selector.includes('localgraph') ? { tagName: 'div' } : null
+        )),
+        ownerDocument: {
+            defaultView: {
+                innerWidth: viewport.width,
+                innerHeight: viewport.height,
+            },
+        },
+        setCssStyles: jest.fn((next: Record<string, string>) => Object.assign(styles, next)),
+        setCssProps: jest.fn((next: Record<string, string>) => Object.assign(cssProperties, next)),
+        addClass: jest.fn((value: string) => classes.push(value)),
+    };
+    return { target, styles, cssProperties, classes };
+}
 
 describe('LocalGraph', () => {
     it('opens a local graph when the vault has no global graph config yet', async () => {
@@ -252,5 +271,47 @@ describe('LocalGraph', () => {
         expect(settled).not.toHaveBeenCalled();
         finish();
         await expect(applying).rejects.toBe(failure);
+    });
+});
+
+describe('ViewResize', () => {
+    it.each([
+        [{ width: 1200, height: 900 }, { width: '550px', height: '500px', left: '325px', top: '200px' }],
+        [{ width: 320, height: 420 }, { width: '288px', height: '388px', left: '16px', top: '16px' }],
+        [{ width: 40, height: 50 }, { width: '36px', height: '45px', left: '2px', top: '2.5px' }],
+    ])('fits a new hover graph to its owning %p viewport', async (viewport, expected) => {
+        const { plugin } = createHarness();
+        (plugin.settings.localGraph as unknown as { resizeStyle?: unknown }).resizeStyle = {
+            width: 2400,
+            height: 50,
+        };
+        const owner = new ViewResize(plugin, ViewType.LocalGraphView);
+        const hover = createHoverTarget(viewport);
+
+        await owner.resize(hover.target as unknown as HTMLElement);
+
+        expect(hover.styles).toEqual(expect.objectContaining(expected));
+        expect(hover.cssProperties).toEqual({ '--resize-popover-width': expected.width });
+        expect(hover.classes).toContain('resize-popover-width');
+        expect(owner.resized).toBe(true);
+    });
+
+    it('resizes each matching new target and leaves unrelated hovers untouched', async () => {
+        const { plugin } = createHarness();
+        const owner = new ViewResize(plugin, ViewType.LocalGraphView);
+        const first = createHoverTarget({ width: 1200, height: 900 });
+        const second = createHoverTarget({ width: 320, height: 420 });
+        const unrelated = createHoverTarget({ width: 1200, height: 900 }, false);
+
+        await owner.resize(first.target as unknown as HTMLElement);
+        await owner.resize(second.target as unknown as HTMLElement);
+        await owner.resize(unrelated.target as unknown as HTMLElement);
+
+        expect(first.target.setCssStyles).toHaveBeenCalledTimes(1);
+        expect(second.target.setCssStyles).toHaveBeenCalledWith(expect.objectContaining({
+            width: '288px',
+            height: '388px',
+        }));
+        expect(unrelated.target.setCssStyles).not.toHaveBeenCalled();
     });
 });

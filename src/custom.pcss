@@ -3904,6 +3904,64 @@ body.is-mobile .llm-view.is-compact .llm-input textarea {
 	outline-offset: -2px;
 }
 
+.pa-settings-group-summary__info {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+	flex: 1;
+}
+
+.pa-settings-group-summary__name {
+	color: var(--text-normal);
+}
+
+.pa-settings-group-summary__desc {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-weight: var(--font-normal);
+	line-height: 1.4;
+	overflow-wrap: anywhere;
+}
+
+.pa-settings-detail-page {
+	min-width: 0;
+}
+
+.pa-settings-detail-page__back {
+	appearance: none;
+	align-items: center;
+	background: transparent;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	box-sizing: border-box;
+	color: var(--text-normal);
+	cursor: pointer;
+	display: inline-flex;
+	gap: 6px;
+	justify-content: center;
+	margin-bottom: 14px;
+	min-height: 44px;
+	padding: 6px 12px;
+	max-width: 100%;
+	text-align: start;
+}
+
+.pa-settings-detail-page__back::before {
+	color: var(--text-muted);
+	content: "‹";
+	font-size: 1.2em;
+	line-height: 1;
+}
+
+.pa-settings-detail-page__back:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 2px;
+}
+
+.pa-settings-detail-page__panel {
+	min-width: 0;
+}
+
 .pa-settings-group__body {
 	box-sizing: border-box;
 	min-width: 0;
@@ -3940,6 +3998,14 @@ body.is-mobile .pa-settings-group-summary {
 .pa-settings-section-desc,
 .pa-settings-section-desc-sm { font-size: var(--font-ui-small); }
 .pa-settings-section-desc-md { font-size: var(--font-ui-medium); }
+
+.pa-settings-memory-preference-status {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin: -8px 0 12px;
+	max-width: 72ch;
+	overflow-wrap: anywhere;
+}
 
 .pa-memory-control-center {
 	border-bottom: 1px solid var(--background-modifier-border);
@@ -4680,6 +4746,18 @@ body.is-mobile .pa-settings-tab .setting-item.pa-setting-layout .setting-item-co
 body.is-mobile .pa-settings-tab .setting-item.pa-setting-layout .setting-item-control select,
 body.is-mobile .pa-settings-tab .setting-item.pa-setting-layout .setting-item-control input:not([type="checkbox"]) {
 	min-height: 44px;
+}
+
+body.is-mobile .pa-settings-tab .setting-item.pa-setting-layout .setting-item-control input:not([type="checkbox"]):not([type="range"]):not([type="color"]),
+body.is-mobile .pa-settings-tab .setting-item.pa-setting-layout .setting-item-control textarea,
+body.is-mobile .pa-settings-tab .setting-item.pa-setting-layout .setting-item-control select,
+body.is-mobile .pa-graph-options__field input:not([type="checkbox"]):not([type="range"]):not([type="color"]),
+body.is-mobile .pa-graph-options__field textarea,
+body.is-mobile .pa-graph-options__field select,
+body.is-mobile .pa-featured-image-options__field input:not([type="checkbox"]):not([type="range"]):not([type="color"]),
+body.is-mobile .pa-featured-image-options__field textarea,
+body.is-mobile .pa-featured-image-options__field select {
+	font-size: max(16px, var(--font-ui-medium));
 }
 
 body.is-mobile .pa-settings-tab .setting-item.pa-setting-layout--compact .setting-item-control {

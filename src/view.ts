@@ -1,7 +1,4 @@
-/* Copyright 2023 edonyzpc */
-
 import type { PluginManagerSettings } from "./settings";
-import { getPlatformDocument, getPlatformWindow } from "./platform-dom";
 
 export enum ViewType {
     LocalGraphView,
@@ -12,63 +9,55 @@ export interface ViewResizeHost {
     log(message: string, ...args: unknown[]): void;
 }
 
+const LOCAL_GRAPH_MAX_WIDTH = 550;
+const LOCAL_GRAPH_MAX_HEIGHT = 500;
+const LOCAL_GRAPH_DESKTOP_MARGIN = 16;
+
+/** Fit one newly created hover graph to the window that owns it. */
 export class ViewResize<THost extends ViewResizeHost = ViewResizeHost> {
-    resized: boolean;
+    resized = false;
     log: (message: string, ...args: unknown[]) => void;
     plugin: THost;
     private viewType: ViewType;
-    private viewDataType = {
-        localGraph: "localgraph",
-    }
 
     constructor(plugin: THost, type: ViewType) {
         this.resized = false;
-        this.log = (message: string, ...args: unknown[]) => plugin.log(message, ...args);
+        this.log = (message, ...args) => plugin.log(message, ...args);
         this.plugin = plugin;
         this.viewType = type;
     }
 
-    async resize(): Promise<void> {
-        if (this.resized) return;
-        const { localGraph } = this.plugin.settings;
-        let width: number, height: number, left: number, top: number, dataType: string;
-        const win = getPlatformWindow();
-        const doc = getPlatformDocument();
-        const maxWidth = win.innerWidth;
-        const maxHeight = win.innerHeight;
+    async resize(candidate: HTMLElement): Promise<void> {
+        if (this.viewType !== ViewType.LocalGraphView) return;
+        if (candidate.querySelector('[data-type="localgraph"]') === null) return;
 
-        switch (this.viewType) {
-            case ViewType.LocalGraphView:
-                width = localGraph.resizeStyle.width;
-                height = localGraph.resizeStyle.height;
-                top = maxHeight / 2 - height / 2;
-                left = maxWidth / 2 - width / 2;
-                top = top + (10 + Math.random() * 100);
-                left = left + (10 + Math.random() * 100);
-                dataType = this.viewDataType.localGraph;
-                break;
-        }
-        // resize the popover
-        const hovers = doc.querySelectorAll("body .popover.hover-editor");
-        hovers.forEach((hover) => {
-            this.log("iterating hovers...");
-            if (!hover.instanceOf(HTMLElement)) return;
-            if (hover.querySelector(`[data-type="${dataType}"]`)) {
-                this.log("setting hover editor attribute...");
-                // add some offset to show multiple views
-                hover.setCssStyles({
-                    height: `${height}px`,
-                    width: `${width}px`,
-                    top: `${top}px`,
-                    left: `${left}px`,
-                    cursor: "move",
-                });
-                // override `--popover-width` which is apply in style of `.popover-content`
-                // and keep it is the same with hover width attribute
-                doc.body.setCssProps({ '--resize-popover-width': `${width}px` });
-                hover.addClass("resize-popover-width");
-                this.resized = true;
-            }
+        const doc = candidate.ownerDocument;
+        const win = doc?.defaultView;
+        const viewportWidth = win?.innerWidth ?? 0;
+        const viewportHeight = win?.innerHeight ?? 0;
+        if (!win || viewportWidth <= 0 || viewportHeight <= 0) return;
+
+        // At very small window sizes, a 16px margin would consume too much of
+        // the viewport. Five percent keeps a positive available area without
+        // inventing a separate minimum-window layout mode.
+        const marginX = Math.min(LOCAL_GRAPH_DESKTOP_MARGIN, viewportWidth * 0.05);
+        const marginY = Math.min(LOCAL_GRAPH_DESKTOP_MARGIN, viewportHeight * 0.05);
+        const width = Math.min(LOCAL_GRAPH_MAX_WIDTH, viewportWidth - marginX * 2);
+        const height = Math.min(LOCAL_GRAPH_MAX_HEIGHT, viewportHeight - marginY * 2);
+        if (width <= 0 || height <= 0) return;
+        const left = (viewportWidth - width) / 2;
+        const top = (viewportHeight - height) / 2;
+
+        this.log("fitting new hover local graph", { width, height });
+        candidate.setCssStyles({
+            width: `${width}px`,
+            height: `${height}px`,
+            left: `${left}px`,
+            top: `${top}px`,
+            cursor: "move",
         });
+        candidate.setCssProps({ "--resize-popover-width": `${width}px` });
+        candidate.addClass("resize-popover-width");
+        this.resized = true;
     }
 }

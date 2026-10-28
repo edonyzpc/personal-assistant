@@ -146,7 +146,7 @@
     "pagelet.settings.excludedFolders.desc": "逗号分隔的目录路径，排除在审阅和后台审阅准备之外（例如 private, drafts）。",
     "pagelet.settings.excludedTags.name": "排除标签",
     "pagelet.settings.excludedTags.desc": "逗号分隔的标签，排除在审阅之外（例如 #private, #no-ai, #no-review）。",
-    "pagelet.settings.excludedPatterns.name": "排除路径模式",
+    "pagelet.settings.excludedPatterns.name": "路径包含这些文字",
     "pagelet.settings.excludedPatterns.desc": "逗号分隔的路径子串，排除匹配的文件（例如 draft, wip）。",
 
     "pagelet.settings.quietHours.heading": "静默时段",

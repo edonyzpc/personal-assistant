@@ -1,10 +1,17 @@
 # Simple Settings Product Spec
 
 Document status: Approved
-Updated: 2026-09-12
+Updated: 2026-10-28
 Work item: B-106
 Decision: [DEC-033 — Simple Settings And Unified Defaults](../decisions/dec-033-simple-settings-and-unified-defaults.md)
 Authority: 设置简化的用户行为、功能完整性、默认策略与旧选项失效边界；B-135有日期的默认学习修订已交付，B-106原范围保留其历史验收身份。
+
+## Scoped Successor — 2026-10-28
+
+[DEC-076](../decisions/dec-076-settings-ux-and-adaptive-graph.md) 与
+[B-191 Settings UX Spec](./pa-settings-ux-product-spec.md) 接续配置呈现、详情导航、
+图谱初始尺寸及双语／双端交互设计；其余有效偏好、默认策略、来源和权限保护继续有效。
+本次仅形成设计与计划，未把新预览视为生产行为或重开 B-106 的历史交付。
 
 ## Scoped Successor — 2026-09-09
 

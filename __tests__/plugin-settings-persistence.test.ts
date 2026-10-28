@@ -1,10 +1,15 @@
 import { describe, expect, it, jest } from "@jest/globals";
+import type { App } from "obsidian";
 
 import {
     SettingsPersistence,
     type SettingsPersistenceDependencies,
 } from "../src/plugin/settings-persistence";
+import { FeaturedImageOptionsModal } from "../src/settings/featured-image-options-modal";
+import { GraphOptionsModal, type GraphOptions } from "../src/settings/graph-options-modal";
+import { pluginT } from "../src/locales/plugin";
 import { DEFAULT_SETTINGS, type PluginManagerSettings } from "../src/settings";
+import { DomStubNode, findAllByTag } from "./helpers/dom-stub";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
     let resolve!: () => void;
@@ -16,7 +21,7 @@ function cloneSettings(value: unknown): PluginManagerSettings {
     return JSON.parse(JSON.stringify(value)) as PluginManagerSettings;
 }
 
-function createOwner(initialData: Record<string, unknown>, overrides: Partial<SettingsPersistenceDependencies> = {}): SettingsPersistence {
+function createOwner(initialData: object, overrides: Partial<SettingsPersistenceDependencies> = {}): SettingsPersistence {
     let persisted = JSON.parse(JSON.stringify(initialData)) as Record<string, unknown>;
     const dependencies: SettingsPersistenceDependencies = {
         loadData: jest.fn(async () => JSON.parse(JSON.stringify(persisted)) as Record<string, unknown>),
@@ -60,6 +65,95 @@ function createOwner(initialData: Record<string, unknown>, overrides: Partial<Se
     const owner = new SettingsPersistence(dependencies);
     owner.setCurrentSettingsForCompatibility(cloneSettings(DEFAULT_SETTINGS));
     return owner;
+}
+
+class ModalElement extends DomStubNode {
+    onclick?: () => void | Promise<void>;
+    onchange?: () => void;
+    oninput?: () => void;
+    focus = jest.fn();
+
+    addClass(value: string): void {
+        this.classList.add(value);
+    }
+
+    empty(): void {
+        this.textContent = "";
+    }
+
+    createEl(tag: string, options: { cls?: string; text?: string; attr?: Record<string, string> } = {}): ModalElement {
+        const element = this.appendChild(new ModalElement(tag)) as ModalElement;
+        if (options.cls) element.addClass(options.cls);
+        if (options.text) element.setText(options.text);
+        for (const [key, value] of Object.entries(options.attr ?? {})) element.setAttribute(key, value);
+        return element;
+    }
+
+    createDiv(options?: Parameters<ModalElement["createEl"]>[1]): ModalElement {
+        return this.createEl("div", options);
+    }
+
+    createSpan(options?: Parameters<ModalElement["createEl"]>[1]): ModalElement {
+        return this.createEl("span", options);
+    }
+
+    click(): void | Promise<void> {
+        for (let node: DomStubNode | null = this; node; node = node.parentElement) {
+            if (node.disabled || node.hidden) return;
+        }
+        return this.onclick?.();
+    }
+}
+
+function modalButton(root: ModalElement, text: string): ModalElement {
+    const button = (findAllByTag(root, "button") as ModalElement[]).find((node) => node.textContent === text);
+    if (!button) throw new Error(`Missing modal button: ${text}`);
+    return button;
+}
+
+function modalControl(root: ModalElement, ariaLabel: string): ModalElement {
+    const controls = [
+        ...(findAllByTag(root, "input") as ModalElement[]),
+        ...(findAllByTag(root, "select") as ModalElement[]),
+    ];
+    const control = controls.find((node) => node.getAttribute("aria-label") === ariaLabel);
+    if (!control) throw new Error(`Missing modal control: ${ariaLabel}`);
+    return control;
+}
+
+function mountFeaturedImageModal(owner: SettingsPersistence): { modal: FeaturedImageOptionsModal; root: ModalElement } {
+    const modal = new FeaturedImageOptionsModal({} as App, {
+        mode: "edit",
+        defaults: {
+            featuredImageModel: owner.currentSettings.featuredImageModel,
+            numFeaturedImages: owner.currentSettings.numFeaturedImages,
+            featuredImagePath: owner.currentSettings.featuredImagePath,
+        },
+        saveDefaults: (options) => owner.saveFeaturedImageDefaults(options),
+    });
+    const root = new ModalElement("div");
+    Object.assign(modal, { contentEl: root, titleEl: new ModalElement("h2") });
+    modal.close = jest.fn(() => modal.onClose());
+    modal.onOpen();
+    return { modal, root };
+}
+
+function mountGraphModal(owner: SettingsPersistence): { modal: GraphOptionsModal; root: ModalElement } {
+    const readOptions = (): GraphOptions => ({
+        localGraph: owner.currentSettings.localGraph,
+        enableGraphColors: owner.currentSettings.enableGraphColors,
+        colorGroups: owner.currentSettings.colorGroups,
+    });
+    const modal = new GraphOptionsModal({} as App, {
+        readOptions,
+        saveOptions: (options) => owner.saveGraphOptions(options),
+        applyOptions: async () => undefined,
+    });
+    const root = new ModalElement("div");
+    Object.assign(modal, { contentEl: root, titleEl: new ModalElement("h2") });
+    modal.close = jest.fn(() => modal.onClose());
+    modal.onOpen();
+    return { modal, root };
 }
 
 describe("B-143 settings persistence owner", () => {
@@ -139,7 +233,7 @@ describe("B-143 settings persistence owner", () => {
     });
 
     it("ignores retired Operations audit keys without saving just to remove them", async () => {
-        const saveData = jest.fn(async () => undefined);
+        const saveData = jest.fn(async (_data: unknown) => undefined);
         const owner = createOwner({
             operationsAgentEnabled: true,
             operationsAuditIncludeContent: true,
@@ -232,5 +326,91 @@ describe("B-143 settings persistence owner", () => {
         await expect(first).rejects.toBe(failed);
         await expect(second).resolves.toBe("continued");
         await expect(owner.drainWrites()).resolves.toBeUndefined();
+    });
+
+    it("keeps a newer featured-image path when an older model draft saves later", async () => {
+        const initial = cloneSettings(DEFAULT_SETTINGS);
+        initial.featuredImageModel = "wan2.7-image";
+        initial.numFeaturedImages = 1;
+        initial.featuredImagePath = "images/old";
+        const owner = createOwner(initial);
+        await owner.loadSettings();
+        const staleModelDraft = mountFeaturedImageModal(owner);
+        const livePathEditor = mountFeaturedImageModal(owner);
+
+        const model = modalControl(staleModelDraft.root, pluginT("plugin.settings.featuredImage.model.name"));
+        model.value = "wan2.7-image-pro";
+        const path = modalControl(livePathEditor.root, pluginT("plugin.settings.featuredImage.path.name"));
+        path.value = "attachments/live";
+        await modalButton(livePathEditor.root, pluginT("plugin.settings.featuredImage.options.save")).click();
+        await modalButton(staleModelDraft.root, pluginT("plugin.settings.featuredImage.options.save")).click();
+
+        expect(owner.currentSettings).toMatchObject({
+            featuredImageModel: "wan2.7-image-pro",
+            numFeaturedImages: 1,
+            featuredImagePath: "attachments/live",
+        });
+    });
+
+    it("removes retired graph dimensions from the next canonical save without dropping legal options", async () => {
+        const initial = cloneSettings(DEFAULT_SETTINGS);
+        initial.localGraph = { ...initial.localGraph, type: "legacy-tab", depth: 3 } as typeof initial.localGraph;
+        const seedOwner = createOwner(initial);
+        await seedOwner.loadSettings();
+        await seedOwner.migrateSettings();
+        const migrated = cloneSettings(seedOwner.currentSettings);
+
+        const migratedSaveData = jest.fn(async (_data: unknown) => undefined);
+        const migratedOwner = createOwner(migrated, { saveData: migratedSaveData });
+        await migratedOwner.loadSettings();
+        await migratedOwner.migrateSettings();
+        expect(migratedSaveData).not.toHaveBeenCalled();
+
+        const retiredDimensionsSaveData = jest.fn(async (_data: unknown) => undefined);
+        const owner = createOwner({
+            ...migrated,
+            localGraph: {
+                ...migrated.localGraph,
+                resizeStyle: { width: 2400, height: 300 },
+            } as typeof migrated.localGraph,
+        }, { saveData: retiredDimensionsSaveData });
+        await owner.loadSettings();
+        await owner.migrateSettings();
+        expect(retiredDimensionsSaveData).not.toHaveBeenCalled();
+
+        await owner.saveGraphOptions({ localGraph: { depth: 4 } });
+
+        const persisted = retiredDimensionsSaveData.mock.calls.at(-1)?.[0] as PluginManagerSettings;
+        expect(persisted.localGraph).toMatchObject({ type: "legacy-tab", depth: 4 });
+        expect(persisted.localGraph).not.toHaveProperty("resizeStyle");
+    });
+
+    it("keeps newer graph colors and opening choices when an older depth draft saves later", async () => {
+        const initial = cloneSettings(DEFAULT_SETTINGS);
+        initial.localGraph = { ...initial.localGraph, type: "legacy-tab", depth: 3, autoColors: false };
+        initial.enableGraphColors = true;
+        initial.colorGroups = [{ query: "old", color: { a: 0.5, rgb: 100 } }];
+        const owner = createOwner(initial);
+        await owner.loadSettings();
+        const staleDepthDraft = mountGraphModal(owner);
+        const liveOptionsEditor = mountGraphModal(owner);
+
+        const depth = modalControl(staleDepthDraft.root, pluginT("plugin.settings.graph.depth.name"));
+        depth.value = "4";
+        depth.oninput?.();
+        const opening = modalControl(liveOptionsEditor.root, pluginT("plugin.settings.graph.options.openAs"));
+        opening.value = "popover";
+        opening.onchange?.();
+        const colorRule = modalControl(
+            liveOptionsEditor.root,
+            pluginT("plugin.settings.graph.options.query", "en", { number: 1 }),
+        );
+        colorRule.value = "live";
+        colorRule.oninput?.();
+        await modalButton(liveOptionsEditor.root, pluginT("plugin.settings.graph.options.save")).click();
+        await modalButton(staleDepthDraft.root, pluginT("plugin.settings.graph.options.save")).click();
+
+        expect(owner.currentSettings.localGraph).toMatchObject({ depth: 4, type: "popover", autoColors: false });
+        expect(owner.currentSettings.colorGroups).toEqual([{ query: "live", color: { a: 0.5, rgb: 100 } }]);
     });
 });

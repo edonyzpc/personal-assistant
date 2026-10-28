@@ -146,7 +146,7 @@
     "pagelet.settings.excludedFolders.desc": "Comma-separated folder paths to exclude from review and background preparation (e.g. private, drafts).",
     "pagelet.settings.excludedTags.name": "Excluded tags",
     "pagelet.settings.excludedTags.desc": "Comma-separated tags to exclude (e.g. #private, #no-ai, #no-review).",
-    "pagelet.settings.excludedPatterns.name": "Excluded patterns",
+    "pagelet.settings.excludedPatterns.name": "Paths containing these text fragments",
     "pagelet.settings.excludedPatterns.desc": "Comma-separated path substrings to exclude (e.g. draft, wip).",
 
     "pagelet.settings.quietHours.heading": "Quiet Hours",

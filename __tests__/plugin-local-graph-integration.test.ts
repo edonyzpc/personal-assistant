@@ -7,7 +7,7 @@ interface FakeGraph extends LocalGraph {
     startup: jest.Mock<() => Promise<void>>;
     updateGraphColors: jest.Mock<() => Promise<void>>;
     applyOptionsToOpenGraphs: jest.Mock<() => Promise<void>>;
-    resize: jest.Mock<() => Promise<void>>;
+    resize: jest.Mock<(candidate: HTMLElement) => Promise<void>>;
 }
 
 interface FakeMutationObserver {
@@ -20,6 +20,7 @@ interface HoverNode {
     instanceOf: jest.Mock<(candidate: new () => unknown) => boolean>;
     matches: jest.Mock<(selector: string) => boolean>;
     querySelector: jest.Mock<(selector: string) => Element | null>;
+    isConnected?: boolean;
 }
 
 function createGraph(): FakeGraph {
@@ -27,7 +28,7 @@ function createGraph(): FakeGraph {
         startup: jest.fn(async () => undefined),
         updateGraphColors: jest.fn(async () => undefined),
         applyOptionsToOpenGraphs: jest.fn(async () => undefined),
-        resize: jest.fn(async () => undefined),
+        resize: jest.fn(async (_candidate: HTMLElement) => undefined),
     } as unknown as FakeGraph;
 }
 
@@ -47,7 +48,7 @@ afterAll(() => {
     });
 });
 
-function createHarness({ isDesktop = true } = {}) {
+function createHarness({ isDesktop = true, startupBody }: { isDesktop?: boolean; startupBody?: Element } = {}) {
     const graph = createGraph();
     const createGraphFactory = jest.fn(() => graph);
     const observers: FakeMutationObserver[] = [];
@@ -68,6 +69,7 @@ function createHarness({ isDesktop = true } = {}) {
             return observer as unknown as MutationObserver;
         },
         getObservedBody: () => body,
+        getStartupDocument: () => (startupBody ? { body: startupBody } as Document : undefined),
         setTimer: (callback, ms) => setTimer(callback, ms),
         clearTimer,
         log,
@@ -80,15 +82,30 @@ function createNode({
     isHTMLElement = true,
     matches = false,
     descendant = false,
+    containsLocalGraph = true,
 }: {
     isHTMLElement?: boolean;
     matches?: boolean;
     descendant?: boolean;
+    containsLocalGraph?: boolean;
 } = {}): HoverNode {
+    const localGraph = { isConnected: true } as unknown as Element;
+    const hover: HoverNode = {
+        instanceOf: jest.fn(() => true),
+        matches: jest.fn(() => true),
+        querySelector: jest.fn((selector: string) => (
+            containsLocalGraph && selector.includes("localgraph") ? localGraph : null
+        )),
+        isConnected: true,
+    };
     return {
         instanceOf: jest.fn(() => isHTMLElement),
         matches: jest.fn(() => matches),
-        querySelector: jest.fn(() => (descendant ? ({} as Element) : null)),
+        querySelector: jest.fn((selector: string) => {
+            if (containsLocalGraph && selector.includes("localgraph")) return localGraph;
+            return descendant && selector.includes("hover-editor") ? hover as unknown as Element : null;
+        }),
+        isConnected: true,
     } as unknown as HoverNode;
 }
 
@@ -128,13 +145,37 @@ describe("LocalGraphIntegration", () => {
         expect(mobile.observers).toHaveLength(0);
     });
 
+    it("starts a mobile graph without observing its non-null startup document", async () => {
+        const mobileBody = {} as Element;
+        const harness = createHarness({ isDesktop: false, startupBody: mobileBody });
+
+        await harness.owner.startup();
+
+        expect(harness.observers).toHaveLength(0);
+        expect(harness.graph.startup).toHaveBeenCalledTimes(1);
+    });
+
+    it("observes the document that starts a later hover graph after initial setup", async () => {
+        const secondBody = {} as Element;
+        const harness = createHarness({ startupBody: secondBody });
+        harness.owner.setupObserver();
+
+        await harness.owner.startup();
+
+        expect(harness.observers).toHaveLength(1);
+        expect(harness.observers[0]?.observe).toHaveBeenNthCalledWith(1, harness.body, { childList: true });
+        expect(harness.observers[0]?.observe).toHaveBeenNthCalledWith(2, secondBody, { childList: true });
+        expect(harness.graph.startup).toHaveBeenCalledTimes(1);
+    });
+
     it("matches direct and descendant hover editors and coalesces their resize debounce", () => {
         const harness = createHarness();
         harness.owner.setupObserver();
         const observer = harness.observers[0]!;
         harness.setTimer.mockImplementationOnce(() => 1 as PlatformTimeoutHandle);
 
-        observer.callback([mutation(createNode({ matches: true }))], {} as MutationObserver);
+        const direct = createNode({ matches: true });
+        observer.callback([mutation(direct)], {} as MutationObserver);
         expect(harness.setTimer).toHaveBeenNthCalledWith(1, expect.any(Function), 150);
 
         observer.callback([
@@ -147,7 +188,8 @@ describe("LocalGraphIntegration", () => {
 
         const timerCallback = harness.setTimer.mock.calls[1]?.[0];
         timerCallback?.();
-        expect(harness.graph.resize).toHaveBeenCalledTimes(1);
+        expect(harness.graph.resize).toHaveBeenCalledTimes(2);
+        expect(harness.graph.resize.mock.calls.every(([candidate]) => candidate !== undefined)).toBe(true);
 
         harness.setTimer.mockImplementationOnce(() => 2 as PlatformTimeoutHandle);
         observer.callback([mutation(createNode({ matches: true }))], {} as MutationObserver);

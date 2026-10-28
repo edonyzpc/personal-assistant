@@ -12,6 +12,7 @@ export interface LocalGraphIntegrationDependencies {
     isDesktop(): boolean;
     createMutationObserver(callback: MutationCallback): MutationObserver;
     getObservedBody(): Element;
+    getStartupDocument?(): Document | undefined;
     setTimer(callback: () => void, ms: number): PlatformTimeoutHandle;
     clearTimer(handle: PlatformTimeoutHandle): void;
     log(message: string, ...args: unknown[]): void;
@@ -24,10 +25,15 @@ export class LocalGraphIntegration {
     private graph: LocalGraph | null = null;
     private observer: MutationObserver | null = null;
     private resizeTimer: PlatformTimeoutHandle | null = null;
+    private readonly resizeCandidates: HTMLElement[] = [];
 
     constructor(private readonly dependencies: LocalGraphIntegrationDependencies) {}
 
     startup(): Promise<void> {
+        const startupDocument = this.dependencies.getStartupDocument?.();
+        if (this.dependencies.isDesktop() && startupDocument?.body) {
+            this.observeBody(startupDocument.body);
+        }
         return this.getGraph().startup();
     }
 
@@ -40,14 +46,10 @@ export class LocalGraphIntegration {
     }
 
     setupObserver(): void {
-        if (!this.dependencies.isDesktop() || this.observer) return;
+        if (!this.dependencies.isDesktop()) return;
 
-        this.observer = this.dependencies.createMutationObserver((mutations) => {
-            this.handleMutations(mutations);
-        });
-        this.observer.observe(this.dependencies.getObservedBody(), {
-            childList: true,
-        });
+        this.ensureObserver();
+        this.observeBody(this.dependencies.getObservedBody());
     }
 
     disposeObserver(): void {
@@ -59,6 +61,17 @@ export class LocalGraphIntegration {
         this.observer = null;
     }
 
+    private ensureObserver(): MutationObserver {
+        return (this.observer ??= this.dependencies.createMutationObserver((mutations) => {
+            this.handleMutations(mutations);
+        }));
+    }
+
+    private observeBody(body: Element): void {
+        const observer = this.ensureObserver();
+        observer.observe(body, { childList: true });
+    }
+
     private getGraph(): LocalGraph {
         return (this.graph ??= this.dependencies.createGraph());
     }
@@ -67,21 +80,23 @@ export class LocalGraphIntegration {
         for (const mutation of mutations) {
             for (const node of Array.from(mutation.addedNodes)) {
                 const candidate = node as unknown as HoverPopoverCandidate;
+                if (!candidate.instanceOf(HTMLElement)) continue;
+                const hover = candidate.matches(HOVER_POPOVER_SELECTOR)
+                    ? candidate as unknown as HTMLElement
+                    : candidate.querySelector(HOVER_POPOVER_SELECTOR);
                 if (
-                    candidate.instanceOf(HTMLElement)
-                    && (
-                        candidate.matches(HOVER_POPOVER_SELECTOR)
-                        || candidate.querySelector(HOVER_POPOVER_SELECTOR) !== null
-                    )
+                    hover
+                    && (hover as unknown as HoverPopoverCandidate).instanceOf(HTMLElement)
+                    && hover.querySelector('[data-type="localgraph"]') !== null
                 ) {
-                    this.scheduleHoverResize();
-                    return;
+                    this.scheduleHoverResize(hover as unknown as HTMLElement);
                 }
             }
         }
     }
 
-    private scheduleHoverResize(): void {
+    private scheduleHoverResize(candidate: HTMLElement): void {
+        if (!this.resizeCandidates.includes(candidate)) this.resizeCandidates.push(candidate);
         if (this.resizeTimer !== null) {
             this.dependencies.clearTimer(this.resizeTimer);
             this.resizeTimer = null;
@@ -89,9 +104,13 @@ export class LocalGraphIntegration {
         this.resizeTimer = this.dependencies.setTimer(() => {
             this.resizeTimer = null;
             if (!this.observer) return;
-            void this.getGraph().resize().catch((error) => {
-                this.dependencies.log("Failed to resize hover local graph", error);
-            });
+            const candidates = this.resizeCandidates.splice(0, this.resizeCandidates.length);
+            for (const current of candidates) {
+                if (!current.isConnected) continue;
+                void this.getGraph().resize(current).catch((error) => {
+                    this.dependencies.log("Failed to resize hover local graph", error);
+                });
+            }
         }, HOVER_RESIZE_DEBOUNCE_MS);
     }
 }

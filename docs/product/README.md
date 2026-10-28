@@ -89,6 +89,7 @@
 - [Unified Agent Task Execution](./specs/pa-unified-task-execution-product-spec.md)
 
 - [Simple Settings](./specs/pa-simple-settings-product-spec.md)
+- [Settings UX](./specs/pa-settings-ux-product-spec.md) — B-191：已确认预览的配置分层、真实状态、内部详情、图谱初始自适应及双语双端要求。
 - [Active Vault Indexer](./specs/pa-active-vault-indexer-product-spec.md)
 - [Data Boundary](./specs/pa-data-boundary-product-spec.md)
 - [Eval Harness](./specs/pa-eval-harness-product-spec.md)

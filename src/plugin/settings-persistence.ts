@@ -1,7 +1,7 @@
 import { normalizePath } from "obsidian";
 
 import { stableStringify } from "../ai-services/agent-utils";
-import type { FeaturedImageDefaults } from "../ai-services/featured-image-options";
+import type { FeaturedImageDefaultsPatch } from "../settings/featured-image-options-modal";
 import { withMemoryExternalOperationTimeout } from "../pa/memory-external-operation-timeout";
 import {
     DEFAULT_SETTINGS,
@@ -15,7 +15,7 @@ import {
     omitDeprecatedSimpleSettingsFields,
     type PluginManagerSettings,
 } from "../settings";
-import type { GraphOptions } from "../settings/graph-options-modal";
+import type { GraphOptionsPatch } from "../settings/graph-options-modal";
 import { normalizeReviewsFolder, type PageletReviewsFolderError } from "../settings/pagelet";
 import { normalizeStatisticsView } from "../stats/stats-store";
 import {
@@ -326,17 +326,29 @@ export class SettingsPersistence {
         if (saved) await this.notifySettingsChanged();
     }
 
-    async saveGraphOptions(options: GraphOptions): Promise<void> {
-        const requested = JSON.parse(JSON.stringify(options)) as GraphOptions;
+    async saveGraphOptions(options: GraphOptionsPatch): Promise<void> {
+        const requested = JSON.parse(JSON.stringify(options)) as GraphOptionsPatch;
         await this.enqueueWrite(async () => {
             if (this.dependencies.isUnloading()) throw new Error("Plugin is unloading");
-            await this.saveSettingsData({ ...this.settings, ...requested });
-            Object.assign(this.settings, requested);
+            const localGraph = requested.localGraph
+                ? { ...this.settings.localGraph, ...requested.localGraph }
+                : this.settings.localGraph;
+            const snapshot = {
+                ...this.settings,
+                ...requested,
+                localGraph,
+            };
+            await this.saveSettingsData(snapshot);
+            this.settings.localGraph = localGraph;
+            if (requested.enableGraphColors !== undefined) {
+                this.settings.enableGraphColors = requested.enableGraphColors;
+            }
+            if (requested.colorGroups !== undefined) this.settings.colorGroups = requested.colorGroups;
         });
         await this.notifySettingsChanged();
     }
 
-    async saveFeaturedImageDefaults(options: FeaturedImageDefaults): Promise<void> {
+    async saveFeaturedImageDefaults(options: FeaturedImageDefaultsPatch): Promise<void> {
         const requested = { ...options };
         await this.enqueueWrite(async () => {
             if (this.dependencies.isUnloading()) throw new Error("Plugin is unloading");

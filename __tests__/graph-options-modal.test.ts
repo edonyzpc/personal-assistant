@@ -1,7 +1,9 @@
 import { Notice, type App } from 'obsidian';
-import { GraphOptionsModal, type GraphOptions } from '../src/settings/graph-options-modal';
+import { GraphOptionsModal, mountGraphOptionsEditor, type GraphOptions } from '../src/settings/graph-options-modal';
 import { pluginT } from '../src/locales/plugin';
 import { DomStubNode, findAllByClass, findAllByTag } from './helpers/dom-stub';
+
+(jest.requireMock('obsidian') as { Platform: { isDesktop: boolean } }).Platform.isDesktop = true;
 
 class ModalElement extends DomStubNode {
     onclick?: () => void | Promise<void>;
@@ -54,7 +56,7 @@ function setup() {
     const persisted: GraphOptions = {
         localGraph: { type: 'legacy-tab', notice: 'Keep notice', depth: 9,
             showTags: true, showAttach: true, showNeighbor: false, collapse: false, autoColors: false,
-            resizeStyle: { width: 2400, height: 500 } },
+        },
         enableGraphColors: true,
         colorGroups: [
             { query: 'same', color: { a: 0.2, rgb: 100 } },
@@ -77,6 +79,22 @@ function setup() {
 }
 
 describe('GraphOptionsModal', () => {
+    it('hides desktop-only opening choices on mobile', async () => {
+        const { Platform } = jest.requireMock('obsidian') as { Platform: { isDesktop: boolean } };
+        const previous = Platform.isDesktop;
+        Platform.isDesktop = false;
+        const h = setup();
+        Platform.isDesktop = previous;
+
+        expect(h.root.textContent).not.toContain(pluginT('plugin.settings.graph.options.openAs'));
+        expect(h.root.textContent).not.toContain(pluginT('plugin.settings.graph.initialSize.desc'));
+        const autoColors = label(h.root, 'plugin.settings.graph.autoColors.name');
+        expect(autoColors.checked).toBe(false);
+        toggle(autoColors, true);
+        expect(autoColors.checked).toBe(true);
+        await h.cancel.click();
+    });
+
     it('opens and cancels a detached draft without saving or applying', async () => {
         const h = setup();
         const original = JSON.parse(JSON.stringify(h.persisted));
@@ -92,14 +110,14 @@ describe('GraphOptionsModal', () => {
         expect(h.root.children).toHaveLength(0);
     });
 
-    it('preserves all untouched legal values without clamping, including legacy type and dimensions', async () => {
+    it('closes an untouched draft without saving, applying, or exposing retired dimensions', async () => {
         const h = setup();
+        expect(nodes(h.root, 'input').some((node) => node.getAttribute('aria-label')
+            === pluginT('plugin.settings.graph.width'))).toBe(false);
         await h.save.click();
 
-        expect(h.saveOptions).toHaveBeenCalledWith(h.persisted);
-        expect(h.saveOptions.mock.calls[0][0]).not.toBe(h.persisted);
-        expect(h.saveOptions.mock.invocationCallOrder[0]).toBeLessThan(h.applyOptions.mock.invocationCallOrder[0]);
-        expect(h.applyOptions).toHaveBeenCalledTimes(1);
+        expect(h.saveOptions).not.toHaveBeenCalled();
+        expect(h.applyOptions).not.toHaveBeenCalled();
         expect(h.close).toHaveBeenCalledTimes(1);
     });
 
@@ -138,15 +156,14 @@ describe('GraphOptionsModal', () => {
         const type = label(h.root, 'plugin.settings.graph.options.openAs');
         type.value = 'popover';
         type.onchange?.();
-        input(label(h.root, 'plugin.settings.graph.width'), '800');
         toggle(label(h.root, 'plugin.settings.graph.autoColors.name'), true);
         await h.save.click();
 
         expect(h.saveOptions.mock.calls[0][0]).toMatchObject({
-            localGraph: { type: 'popover', resizeStyle: { width: 800, height: 500 }, autoColors: true },
-            enableGraphColors: false, colorGroups: h.persisted.colorGroups,
+            localGraph: { type: 'popover', autoColors: true },
+            enableGraphColors: false,
         });
-        expect(h.persisted.localGraph.resizeStyle.width).toBe(2400);
+        expect(h.saveOptions.mock.calls[0][0]).not.toHaveProperty('colorGroups');
     });
 
     it('keeps the draft after save failure and retries without applying unsaved choices', async () => {
@@ -166,8 +183,37 @@ describe('GraphOptionsModal', () => {
         expect(h.applyOptions).toHaveBeenCalledTimes(1);
     });
 
+    it('advances the saved baseline so a later reverse edit is not an empty patch', async () => {
+        const persisted: GraphOptions = {
+            localGraph: { type: 'tab', notice: 'Keep notice', depth: 2,
+                showTags: true, showAttach: true, showNeighbor: true, collapse: false, autoColors: false },
+            enableGraphColors: false,
+            colorGroups: [],
+        };
+        const saveOptions = jest.fn(async () => undefined);
+        const applyOptions = jest.fn(async () => undefined);
+        const root = new ModalElement('div');
+        const close = jest.fn();
+        mountGraphOptionsEditor(root as unknown as HTMLElement, {
+            readOptions: () => persisted,
+            saveOptions,
+            applyOptions,
+        }, { close });
+
+        input(label(root, 'plugin.settings.graph.depth.name'), '5');
+        await button(root, 'plugin.settings.graph.options.save').click();
+        expect(saveOptions).toHaveBeenCalledWith({ localGraph: { depth: 5 } });
+        expect(close).toHaveBeenCalledTimes(1);
+
+        input(label(root, 'plugin.settings.graph.depth.name'), '2');
+        await button(root, 'plugin.settings.graph.options.save').click();
+        expect(saveOptions).toHaveBeenLastCalledWith({ localGraph: { depth: 2 } });
+        expect(applyOptions).toHaveBeenCalledTimes(2);
+    });
+
     it('distinguishes successful persistence from failed live apply', async () => {
         const h = setup();
+        input(label(h.root, 'plugin.settings.graph.depth.name'), '5');
         h.applyOptions.mockRejectedValueOnce(new Error('closed leaf'));
         await h.save.click();
 
@@ -176,6 +222,10 @@ describe('GraphOptionsModal', () => {
         expect(h.status.textContent).not.toBe(pluginT('plugin.settings.graph.options.saveFailed'));
         expect(h.close).not.toHaveBeenCalled();
         expect(h.save.disabled).toBe(false);
+        await h.save.click();
+        expect(h.saveOptions).toHaveBeenCalledTimes(1);
+        expect(h.applyOptions).toHaveBeenCalledTimes(2);
+        expect(h.close).toHaveBeenCalledTimes(1);
     });
 
     it('locks duplicate submissions and edits until both save and apply finish', async () => {
@@ -184,12 +234,13 @@ describe('GraphOptionsModal', () => {
         const applied = deferred();
         h.saveOptions.mockImplementationOnce(() => saved.promise);
         h.applyOptions.mockImplementationOnce(() => applied.promise);
+        input(label(h.root, 'plugin.settings.graph.depth.name'), '5');
         const saving = h.save.click();
         await h.save.onclick?.();
         input(label(h.root, 'plugin.settings.graph.depth.name'), '2');
         expect(h.root.getAttribute('aria-busy')).toBe('true');
         expect(h.saveOptions).toHaveBeenCalledTimes(1);
-        expect(h.saveOptions.mock.calls[0][0].localGraph.depth).toBe(9);
+        expect(h.saveOptions.mock.calls[0][0].localGraph.depth).toBe(5);
         saved.resolve();
         await Promise.resolve();
         await h.save.onclick?.();
@@ -205,6 +256,7 @@ describe('GraphOptionsModal', () => {
         const pending = deferred();
         h.saveOptions.mockImplementationOnce(() => pending.promise);
         if (outcome === 'apply failure') h.applyOptions.mockRejectedValueOnce(new Error('leaf gone'));
+        input(label(h.root, 'plugin.settings.graph.depth.name'), '5');
         const saving = h.save.click();
         await h.cancel.click();
         const rootChange = jest.spyOn(h.root, 'setAttribute');
@@ -227,6 +279,7 @@ describe('GraphOptionsModal', () => {
         const h = setup();
         const pending = deferred();
         h.saveOptions.mockImplementationOnce(() => pending.promise);
+        input(label(h.root, 'plugin.settings.graph.depth.name'), '5');
         const saving = h.save.click();
         await h.cancel.click();
         h.modal.onOpen();

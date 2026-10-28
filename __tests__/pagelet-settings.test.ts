@@ -50,6 +50,7 @@ interface StubNode {
     disabled?: boolean;
     textContent?: string;
     children: StubNode[];
+    parentElement?: StubNode;
     createEl: (tag: string, options?: { text?: string; cls?: string }) => StubNode;
     createDiv: (options?: { text?: string; cls?: string }) => StubNode;
     createSpan: (options?: { text?: string; cls?: string }) => StubNode;
@@ -68,6 +69,7 @@ function makeStubNode(tagName: string): StubNode {
             const child = makeStubNode(tag);
             if (options?.text) child.text = options.text;
             if (options?.cls) child.cls = options.cls;
+            child.parentElement = this;
             this.children.push(child);
             return child;
         },
@@ -79,6 +81,15 @@ function makeStubNode(tagName: string): StubNode {
         },
     };
     return node;
+}
+
+function findDescendant(root: StubNode, predicate: (node: StubNode) => boolean): StubNode | undefined {
+    if (predicate(root)) return root;
+    for (const child of root.children) {
+        const found = findDescendant(child, predicate);
+        if (found) return found;
+    }
+    return undefined;
 }
 
 interface StubSetting {
@@ -1155,7 +1166,7 @@ describe("Pagelet settings renderers", () => {
             sourceExclusions: sourceExclusions as unknown as HTMLElement,
         }, host, factory, "en");
         expect(rows.slice(preferencesCount).map((row) => row.name)).toEqual([
-            "Reviews folder", "Excluded folders", "Excluded tags", "Excluded patterns",
+            "Reviews folder", "Excluded folders", "Excluded tags", "Paths containing these text fragments",
         ]);
         expect(rows.find((row) => row.name === "Reviews folder")?.parent).toBe(saveLocation);
         expect(rows.filter((row) => row.name?.startsWith("Excluded")).every((row) => row.parent === sourceExclusions)).toBe(true);
@@ -1174,7 +1185,7 @@ describe("Pagelet settings renderers", () => {
 
         expect(parent.children[0].text).toBe("Pagelet");
         expect(parent.children.find((node) => node.cls === "pa-pagelet-beta-callout")?.text).toContain("Beta");
-        const details = parent.children.find((node) => node.tagName === "details");
+        const details = findDescendant(parent, (node) => node.tagName === "details");
         expect(details?.children[0]).toMatchObject({ tagName: "summary", text: "Appearance and reminders" });
         expect(parent.children.find((node) => node.cls === "pa-pagelet-settings-error")).toBeDefined();
     });
@@ -1230,6 +1241,44 @@ describe("Pagelet settings renderers", () => {
         expect(rows).toEqual(originalRows);
     });
 
+    it("hides unrelated Pagelet children when the feature is off without discarding their values", async () => {
+        const parent = makeStubNode("div");
+        const { factory, rows } = makeStubFactory();
+        const { host } = makeHost({ outputLanguage: "zh", backgroundDiscoveryEnabled: true });
+        renderPageletPreferences(parent as unknown as HTMLElement, host, factory, "en");
+        const children = parent.children.find((node) => node.cls === "pa-pagelet-conditional")!;
+        expect(children.hidden).toBe(false);
+
+        await rows.find((row) => row.name === "Enable Pagelet")!.toggleOnChange!(false);
+
+        expect(children.hidden).toBe(true);
+        expect(host.settings.pagelet.enabled).toBe(false);
+        expect(host.settings.pagelet.outputLanguage).toBe("zh");
+        expect(host.settings.pagelet.backgroundDiscoveryEnabled).toBe(true);
+    });
+
+    it("renders each Pagelet parent before its conditional children and groups display details", () => {
+        const parent = makeStubNode("div");
+        const { factory, rows } = makeStubFactory();
+        const { host } = makeHost();
+        renderPageletPreferences(parent as unknown as HTMLElement, host, factory, "en");
+
+        expect(rows.slice(0, 5).map((row) => row.name)).toEqual([
+            "Enable Pagelet",
+            "Discover connections in the background",
+            "Show Pet",
+            "Proactive hints",
+            "Enable quiet hours",
+        ]);
+        const details = findDescendant(parent, (node) => node.tagName === "details"
+            && node.children[0]?.text === "Appearance and reminders");
+        const displayBody = details?.children[1];
+        const cornerContainer = rows.find((row) => row.name === "Pet corner")?.parent as StubNode | undefined;
+        expect((cornerContainer as (StubNode & { parentElement?: StubNode }) | undefined)?.parentElement)
+            .toBe(displayBody);
+        expect(rows.find((row) => row.name === "Output language")?.parent).toBe(displayBody);
+    });
+
     it("keeps a failed folder edit visible and offers a surface-local save retry", async () => {
         const saveLocation = makeStubNode("div");
         const { factory, rows } = makeStubFactory();
@@ -1261,7 +1310,10 @@ describe("Pagelet settings renderers", () => {
         let complete!: (value: { runs: number; dailyCap: number; modelTurns: number; toolCalls: number }) => void;
         host.getDeepDiscoverUsage = () => new Promise((resolve) => { complete = resolve; });
         renderPageletPreferences(parent as unknown as HTMLElement, host, factory, "en");
-        const usage = parent.children.find((node) => node.text === "Pagelet keeps discovery within a daily limit.")!;
+        const usage = findDescendant(
+            parent,
+            (node) => node.text === "Pagelet keeps discovery within a daily limit.",
+        )!;
         if (closed) parent.isConnected = false;
         complete({ runs: 3, dailyCap: 36, modelTurns: 12, toolCalls: 40 });
         await Promise.resolve();

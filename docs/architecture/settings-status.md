@@ -1,6 +1,6 @@
 # Settings Current Status
 
-Updated: 2026-10-25
+Updated: 2026-10-29
 
 ## Status
 
@@ -15,6 +15,16 @@ This document is the current entry point for Settings work. The original
 [Settings UI Review](../archive/settings-ui-review.md) is retained as evidence and
 contains historical finding evidence. It does not own current implementation
 or delivery status.
+
+## Settings UX — 2026-10-29
+
+[DEC-076](../product/decisions/dec-076-settings-ux-and-adaptive-graph.md) 与
+[B-191 Product Spec](../product/specs/pa-settings-ux-product-spec.md) 接续 Settings
+呈现与导航设计：四组摘要、按需详情、真实状态、保留 Policy model、图谱初始尺寸自适应，
+并明确中英文／桌面／移动端要求。设计基线保留为
+[已确认预览](../archive/2026/b191-settings-ux-preview.html)。
+以下说明当前源码行为；已完成的开发、双端运行验收与证据边界见
+[B-191 最终验证](../archive/2026/b191-settings-ux-validation.md)，不代表已发布版本。
 
 ## Current Summary
 
@@ -52,12 +62,23 @@ Highest-risk Settings issues are no longer open:
   language.
 
 The current Settings implementation uses four groups: AI connection,
-Preferences, Notes & privacy, and Advanced & maintenance. Native details keep
-specialized choices behind their related product area. Old Memory and
-Appearance deep links resolve to the corresponding detail; exact recovery
-targets open the maintenance group.
+Preferences, Notes & privacy, and Advanced & maintenance. Committed summaries
+identify the current configuration; advanced fields use native details.
+Feature management opens an internal detail with Back to settings, preserving
+the overview's expansion, scroll position, entry focus and neighboring drafts.
+Old Memory and Appearance deep links resolve to the corresponding detail;
+exact recovery targets open the maintenance detail.
+Detail navigation has a separate local lifetime from the tab's async generation.
+Back, switching details, and leaving then reopening invalidate old navigation and
+pending exact targets. Late Memory completions can still refresh committed data
+or restore a failed action's button, but cannot reopen a detail or steal focus.
+Explicit links sent before display are replayed after mounting; a missing target
+falls back only after the current snapshot is ready and while its request is current.
+Mobile Settings and the shared graph / featured-image editors keep text inputs
+and selectors at least 16px while retaining larger host fonts; primary controls
+retain 44px targets and narrow layouts wrap long values.
 
-Tag styles 位于 Preferences → Appearance and reminders。`tagStyleEnabled` 默认
+Tag styles 位于 Preferences。`tagStyleEnabled` 默认
 false，加载时仅原始 `true` 开启；设置切片提交成功后同步标签外观，保存期间禁用
 当前开关，失败回滚并保留原有效外观。关闭或卸载清理自有资源，使当前主题和
 snippets 接管；跨视图与固定配色契约见 [Tag Appearance](./tag-appearance.md)。
@@ -65,13 +86,49 @@ snippets 接管；跨视图与固定配色契约见 [Tag Appearance](./tag-appea
 Pagelet preferences and Memory management refresh their own regions. Provider
 tuple drafts remain separate from the effective connection, and passive
 Settings navigation reads only the token cache state. Permission changes use
-queued snapshots and become effective after persistence; source-exclusion text
-has an explicit Save scope action and retains an unsaved draft on failure.
+queued snapshots and become effective after persistence. The source detail
+distinguishes global, Pagelet and Memory exclusions; exclusion text and generated
+note policy have explicit Save scope actions and retain drafts on failure.
+Editing the policy does not cancel Memory preparation or publish a new scope;
+the existing cancellation/admission transaction runs only on explicit Save.
 
-Graph and featured-image options use the same modal from Settings and their
-contextual entry. Statistics view selection remains in its existing tabs;
-`displaySectionCounts` and `countComments` already have Settings controls.
-Ordinary field saves and statistics choices expose failure/retry feedback.
+Graph and featured-image options share concrete editors between Settings
+internal details and contextual modals. Each entry saves only its changed
+fields; the existing persistence queue merges against current settings, so
+an older model or graph draft cannot overwrite another entry's newer path,
+color or opening choice. Statistics preferences share one Settings detail;
+statistics view selection remains in its existing tabs. Ordinary field saves
+and statistics choices expose failure/retry feedback.
+
+These are concrete editors in the existing graph, featured-image and chat-image
+modules, not a generic settings framework. Back hides a cached detail and keeps
+its draft; Cancel restores its committed snapshot. Successful saves advance the
+editor comparison baseline; graph apply failures retain the saved-versus-applied
+distinction and retry. Modal close disposes its editor; tab hide disposes all
+details and navigation listeners while retaining the existing pending-save flush.
+Leaving the Ghost detail clears only its sensitive key draft, keeping ordinary
+site preferences available. Ghost credentials remain with their existing owner.
+
+Desktop floating local graphs keep the Hover Editor dependency. Initial size
+fits the target's own window, up to 550×500 CSS px; changing graph preferences
+does not resize already open graphs. Manual width/height controls and their
+runtime values are retired. Loading ignores legacy `localGraph.resizeStyle`,
+and the next ordinary canonical save removes it without discarding other graph
+options. That field alone does not trigger a startup migration write.
+Sizing targets newly connected local-graph hover elements in their own window,
+using 16px margins (reduced for very small windows) and centered coordinates.
+The existing observer/debounce owns this one-time initialization; no continuous
+resize service or saved drag dimensions are added. Reverting the code restores
+the old default sizing, but cannot reconstruct custom dimensions already removed
+by canonical saves; recovering those values requires an existing user backup.
+
+Policy model remains available in advanced AI connection settings. Independent
+image connection fields belong to AI connection; image defaults, save locations,
+chat-image management and Ghost use their respective functional details. Memory
+distinguishes a retained learning preference from a pause while Memory is off;
+explicitly stopping conversation learning still revokes vault-structure sharing.
+Platform guards and paired zh/en copy apply to the same navigation; mobile
+does not expose Ghost configuration or ineffective floating-graph choices.
 
 B-106 已退役的闭合字段集合是 `pagelet.preloadEnabled`、
 `pagelet.deepDiscoverEnabled`、`memoryAutoCheckBeforeChat`、`skillContextEnabled`

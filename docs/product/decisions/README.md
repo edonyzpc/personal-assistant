@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-10-25
+Updated: 2026-10-28
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-076 | Settings 按任务分层与图谱初始自适应 | Accepted | 保留有效偏好与 Policy model；仅取消图谱手动宽高，采用已确认预览的分层和双语双端交互 | [Record](./dec-076-settings-ux-and-adaptive-graph.md) |
 | DEC-075 | 第一批旧入口与保留代码清理 | Accepted | 退役指定 Pagelet 设置/七命令/每周跳转、旧 Operations 设置和专用关联；保留共享能力与历史数据，旧热键需重绑 | [Record](./dec-075-legacy-surface-cleanup.md) |
 | DEC-074 | Chat 原生 Mermaid 渲染前自动开启 | Accepted | 当前设备当前 vault 开关；保持原生交互，已开启零写，手动关闭后下次绘图再开启 | [Record](./dec-074-chat-mermaid-auto-enable.md) |
 | DEC-073 | Chat Canvas 生成时预览与原生打开 | Accepted | 可修改默认路径后显式保存；Chat 保留原始 JSON，打开文件最新内容及完整原生交互 | [Record](./dec-073-chat-canvas-preview-native-open.md) |

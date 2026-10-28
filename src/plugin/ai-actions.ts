@@ -1,6 +1,7 @@
 import { MarkdownView, Modal, Notice, type Editor, type MarkdownFileInfo } from "obsidian";
 
 import type { FeaturedImageDefaults } from "../ai-services/featured-image-options";
+import type { FeaturedImageDefaultsPatch } from "../settings/featured-image-options-modal";
 import type { ImageGenerationConnection } from "../ai-services/image-generation-connection";
 import { captureComposerImageTextSource, type ComposerImageTextSource } from "../chat/composer-draft";
 import { getPluginUiLanguage, pluginT } from "../locales/plugin";
@@ -14,7 +15,7 @@ export interface AIActionsDependencies {
     ensureAIConfigured(): boolean;
     getImageGenerationConnection(): ImageGenerationConnection | null;
     getFeaturedImageDefaults(): FeaturedImageDefaults;
-    saveFeaturedImageDefaults(options: FeaturedImageDefaults): Promise<void>;
+    saveFeaturedImageDefaults(options: FeaturedImageDefaultsPatch): Promise<void>;
     createSummaryHelper(editor: Editor, view: MarkdownView): SummaryHelper;
     openChatImageDraft(source: ComposerImageTextSource): Promise<boolean>;
     openSharedFeatureModal(host: FeaturedImageOptionsModalHost): Modal;

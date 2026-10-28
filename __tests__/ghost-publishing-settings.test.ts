@@ -7,6 +7,7 @@ class MockNode {
     children: MockNode[] = [];
     textContent = "";
     open = false;
+    hidden = false;
     attr: Record<string, string> = {};
     constructor(readonly tag = "div") {}
     createEl(tag: string, options?: { text?: string; attr?: Record<string, string> }): MockNode {
@@ -42,11 +43,15 @@ class MockControl {
 }
 
 const mockSettings: Array<{ name: string; desc: string; text?: MockControl; dropdown?: MockControl;
-    toggle?: MockControl; button?: MockControl }> = [];
+    toggle?: MockControl; button?: MockControl; settingEl?: MockNode }> = [];
 jest.mock("obsidian", () => ({
     Setting: class {
         record: typeof mockSettings[number] = { name: "", desc: "" };
-        constructor() { mockSettings.push(this.record); }
+        settingEl = new MockNode("div");
+        constructor() {
+            this.record.settingEl = this.settingEl;
+            mockSettings.push(this.record);
+        }
         setName(name: string): this { this.record.name = name; return this; }
         setDesc(desc: string): this { this.record.desc = desc; return this; }
         addText(callback: (control: MockControl) => void): this {
@@ -237,8 +242,17 @@ describe("Ghost Settings UI", () => {
         const app = await setup();
         expect(app.node.children.find((node) => node.tag === "details")?.open).toBe(false);
         expect(["Prism", "Mermaid", "KaTeX"].map((label) => row(label).dropdown!.value)).toEqual(["pa", "pa", "pa"]);
+        for (const library of ["Prism", "Mermaid", "KaTeX"]) {
+            expect(row(t("plugin.ghost.settings.confirmCompatible", { library })).settingEl?.hidden).toBe(true);
+        }
         row("Prism").dropdown!.edit("auto");
         row("Mermaid").dropdown!.edit("explicit");
+        row("KaTeX").dropdown!.edit("auto");
+        for (const library of ["Prism", "Mermaid", "KaTeX"]) {
+            expect(row(t("plugin.ghost.settings.confirmCompatible", { library })).settingEl?.hidden).toBe(false);
+        }
+        row("KaTeX").dropdown!.edit("pa");
+        expect(row(t("plugin.ghost.settings.confirmCompatible", { library: "KaTeX" })).settingEl?.hidden).toBe(true);
         row("KaTeX").dropdown!.edit("auto");
         await save();
         expect(app.saveConfiguration).not.toHaveBeenCalled();
@@ -278,5 +292,33 @@ describe("Ghost Settings UI", () => {
         await save();
         await button(t("plugin.ghost.settings.deleteKeyAction")).click();
         expect(app.saveConfiguration).not.toHaveBeenCalled();
+    });
+
+    it("clears only the key draft when leaving the detail and keeps other edits editable", async () => {
+        const app = await setup();
+        const site = row(t("plugin.ghost.settings.site")).text!;
+        const visibility = row(t("plugin.ghost.settings.visibility")).dropdown!;
+        const uploadLimit = row(t("plugin.ghost.settings.uploadLimit")).text!;
+        const keyInput = row(t("plugin.ghost.settings.key")).text!;
+        site.edit("https://different.test/");
+        visibility.edit("paid");
+        uploadLimit.edit("7");
+        keyInput.edit(nextKey);
+
+        (app.dispose as ReturnType<typeof renderGhostPublishingSettings>).clearSensitiveDraft();
+
+        expect(keyInput.value).toBe("");
+        expect(keyInput.inputEl.disabled).toBe(false);
+        expect(site.value).toBe("https://different.test/");
+        expect(visibility.value).toBe("paid");
+        expect(uploadLimit.value).toBe("7");
+        await save();
+        expect(app.saveConfiguration).toHaveBeenCalledWith({
+            siteUrl: "https://different.test/",
+            defaultVisibility: "paid",
+            maxUploadBytes: 7_000_000,
+            profile: {},
+        }, undefined);
+        app.dispose();
     });
 });

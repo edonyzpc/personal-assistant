@@ -59,30 +59,30 @@ export class VaultImagePickerModal extends Modal {
     onClose(): void { this.contentEl.empty(); }
 }
 
-export class ImageManagementModal extends Modal {
-    private closed = false;
-    private busy = false;
-    constructor(app: App, private readonly images: ImageAssetService) { super(app); }
-    onOpen(): void { this.closed = false; void this.render(); }
-    onClose(): void { this.closed = true; this.contentEl.empty(); }
+/** Mount the concrete image management content used by Chat and Settings. */
+export function mountImageManagementContent(
+    container: HTMLElement,
+    app: App,
+    images: ImageAssetService,
+): () => void {
+    let closed = false;
+    let busy = false;
 
-    private async render(): Promise<void> {
+    const render = async (): Promise<void> => {
         const t = makePluginTranslator(getPluginUiLanguage());
-        const { contentEl } = this;
-        contentEl.empty();
-        contentEl.addClass('pa-chat-image-management');
-        contentEl.createEl('h2', { text: t('plugin.chat.images.manage') });
-        contentEl.createEl('p', { text: t('plugin.chat.images.cleanupScope') });
+        container.empty();
+        container.addClass('pa-chat-image-management');
+        container.createEl('p', { text: t('plugin.chat.images.cleanupScope') });
         // Keep the disclosure available even if local asset storage cannot open.
-        const providerHelp = contentEl.createEl('details');
+        const providerHelp = container.createEl('details');
         providerHelp.createEl('summary', { text: t('plugin.chat.images.providerHelp') });
         providerHelp.createEl('p', { text: t('plugin.chat.images.providerNotice') });
         providerHelp.createEl('p', { text: t('plugin.chat.images.metadataNotice') });
-        const status = contentEl.createEl('p', { attr: { role: 'status', 'aria-live': 'polite' } });
+        const status = container.createEl('p', { attr: { role: 'status', 'aria-live': 'polite' } });
         try {
-            const assets = (await this.images.listAssets()).filter((asset) => asset.source === 'imported' && isChatImageAsset(asset));
-            if (this.closed) return;
-            const help = contentEl.createEl('details');
+            const assets = (await images.listAssets()).filter((asset) => asset.source === 'imported' && isChatImageAsset(asset));
+            if (closed) return;
+            const help = container.createEl('details');
             help.createEl('summary', { text: t('plugin.chat.images.syncHelp') });
             help.createEl('p', { text: t('plugin.chat.images.syncHelpIntro') });
             for (const directory of new Set(assets.filter((asset) => asset.originalPath.startsWith(`${asset.importDirectory}/`))
@@ -94,54 +94,84 @@ export class ImageManagementModal extends Modal {
             help.createEl('p', { text: t('plugin.chat.images.syncGitHelp') });
             help.createEl('p', { text: t('plugin.chat.images.syncICloudHelp') });
             const selections = new Map<string, ImageAsset>();
-            const list = contentEl.createDiv({ cls: 'pa-chat-image-management__list' });
+            const list = container.createDiv({ cls: 'pa-chat-image-management__list' });
             for (const asset of assets) {
                 const row = list.createDiv({ cls: 'pa-chat-image-management__item' });
                 const label = row.createEl('label');
                 if (Platform.isDesktopApp) {
                     const checkbox = label.createEl('input', { attr: { type: 'checkbox' } });
-                    checkbox.disabled = this.busy || asset.state !== 'available';
+                    checkbox.disabled = busy || asset.state !== 'available';
                     checkbox.onchange = () => { if (checkbox.checked) selections.set(asset.id, asset); else selections.delete(asset.id); };
                 }
                 label.createSpan({ text: `${asset.originalPath} · ${(asset.byteLength / (1024 * 1024)).toFixed(2)} MB` });
                 row.createEl('small', { text: t('plugin.chat.images.knownRefs', { count: asset.owners.length }) });
                 const open = row.createEl('button', { text: t('plugin.chat.images.openOriginal', { name: asset.originalPath }), attr: { type: 'button' } });
                 open.onclick = () => {
-                    const file = this.app.vault.getAbstractFileByPath(asset.originalPath);
-                    if (file instanceof TFile) void this.app.workspace.openLinkText(file.path, asset.anchorPath, true);
+                const file = app.vault.getAbstractFileByPath(asset.originalPath);
+                if (file instanceof TFile) void app.workspace.openLinkText(file.path, asset.anchorPath, true);
                     else status.setText(t('plugin.chat.images.originalMissing'));
                 };
             }
             if (!assets.length) list.createEl('p', { text: t('plugin.chat.images.none') });
-            const clear = contentEl.createEl('button', { text: t('plugin.chat.images.clearCache'), attr: { type: 'button' } });
-            clear.disabled = this.busy;
-            clear.onclick = () => { void this.images.clearCache().then(() => {
-                if (!this.closed) status.setText(t('plugin.chat.images.cacheCleared'));
-            }).catch(() => { if (!this.closed) status.setText(t('plugin.chat.images.operationFailed')); }); };
+            const clear = container.createEl('button', { text: t('plugin.chat.images.clearCache'), attr: { type: 'button' } });
+            clear.disabled = busy;
+            clear.onclick = () => { void images.clearCache().then(() => {
+                if (!closed) status.setText(t('plugin.chat.images.cacheCleared'));
+            }).catch(() => { if (!closed) status.setText(t('plugin.chat.images.operationFailed')); }); };
             if (!Platform.isDesktopApp) {
-                contentEl.createEl('p', { text: t('plugin.chat.images.cleanupMobile') });
+                container.createEl('p', { text: t('plugin.chat.images.cleanupMobile') });
                 return;
             }
-            const remove = contentEl.createEl('button', { text: t('plugin.chat.images.deleteSelected'), cls: 'mod-warning', attr: { type: 'button' } });
-            remove.disabled = this.busy;
+            const remove = container.createEl('button', { text: t('plugin.chat.images.deleteSelected'), cls: 'mod-warning', attr: { type: 'button' } });
+            remove.disabled = busy;
             remove.onclick = async () => {
-                if (this.busy || !selections.size) return;
+                if (busy || !selections.size) return;
                 const chosen = [...selections.values()].map((asset) => ({ ref: { assetId: asset.id, contentHash: asset.originalHash }, path: asset.originalPath }));
-                if (!await confirmChatAction({ app: this.app }, {
+                if (!await confirmChatAction({ app }, {
                     title: t('plugin.chat.images.deleteSelected'), message: `${t('plugin.chat.images.deleteConfirm')}\n${chosen.map((entry) => entry.path).join('\n')}`,
                     confirmText: t('plugin.chat.images.deleteSelected'), danger: true,
-                }) || this.closed) return;
-                this.busy = true; remove.disabled = true; clear.disabled = true;
+                }) || closed) return;
+                busy = true; remove.disabled = true; clear.disabled = true;
                 try {
-                    await this.images.cleanupSelected(chosen);
-                    this.busy = false;
-                    if (!this.closed) await this.render();
+                    await images.cleanupSelected(chosen);
+                    busy = false;
+                    if (!closed) await render();
                 } catch (error) {
-                    this.busy = false; remove.disabled = false; clear.disabled = false;
-                    if (!this.closed) status.setText(String(error).includes('cleanup_path_unverifiable')
+                    busy = false; remove.disabled = false; clear.disabled = false;
+                    if (!closed) status.setText(String(error).includes('cleanup_path_unverifiable')
                         ? t('plugin.chat.images.cleanupUnavailable') : t('plugin.chat.images.cleanupChanged'));
                 }
             };
-        } catch { if (!this.closed) status.setText(t('plugin.chat.images.operationFailed')); }
+        } catch {
+            if (closed) return;
+            status.setText(t('plugin.chat.images.operationFailed'));
+            const retry = container.createEl('button', {
+                text: t('plugin.chat.images.retry'),
+                attr: { type: 'button' },
+            });
+            retry.onclick = () => {
+                if (!closed) void render();
+            };
+        }
+    };
+
+    void render();
+    return () => {
+        closed = true;
+        container.empty();
+    };
+}
+
+export class ImageManagementModal extends Modal {
+    private disposeContent: (() => void) | null = null;
+    constructor(app: App, private readonly images: ImageAssetService) { super(app); }
+    onOpen(): void {
+        (this.titleEl as HTMLElement | undefined)?.setText(makePluginTranslator(getPluginUiLanguage())('plugin.chat.images.manage'));
+        this.disposeContent = mountImageManagementContent(this.contentEl, this.app, this.images);
+    }
+    onClose(): void {
+        this.disposeContent?.();
+        this.disposeContent = null;
+        this.contentEl.empty();
     }
 }

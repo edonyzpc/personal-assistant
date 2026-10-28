@@ -19,7 +19,12 @@ import { WritingRecoveryModal, WritingSaveModal, WritingStyleModal, WritingVersi
 import { WritingStyleUnavailableError } from '../src/chat/writing-style-service';
 import type { WritingVersion } from '../src/chat/writing-types';
 import type { WritingSaveAction, PreparedWritingSave } from '../src/chat/writing-save-action';
-import { ImageManagementModal, ImageSourcePickerModal, VaultImagePickerModal } from '../src/chat/image-management-modal';
+import {
+    ImageManagementModal,
+    ImageSourcePickerModal,
+    VaultImagePickerModal,
+    mountImageManagementContent,
+} from '../src/chat/image-management-modal';
 import { ImageAttachmentDetailModal } from '../src/chat/image-attachment-view';
 import { ImageAssetService } from '../src/chat/image-assets';
 import type { ImageGenerationSubmitInput } from '../src/chat/image-generation-service';
@@ -3930,6 +3935,27 @@ describe('LLMView turn lifecycle', () => {
             modal.onClose();
         }
         expect(listAssets).toHaveBeenCalledTimes(2);
+    });
+
+    it('retries embedded image management after the first asset listing failure', async () => {
+        const listAssets = jest.fn<() => Promise<never[]>>()
+            .mockRejectedValueOnce(new Error('storage initializing'))
+            .mockResolvedValue([]);
+        const images = { listAssets } as unknown as ImageAssetService;
+        const root = new MockElement('div');
+        const dispose = mountImageManagementContent(root as unknown as HTMLElement, {} as App, images);
+
+        await flushPromises();
+        expect(listAssets).toHaveBeenCalledTimes(1);
+        expect(getButtonsByText(root, 'Retry')).toHaveLength(1);
+
+        getButtonsByText(root, 'Retry')[0].click();
+        await flushPromises();
+
+        expect(listAssets).toHaveBeenCalledTimes(2);
+        expect(getButtonsByText(root, 'Retry')).toHaveLength(0);
+        expect(getButtonsByText(root, 'Clear image previews and processed copies')).toHaveLength(1);
+        dispose();
     });
 
     it.each([false, true])('discloses before old-history image reuse, without late notices or sends after close: %s', async (closeBeforeRead) => {
