@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [3.0.4](https://github.com/edonyzpc/personal-assistant/compare/3.0.3...3.0.4) (2026-10-29)
+
+### Features
+- settings: simplify settings UX and adapt graph sizing
+
+### Fix
+- chat: improve image request options layout
+- ghost: improve draft publishing reliability
+
 ## [3.0.3](https://github.com/edonyzpc/personal-assistant/compare/3.0.2...3.0.3) (2026-10-26)
 
 ### Fix
