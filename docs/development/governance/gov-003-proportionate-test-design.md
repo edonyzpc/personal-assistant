@@ -143,7 +143,7 @@ Owner 明确选择“提高到10MiB”，当前默认 bundle 硬上限因此调�
 
 | Requirement / AC | Current protection / durable evidence |
 | --- | --- |
-| B-142/REQ-01 / B-142/AC-01 | [UI/UX behavior](../../../__tests__/pagelet-b118-ui-ux-optimization.test.ts)、[B-136 behavior](../../../__tests__/pagelet-b136-p2-retirement.test.ts) 与上述删项依据；Typography 字面值测试于 2026-09-25 移除 |
+| B-142/REQ-01 / B-142/AC-01 | [Pagelet settings behavior](../../../__tests__/pagelet-settings.test.ts)、[provider-free Panel reading](../../../__tests__/pagelet-orchestrator.test.ts) 与上述删项依据；Typography 字面值测试于 2026-09-25 移除 |
 | B-142/REQ-02 / B-142/AC-02 | [Settings owner](../../../__tests__/pagelet-settings.test.ts)、[cache race](../../../__tests__/pagelet-agent-quality-cache.test.ts) 与实际标题/断言 |
 | B-142/REQ-03 / B-142/AC-03 | [Group contract](../../../__tests__/jest-test-groups-script.test.ts)、[runner](../../../__tests__/retrieval-smoke-runner.test.ts)、[receipt](../../../__tests__/retrieval-evidence-receipt-verify.test.ts) 与 FTS artifact suites |
 | B-142/REQ-04 / B-142/AC-04 | 上述 frozen-input 串行/二 worker 配对及保留串行的明确处置 |

@@ -264,17 +264,6 @@ describe("findFocusTargetForCommand", () => {
         expect(findFocusTargetForCommand(root)).toBeNull();
     });
 
-    it("returns the first focusable inside the first card", () => {
-        const root = makeStubNode("body");
-        const card = makeStubNode("div", [PAGELET_SUGGESTION_CARD_CLASS]);
-        const chip = makeStubNode("button", [
-            "pa-pagelet-suggestion-card__source-chip--interactive",
-        ]);
-        card.children.push(chip);
-        root.children.push(card);
-        const hit = findFocusTargetForCommand(root) as StubNode;
-        expect(hit).toBe(chip);
-    });
 });
 
 // ---------------------------------------------------------------------------

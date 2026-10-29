@@ -1,16 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { fuseRRF, RRF_K } from '../src/vss/rrf';
+import { fuseRRF } from '../src/vss/rrf';
 
 describe('parameterized RRF', () => {
-    it('keeps the existing defaults backward compatible', () => {
-        const result = fuseRRF([[10, 20], [20, 30]], 10);
-
-        expect(result.get(10)).toBeCloseTo(1 / (RRF_K + 1), 12);
-        expect(result.get(20)).toBeCloseTo(1 / (RRF_K + 2) + 1 / (RRF_K + 1), 12);
-        expect(result.get(30)).toBeCloseTo(1 / (RRF_K + 2), 12);
-    });
-
     it('applies a calibrated k and per-source weights without mutating rank lists', () => {
         const vector = Object.freeze([1, 2]);
         const lexical = Object.freeze([2, 3]);

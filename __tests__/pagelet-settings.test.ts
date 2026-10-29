@@ -493,6 +493,24 @@ describe("mergePageletSettings", () => {
         expect(merged.quickCaptureExplained).toBe(false);
     });
 
+    it("keeps a literal provider first-use notification flag", () => {
+        const merged = mergePageletSettings({ pageletProviderFirstUseNotified: true });
+
+        expect(merged.pageletProviderFirstUseNotified).toBe(true);
+    });
+
+    it("defaults the provider first-use notification flag to false when missing", () => {
+        const merged = mergePageletSettings({});
+
+        expect(merged.pageletProviderFirstUseNotified).toBe(false);
+    });
+
+    it("falls back to false for a non-boolean provider first-use notification flag", () => {
+        const merged = mergePageletSettings({ pageletProviderFirstUseNotified: "yes" });
+
+        expect(merged.pageletProviderFirstUseNotified).toBe(false);
+    });
+
     it("normalizes, deduplicates, and caps the persisted Recap suppression ledger", () => {
         const validEntries = Array.from({ length: 205 }, (_, index) => ({
             fingerprint: `recap-${index}`,

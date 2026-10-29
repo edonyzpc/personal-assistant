@@ -5743,9 +5743,9 @@ describe('fuseRRF', () => {
     it('orders by descending score ahead of id and insertion order', () => {
         const result = fuseRRF([[10, 20], [20, 30]], 10);
         expect([...result.keys()]).toEqual([20, 10, 30]);
-        expect(result.get(20)).toBeCloseTo(1 / (RRF_K + 2) + 1 / (RRF_K + 1), 10);
-        expect(result.get(10)).toBeCloseTo(1 / (RRF_K + 1), 10);
-        expect(result.get(30)).toBeCloseTo(1 / (RRF_K + 2), 10);
+        expect(result.get(20)).toBeCloseTo(1 / (RRF_K + 2) + 1 / (RRF_K + 1), 12);
+        expect(result.get(10)).toBeCloseTo(1 / (RRF_K + 1), 12);
+        expect(result.get(30)).toBeCloseTo(1 / (RRF_K + 2), 12);
 
         const topOnly = fuseRRF([[10, 20], [20, 30]], 1);
         expect([...topOnly.keys()]).toEqual([20]);

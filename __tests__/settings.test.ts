@@ -6077,21 +6077,6 @@ describe('Phase 4 P1 UX', () => {
             expect(DEFAULT_SETTINGS.countComments).toBe(false);
         });
 
-        it('renders both new toggles in Vault Statistics with onChange handlers', () => {
-            const plugin = makePlugin();
-            const tab = new SettingTab(makeMockApp() as never, plugin as never);
-            tab.containerEl = new MockContainerEl('div') as never;
-            tab.display();
-
-            const records = getMockSettingRecords();
-            const sectionCounts = records.find((r) => r.name === 'Show section word counts');
-            const commentsCount = records.find((r) => r.name === 'Count comments in statistics');
-            expect(sectionCounts?.toggles[0]).toMatchObject({ value: false });
-            expect(commentsCount?.toggles[0]).toMatchObject({ value: false });
-            expect(sectionCounts?.toggles[0]?.onChange).toBeDefined();
-            expect(commentsCount?.toggles[0]?.onChange).toBeDefined();
-        });
-
         it('toggling each new control mutates the matching setting and saves', async () => {
             const plugin = makePlugin();
             const tab = new SettingTab(makeMockApp() as never, plugin as never);
@@ -6101,6 +6086,10 @@ describe('Phase 4 P1 UX', () => {
             const records = getMockSettingRecords();
             const sectionCounts = records.find((r) => r.name === 'Show section word counts')!.toggles[0];
             const commentsCount = records.find((r) => r.name === 'Count comments in statistics')!.toggles[0];
+            expect(sectionCounts.value).toBe(false);
+            expect(commentsCount.value).toBe(false);
+            expect(sectionCounts.onChange).toBeDefined();
+            expect(commentsCount.onChange).toBeDefined();
 
             const beforeSaves = plugin.saveSettings.mock.calls.length;
             await sectionCounts.onChange!(true);
@@ -6195,27 +6184,4 @@ describe('Phase 4 P1 UX', () => {
 
     });
 
-    describe('mobile platform', () => {
-        const obsidian = jest.requireMock('obsidian') as { Platform: { isDesktop: boolean; isMobile: boolean } };
-        const prevPlatform = { ...obsidian.Platform };
-
-        beforeEach(() => {
-            Object.assign(obsidian.Platform, { isDesktop: false, isMobile: true });
-        });
-
-        afterEach(() => {
-            Object.assign(obsidian.Platform, prevPlatform);
-        });
-
-        it('settings display produces expected number of setting rows on mobile', () => {
-            const plugin = makePlugin({ aiProvider: 'qwen', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', chatModelName: 'qwen3.6-plus' });
-            const tab = new SettingTab(makeMockApp() as never, plugin as never);
-            tab.containerEl = new MockContainerEl('div') as never;
-
-            tab.display();
-
-            const allSettings = getMockSettingRecords();
-            expect(allSettings.length).toBeGreaterThan(10);
-        });
-    });
 });

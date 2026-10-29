@@ -6,7 +6,6 @@ import type { ChatAgentStatus, ChatMessage, StreamLLMOptions } from '../src/ai-s
 import type { AgentEvent, LegacyAgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import { CHAT_MENU_IDLE_CLOSE_MS, formatOperationsPreview, LLMView, PA_CHAT_SUBAGENT_ICON } from '../src/chat/chat-view';
 import { mergeContextUsedItems, normalizeContextUsedItems } from '../src/chat/formatters';
-import { renderMarkdownWithOwner } from '../src/chat/mermaid';
 import type { NativeMarkdownBridge } from '../src/ui/native-markdown-bridge';
 import { UI_RECOVERY_KEY } from '../src/ui/local-recovery';
 import { ChatConfirmationModal, ChatHistoryPickerModal, getDistinctChatHistoryPreview } from '../src/chat/modals';
@@ -12350,71 +12349,6 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         expect(allText(containerEl)).toContain('new chunk');
         expect(allText(containerEl)).not.toContain('old chunk');
-    });
-
-    it.each([false, true])('keeps the native renderer and complete literal text with strict line breaks %s', async strictLineBreaks => {
-        const app = { vault: { getConfig: jest.fn(() => strictLineBreaks) } } as unknown as App;
-        const owner = new Component();
-        const target = new MockElement('div') as unknown as HTMLElement;
-        const markdown = 'Plain words 123.45, café; next: yes!? 中文文字\r\n'.repeat(256);
-
-        await renderMarkdownWithOwner({ app }, markdown, target, owner, 'Folder/Note.md');
-
-        const render = MarkdownRenderer.render as unknown as jest.Mock;
-        const [renderedApp, renderedMarkdown, renderedTarget, renderedSourcePath, renderedOwner] = render.mock.calls.at(-1)!;
-        expect(renderedApp).toBe(app);
-        expect(renderedTarget).toBe(target);
-        expect(renderedSourcePath).toBe('Folder/Note.md');
-        expect(renderedOwner).toBe(owner);
-        expect(renderedMarkdown).toMatch(/^<p>Plain words /);
-        expect(renderedMarkdown).toMatch(/中文文字<\/p>$/);
-        expect(String(renderedMarkdown).includes('<br>')).toBe(!strictLineBreaks);
-        expect(String(renderedMarkdown).slice(3, -4).replace(/<br>\n/g, '\n'))
-            .toBe(markdown.replace(/\r\n/g, '\n').slice(0, -1));
-    });
-
-    it.each([
-        ['short paragraph', 'First line.\nSecond line.\n'],
-        ['one long line', 'Long literal sentence. '.repeat(512).trimEnd()],
-        ['multiple paragraphs', '\nSecond paragraph.\n'],
-        ['numbered list', '1. Numbered item.\n'],
-        ['empty numbered item', '2.\nFollowing text.\n'],
-        ['indentation', ' Indented line.\n'],
-        ['hard break', 'Two spaces.  \nNext line.\n'],
-        ['trailing whitespace', 'Trailing space. \n'],
-        ['bare URL', 'www.example.com\n'],
-        ['email', 'person@example.com\n'],
-        ['Markdown emphasis', '*emphasis*\n'],
-        ['Markdown link', '[label](https://example.com)\n'],
-        ['HTML/entity', '<span>HTML</span> &amp; text\n'],
-        ['Mermaid', '```mermaid\ngraph TD\nA --> B\n```\n'],
-        ['lone carriage return', 'First\rSecond\n'],
-    ])('preserves original native Markdown input for %s', async (name, suffix) => {
-        const app = {
-            loadLocalStorage: jest.fn(() => true),
-            saveLocalStorage: jest.fn(),
-            vault: { getConfig: () => false },
-            workspace: { trigger: jest.fn() },
-        } as unknown as App;
-        const owner = new Component();
-        const target = new MockElement('div') as unknown as HTMLElement;
-        const markdown = name === 'short paragraph' || name === 'one long line'
-            ? suffix : 'Ordinary paragraph text.\n'.repeat(400) + suffix;
-
-        await renderMarkdownWithOwner({ app }, markdown, target, owner);
-
-        expect((MarkdownRenderer.render as unknown as jest.Mock).mock.calls.at(-1)?.[1]).toBe(markdown);
-    });
-
-    it.each([undefined, 'false'])('keeps native Markdown when the line-break setting is unknown (%s)', async setting => {
-        const app = { vault: { getConfig: () => setting } } as unknown as App;
-        const owner = new Component();
-        const target = new MockElement('div') as unknown as HTMLElement;
-        const markdown = 'Ordinary paragraph text.\n'.repeat(400);
-
-        await renderMarkdownWithOwner({ app }, markdown, target, owner);
-
-        expect((MarkdownRenderer.render as unknown as jest.Mock).mock.calls.at(-1)?.[1]).toBe(markdown);
     });
 
     it('keeps the first text immediate and gives a costly scroll layout frame time before publishing more', async () => {

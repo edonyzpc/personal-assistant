@@ -91,8 +91,9 @@ describe('GraphOptionsModal', () => {
         const autoColors = label(h.root, 'plugin.settings.graph.autoColors.name');
         expect(autoColors.checked).toBe(false);
         toggle(autoColors, true);
-        expect(autoColors.checked).toBe(true);
-        await h.cancel.click();
+        await h.save.click();
+        expect(h.saveOptions).toHaveBeenCalledTimes(1);
+        expect(h.saveOptions.mock.calls[0][0]).toEqual({ localGraph: { autoColors: true } });
     });
 
     it('opens and cancels a detached draft without saving or applying', async () => {

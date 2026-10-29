@@ -10,8 +10,10 @@ function createApp(options: {
     trusted?: boolean | null;
     order?: string[];
     saveError?: Error;
+    lineBreakSetting?: unknown;
 } = {}) {
     let trusted = options.trusted ?? null;
+    const lineBreakSetting = 'lineBreakSetting' in options ? options.lineBreakSetting : false;
     return {
         loadLocalStorage: jest.fn(() => {
             options.order?.push('load');
@@ -26,6 +28,9 @@ function createApp(options: {
             trigger: jest.fn(() => {
                 options.order?.push('event');
             }),
+        },
+        vault: {
+            getConfig: jest.fn(() => lineBreakSetting),
         },
     } as unknown as App;
 }
@@ -123,5 +128,73 @@ describe('Chat Mermaid native trust', () => {
 
         expect(app.workspace.trigger).not.toHaveBeenCalled();
         expect(nativeRender).not.toHaveBeenCalled();
+    });
+
+    describe('native renderer passthrough', () => {
+        beforeEach(() => {
+            (MarkdownRenderer.render as unknown as jest.Mock).mockReset();
+        });
+
+        it.each([false, true])('keeps the native renderer and complete literal text with strict line breaks %s', async strictLineBreaks => {
+            const app = createApp({ lineBreakSetting: strictLineBreaks });
+            const owner = new Component();
+            const target = createTarget();
+            const markdown = 'Plain words 123.45, café; next: yes!? 中文文字\r\n'.repeat(256);
+
+            await renderMarkdownWithOwner({ app }, markdown, target, owner, 'Folder/Note.md');
+
+            const nativeRender = MarkdownRenderer.render as unknown as jest.Mock;
+            const [renderedApp, renderedMarkdown, renderedTarget, renderedSourcePath, renderedOwner] = nativeRender.mock.calls.at(-1)!;
+            expect(renderedApp).toBe(app);
+            expect(renderedTarget).toBe(target);
+            expect(renderedSourcePath).toBe('Folder/Note.md');
+            expect(renderedOwner).toBe(owner);
+            expect(renderedMarkdown).toMatch(/^<p>Plain words /);
+            expect(renderedMarkdown).toMatch(/中文文字<\/p>$/);
+            expect(String(renderedMarkdown).includes('<br>')).toBe(!strictLineBreaks);
+            expect(String(renderedMarkdown).slice(3, -4).replace(/<br>\n/g, '\n'))
+                .toBe(markdown.replace(/\r\n/g, '\n').slice(0, -1));
+        });
+
+        it.each([
+            ['short paragraph', 'First line.\nSecond line.\n'],
+            ['one long line', 'Long literal sentence. '.repeat(512).trimEnd()],
+            ['multiple paragraphs', '\nSecond paragraph.\n'],
+            ['numbered list', '1. Numbered item.\n'],
+            ['empty numbered item', '2.\nFollowing text.\n'],
+            ['indentation', ' Indented line.\n'],
+            ['hard break', 'Two spaces.  \nNext line.\n'],
+            ['trailing whitespace', 'Trailing space. \n'],
+            ['bare URL', 'www.example.com\n'],
+            ['email', 'person@example.com\n'],
+            ['Markdown emphasis', '*emphasis*\n'],
+            ['Markdown link', '[label](https://example.com)\n'],
+            ['HTML/entity', '<span>HTML</span> &amp; text\n'],
+            ['Mermaid', '```mermaid\ngraph TD\nA --> B\n```\n'],
+            ['lone carriage return', 'First\rSecond\n'],
+        ])('preserves original native Markdown input for %s', async (name, suffix) => {
+            const app = createApp({ lineBreakSetting: false });
+            const owner = new Component();
+            const target = createTarget();
+            const markdown = name === 'short paragraph' || name === 'one long line'
+                ? suffix : 'Ordinary paragraph text.\n'.repeat(400) + suffix;
+
+            await renderMarkdownWithOwner({ app }, markdown, target, owner);
+
+            const nativeRender = MarkdownRenderer.render as unknown as jest.Mock;
+            expect(nativeRender.mock.calls.at(-1)?.[1]).toBe(markdown);
+        });
+
+        it.each([undefined, 'false'])('keeps native Markdown when the line-break setting is unknown (%s)', async setting => {
+            const app = createApp({ lineBreakSetting: setting });
+            const owner = new Component();
+            const target = createTarget();
+            const markdown = 'Ordinary paragraph text.\n'.repeat(400);
+
+            await renderMarkdownWithOwner({ app }, markdown, target, owner);
+
+            const nativeRender = MarkdownRenderer.render as unknown as jest.Mock;
+            expect(nativeRender.mock.calls.at(-1)?.[1]).toBe(markdown);
+        });
     });
 });

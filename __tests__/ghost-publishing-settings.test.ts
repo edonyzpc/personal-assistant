@@ -82,7 +82,6 @@ const statusConfiguration = (getStatus: () => Promise<GhostAdminKeyStatus>): Pic
 });
 
 async function setup() {
-    const otherSettings = { aiProvider: "unchanged", marker: 7 };
     let current = structuredClone(prefs);
     let failure = false;
     const persisted: GhostPublishingSettings[] = [];
@@ -103,7 +102,7 @@ async function setup() {
     const node = new MockNode();
     const dispose = renderGhostPublishingSettings(node as unknown as HTMLElement,
         { isDesktop: () => true, getSettings: () => current, configuration, t });
-    return { node, dispose, configuration, saveConfiguration, getStatus, getSecret, secrets, persisted, otherSettings,
+    return { node, dispose, configuration, saveConfiguration, getStatus, getSecret, secrets, persisted,
         current: () => current, fail: () => { failure = true; } };
 }
 
@@ -130,7 +129,6 @@ describe("Ghost Settings UI", () => {
         expect(app.node.text()).toContain(t("plugin.ghost.settings.keyStatus.configured"));
         expect(app.node.text()).not.toContain(key);
         expect(JSON.stringify(app.persisted)).not.toContain(key);
-        expect(app.otherSettings).toEqual({ aiProvider: "unchanged", marker: 7 });
         app.dispose();
     });
 
@@ -232,7 +230,6 @@ describe("Ghost Settings UI", () => {
         await save();
         expect(app.current()).toEqual(prefs);
         expect([...app.secrets.values()]).toEqual([key]);
-        expect(app.otherSettings).toEqual({ aiProvider: "unchanged", marker: 7 });
         expect(app.node.text()).toContain(t("plugin.ghost.settings.saveFailed"));
         expect(app.node.text()).not.toContain(nextKey);
         app.dispose();

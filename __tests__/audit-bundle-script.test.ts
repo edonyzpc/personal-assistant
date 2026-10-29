@@ -34,13 +34,22 @@ describe("scripts/audit-bundle.mjs", () => {
     it("fails JSON report when Node builtins are present", () => {
         const file = writeTempBundle("const fs = require('fs');");
 
-        expect(() => execFileSync("node", [
+        const failure = runAuditFailure([
             "scripts/audit-bundle.mjs",
             "--input",
             file,
             "--budget-gzip-bytes",
             "1024",
-        ], { encoding: "utf8" })).toThrow();
+        ]);
+        expect(failure.status).toBe(1);
+        expect(failure.report).toMatchObject({
+            ok: false,
+            input: file,
+            exists: true,
+            overBudget: false,
+            nodeBuiltinReferences: ["require('fs')"],
+            dynamicScriptElementCreations: [],
+        });
 
         const output = execFileSync("node", [
             "scripts/audit-bundle.mjs",
@@ -59,13 +68,22 @@ describe("scripts/audit-bundle.mjs", () => {
     it("fails JSON report when dynamic script element creation is present", () => {
         const file = writeTempBundle("document.createElement('script');");
 
-        expect(() => execFileSync("node", [
+        const failure = runAuditFailure([
             "scripts/audit-bundle.mjs",
             "--input",
             file,
             "--budget-gzip-bytes",
             "1024",
-        ], { encoding: "utf8" })).toThrow();
+        ]);
+        expect(failure.status).toBe(1);
+        expect(failure.report).toMatchObject({
+            ok: false,
+            input: file,
+            exists: true,
+            overBudget: false,
+            nodeBuiltinReferences: [],
+            dynamicScriptElementCreations: ["createElement('script'"],
+        });
     });
 
     it("reports resource directory gzip budget separately", () => {
@@ -200,7 +218,11 @@ type AuditFailure = {
     status: number;
     report: {
         ok?: boolean;
+        input?: string;
+        exists?: boolean;
         overBudget?: boolean;
+        nodeBuiltinReferences?: string[];
+        dynamicScriptElementCreations?: string[];
         resourceAudit?: { overBudget?: boolean };
         shareCardFontAudit?: {
             embeddedExactBytes?: boolean;

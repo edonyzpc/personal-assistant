@@ -266,26 +266,41 @@ describe("Phase 1 candidate and document allocation", () => {
         ]);
     });
 
-    it("allocates two chunks per candidate before third-chunk backfill", () => {
-        const withChunks = (path: string): MemoryCandidate => ({
-            ...makeCandidate(path, 1),
-            documents: [0, 1, 2].map((chunkIndex) => ({
-                content: `${path}-${chunkIndex}`,
-                score: 1,
-                source: { path, chunkIndex, score: 1 },
-            })),
-        });
+    const withThreeChunks = (path: string): MemoryCandidate => ({
+        ...makeCandidate(path, 1),
+        documents: [0, 1, 2].map((chunkIndex) => ({
+            content: `${path}-${chunkIndex}`,
+            score: 1,
+            source: { path, chunkIndex, score: 1 },
+        })),
+    });
+
+    it("caps the first document pass at eight before third-chunk backfill", () => {
         const documents = allocateMemoryDocumentsTwoPass([
-            withChunks("a.md"),
-            withChunks("b.md"),
-            withChunks("c.md"),
-            withChunks("d.md"),
+            withThreeChunks("a.md"),
+            withThreeChunks("b.md"),
+            withThreeChunks("c.md"),
+            withThreeChunks("d.md"),
         ]);
         expect(documents.map((document) => `${document.source.path}#${document.source.chunkIndex}`)).toEqual([
             "a.md#0", "a.md#1",
             "b.md#0", "b.md#1",
             "c.md#0", "c.md#1",
             "d.md#0", "d.md#1",
+        ]);
+    });
+
+    it("backfills third chunks only after every candidate receives two chunks", () => {
+        const documents = allocateMemoryDocumentsTwoPass([
+            withThreeChunks("a.md"),
+            withThreeChunks("b.md"),
+            withThreeChunks("c.md"),
+        ]);
+        expect(documents.map((document) => `${document.source.path}#${document.source.chunkIndex}`)).toEqual([
+            "a.md#0", "a.md#1",
+            "b.md#0", "b.md#1",
+            "c.md#0", "c.md#1",
+            "a.md#2", "b.md#2",
         ]);
     });
 });

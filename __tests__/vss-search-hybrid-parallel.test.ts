@@ -246,18 +246,19 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
         });
 
         const searchPromise = vss.searchHybrid('raw prompt', { ftsQueryOverridePromise });
-        for (let i = 0; i < 20 && embedQueryCalls.count === 0; i++) {
-            await Promise.resolve();
+        try {
+            await waitForNextEventLoopPhase();
+            expect(embedQueryCalls.count).toBe(1);
+            expect(embedQueryCalls.lastPrompt).toBe('raw prompt');
+            expect(buildFtsQueryMock).not.toHaveBeenCalled();
+
+            resolveOverride?.('rewritten');
+            await searchPromise;
+        } finally {
+            resolveOverride?.('rewritten');
+            await Promise.allSettled([searchPromise]);
+            await vss.dispose();
         }
-
-        expect(embedQueryCalls.count).toBe(1);
-        expect(embedQueryCalls.lastPrompt).toBe('raw prompt');
-        expect(buildFtsQueryMock).not.toHaveBeenCalled();
-
-        resolveOverride?.('rewritten');
-        await searchPromise;
-
-        vss.dispose();
     });
 
     it('forwards scoped embedding admission to the physical embedQuery attempt', async () => {

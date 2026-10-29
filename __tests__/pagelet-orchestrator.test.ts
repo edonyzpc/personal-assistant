@@ -720,6 +720,35 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         expect(panelView.open.mock.calls.at(-1)?.[1][0].insightText).toBe(originalBody);
     });
 
+    it("opens the Panel reading without a deep-discover reader or provider run", async () => {
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>();
+        const orchestrator = new PageletOrchestrator(makeHost({
+            runDeepDiscover,
+            readDeepDiscover: undefined,
+            getDeepDiscoverPolicyIdentity: undefined,
+        }));
+        const panelView = {
+            open: jest.fn<PanelOpen>(),
+            close: jest.fn(),
+            destroy: jest.fn(),
+            isOpen: true,
+        };
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+        try {
+            await orchestrator.openPanel();
+
+            expect(runDeepDiscover).not.toHaveBeenCalled();
+            const [layout, findings, extra] = panelView.open.mock.calls.at(-1) ?? [];
+            expect(layout).toBe("discover");
+            expect(findings).toEqual([]);
+            expect(extra?.sourcePath).toBe("notes/current.md");
+            expect(extra?.reading?.label).toContain("No content is available for this note yet.");
+        } finally {
+            orchestrator.destroy();
+        }
+    });
+
     it("makes every completed text reachable after a partial run without another provider call", async () => {
         const result = makeVerifiedDeepDiscoverResult();
         if (result.status !== "verified") throw new Error("expected verified fixture");
