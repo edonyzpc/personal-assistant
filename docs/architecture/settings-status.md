@@ -1,6 +1,6 @@
 # Settings Current Status
 
-Updated: 2026-10-29
+Updated: 2026-10-30
 
 ## Status
 
@@ -27,6 +27,40 @@ or delivery status.
 [B-191 最终验证](../archive/2026/b191-settings-ux-validation.md)，不代表已发布版本。
 
 ## Current Summary
+
+多服务配置依据 [DEC-077](../product/decisions/dec-077-multi-provider-connections.md)
+及 [B-192 Product Spec](../product/specs/pa-multi-provider-connections-product-spec.md)
+实现；运行验收及其证据范围见 [B-192 最终验证](../archive/2026/b192-multi-provider-validation.md)，
+以下源码契约不表示已发布。
+
+- 概览以默认 AI 服务为主，聊天、笔记 Memory、图片默认继承；按需调整才选择独立连接。
+  切换先预览再应用；独立项收起后仍显示，恢复默认同样需应用。
+  分组摘要取已保存的默认连接及其自身缓存状态；提交后局部更新，不重建导航或抢焦点。
+- 连接持有各用途模型/地址和 SecretStorage 引用；用途绑定不复制 Key。
+  普通界面只显示可读连接名及凭据状态，不显示内部 ID 或 SecretStorage 名称。
+  管理页面提供留空保留、输入替换及单独移除 Key；渲染不读取秘密。
+- 新 Key 存储名称采用服务前缀和短防重后缀；旧槽保留兼容，改名不搬迁秘密。
+  替换或移除共享旧槽时只分离当前连接，不清空其他连接仍使用的 Key。
+  仅明确保存时分配名称，检查宿主名称和连接引用占用；枚举失败不能假定空存储。
+  Key写入后，settings保存成功才发布连接；失败补偿不成功须如实报告。
+  凭据状态和修订按连接隔离，provider/地区/地址改变通过新增连接完成。
+- Settings 与 Chat 首配共用配置 owner 和持久化队列。旧配置需明确迁移；已存在但损坏的
+  新 schema 不回退旧全局 Key。迁移后的页面隐藏旧图片连接及旧 Key 编辑入口。
+  自定义网关迁移保留原聊天/检索地址、模型及Policy；只有已知官方地址与确认的服务归属冲突才纠正。
+  新增连接在写Key前校验非空API地址，字段错误保留草稿；未使用的用途可留空。
+- 非秘密草稿随本地返回保留，Key 离开编辑区即清除；取消零提交，关闭 Settings 不自动保存。
+  异步保存不能重开已离开的页面或覆盖较新的草稿。
+  同一新增草稿在保存期间返回重进时复用进行中的提交，完成后可编辑已创建连接，不重复新建。
+  内部页定位保留返回按钮和标题，复用现有移动置顶栏偏移；取消回原入口，新增/删除完成回管理页添加入口。
+- Memory 状态取自实际当前配置；切换不自动准备。笔记 Memory 的独立连接只影响笔记
+  准备和检索，长期学习与文字准备继续使用聊天连接。
+  主开关改变时仅更新概览的Memory区域，不丢连接草稿或移动开关焦点；关闭时不提供准备/更新动作。
+- resolver仅解析非秘密配置，不读Key。AIUtils的Agent、Policy及全部文字辅助消费者使用实际
+  Chat连接；笔记准备/查询使用embedding用途。端点、模型、有效选项、连接及凭据版本构成
+  用途请求身份，发送与结果交付检查同一身份；改名和不影响独立用途的默认变化不撤销该用途请求。
+
+下文涉及 vault-scoped token、provider preset 和 tuple 的单连接说明保留为旧 schema
+兼容路径；已迁移配置以以上规则为准，其余 Settings 导航/偏好契约继续适用。
 
 Settings 简化的产品目标和旧选项失效规则见
 [DEC-033](../product/decisions/dec-033-simple-settings-and-unified-defaults.md) 与

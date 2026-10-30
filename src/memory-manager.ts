@@ -10,6 +10,7 @@ import type {
     VSSProgressEvent,
 } from "./vss";
 import { getPluginUiLanguage, pluginT, type PluginLocale } from "./locales/plugin";
+import { resolveAIConnection } from "./ai-services/ai-connection-resolver";
 import {
     clearPlatformInterval,
     clearPlatformTimeout,
@@ -210,6 +211,7 @@ export const MEMORY_APPROVAL_SECTIONS = [
 function getLocalizedMemoryApprovalSections(
     plan: MemoryMaintenancePlan,
     locale: PluginLocale,
+    connectionName?: string,
 ): typeof MEMORY_APPROVAL_SECTIONS {
     if (plan.action === "rebuild-lexical") {
         return [
@@ -230,7 +232,9 @@ function getLocalizedMemoryApprovalSections(
         },
         {
             title: pluginT("plugin.memory.approval.section.provider.title", locale),
-            body: pluginT("plugin.memory.approval.section.provider.body", locale),
+            body: connectionName
+                ? pluginT("plugin.memory.approval.section.provider.namedBody", locale, { name: connectionName })
+                : pluginT("plugin.memory.approval.section.provider.body", locale),
         },
         {
             title: pluginT("plugin.memory.approval.section.search.title", locale),
@@ -302,13 +306,58 @@ export class MemoryManager {
     private memoryAdmissionOwner: MemoryAdmissionOwner | null = null;
     private nextPreparationId = 1;
     private nextChatPreparationConsumerId = 1;
+    private embeddingConfigurationIdentity: string | null = null;
+    private embeddingActivationPromise: Promise<void> | null = null;
+    private embeddingActivationError: unknown = null;
 
     constructor(host: MemoryHost, vss: VSS) {
         this.host = host;
         this.vss = vss;
+        if (host.settings.aiConnections) this.embeddingConfigurationIdentity = vss.getEmbeddingConfigurationIdentity();
+    }
+
+    /** Configuration owner calls this only after its settings transaction commits. */
+    async onEmbeddingConfigurationChanged(): Promise<void> {
+        if (!this.host.settings.aiConnections) return;
+        const identity = this.vss.getEmbeddingConfigurationIdentity();
+        if (identity === this.embeddingConfigurationIdentity && !this.embeddingActivationError) return;
+        // Register before draining: the old preparation's admission persistence
+        // notifies this same listener and must be allowed to finish.
+        this.embeddingConfigurationIdentity = identity;
+        this.embeddingActivationError = null;
+        this.cancelActivePreparation();
+        const lifecycle = this.lifecycleVersion;
+        const activate = async () => {
+            await this.waitForIdle();
+            if (!this.isLifecycleCurrent(lifecycle) || identity !== this.embeddingConfigurationIdentity) return;
+            await this.vss.synchronizeEmbeddingConfiguration();
+        };
+        const previous = this.embeddingActivationPromise;
+        const activation = previous ? previous.then(activate, activate) : Promise.resolve().then(activate);
+        this.embeddingActivationPromise = activation;
+        void activation.then(() => {
+            if (this.embeddingActivationPromise !== activation) return;
+            this.embeddingActivationPromise = null;
+            if (this.isLifecycleCurrent(lifecycle)) this.host.notifyStatusChanged();
+        }, (error) => {
+            if (this.embeddingActivationPromise !== activation) return;
+            this.embeddingActivationPromise = null;
+            if (!this.isLifecycleCurrent(lifecycle)) return;
+            this.embeddingActivationError = error;
+            this.host.log('Could not activate the selected Memory configuration', error);
+            this.host.notifyStatusChanged();
+        });
+        this.host.notifyStatusChanged();
     }
 
     async getMaintenancePlan(): Promise<MemoryMaintenancePlan> {
+        await this.onEmbeddingConfigurationChanged();
+        while (this.embeddingActivationPromise) {
+            try { await this.embeddingActivationPromise; }
+            catch { break; } // Recorded below as a local activation failure, never a first use.
+        }
+        if (this.embeddingActivationError) return { reason: 'unavailable', action: 'none',
+            notesToCheck: 0, requiresApproval: false, canAnswerNow: true };
         return this.vss.getMemoryReadiness();
     }
 
@@ -344,6 +393,10 @@ export class MemoryManager {
             dirtyCount: vssSnapshot.dirtyCount,
             verificationPending: vssSnapshot.verificationPending,
         };
+        if (enabled && (this.embeddingActivationPromise || this.embeddingActivationError)) {
+            return { enabled, status: this.embeddingActivationError ? 'error' : 'unknown', dirtyCount: 0,
+                verificationPending: 0, ...(this.embeddingActivationError ? { lastErrorCode: 'memory-profile-activation-failed' } : {}) };
+        }
         if (vssSnapshot.indexedDocumentCount !== undefined) {
             snapshot.indexedDocumentCount = vssSnapshot.indexedDocumentCount;
         }
@@ -466,6 +519,7 @@ export class MemoryManager {
             return { decision: "cancel" };
         }
         const lifecycleToken = this.lifecycleVersion;
+        const embeddingIdentity = this.host.settings.aiConnections ? this.vss.getEmbeddingConfigurationIdentity() : null;
         if (!this.host.settings.memoryEnabled) {
             return { decision: "answer-now" };
         }
@@ -564,6 +618,16 @@ export class MemoryManager {
                 return { decision: "cancel" };
             }
             const prepareLifecycle = this.lifecycleVersion;
+            if (this.host.settings.aiConnections && !await this.vss.consumeFirstUseEligibility()) {
+                return { decision: 'answer-now', message: memoryT('plugin.memory.message.prepareFailedAnswerNow') };
+            }
+            // Durable admission can notify a settings change before it settles.
+            // Its first-use permission belongs to the original selection and run.
+            if (preparationOwnerSignal?.aborted) return { decision: 'cancel' };
+            if (!this.isLifecycleCurrent(lifecycleToken)
+                || embeddingIdentity !== null && embeddingIdentity !== this.vss.getEmbeddingConfigurationIdentity()) {
+                return { decision: 'answer-now' };
+            }
             void this.prepareMemoryForChat(plan, preparationOwnerSignal).then((result) => {
                 if (result === null) return;
                 if (!this.isLifecycleCurrent(prepareLifecycle)) return;
@@ -858,6 +922,7 @@ export class MemoryManager {
 
             setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.checking"));
             setActiveStatus(memoryT("plugin.memory.progress.checking"));
+            if (this.host.settings.aiConnections) await this.vss.recordPreparationAttempt();
             this.activeOperationControllers.add(abortController);
             if (abortController.signal.aborted) {
                 return {
@@ -1044,9 +1109,12 @@ export class MemoryManager {
         const actionPlan: MemoryMaintenancePlan = plan.action === "none"
             ? { ...plan, action: "rebuild", requiresApproval: true }
             : plan;
+        const lifecycleToken = this.lifecycleVersion;
+        const requestIdentity = this.vss.getEmbeddingConfigurationIdentity();
         const decision = await this.requestApproval(actionPlan, "command");
         if (decision !== "use-memory") return;
-        if (!this.isMemoryEnabled() || this.shuttingDown) return;
+        if (!this.isMemoryEnabled() || !this.isLifecycleCurrent(lifecycleToken)
+            || requestIdentity !== this.vss.getEmbeddingConfigurationIdentity()) return;
         const result = await this.prepareMemory(actionPlan);
         if (!result.ok) {
             new Notice(result.message ?? memoryT("plugin.notice.memoryPrepareFailed"), 7000);
@@ -1392,8 +1460,11 @@ export class MemoryManager {
         if (signal?.aborted) {
             return Promise.resolve("cancel");
         }
+        const connection = this.host.settings.aiConnections
+            ? resolveAIConnection(this.host.settings.aiConnections, 'embedding') : undefined;
+        const connectionName = connection?.ok ? connection.connection.name : undefined;
         return new Promise((resolve) => {
-            new MemoryApprovalModal(this.host.app, plan, resolve, context, signal).open();
+            new MemoryApprovalModal(this.host.app, plan, resolve, context, signal, connectionName).open();
         });
     }
 
@@ -1435,6 +1506,7 @@ export class MemoryApprovalModal extends Modal {
         onDecision: (decision: MemoryDecision) => void,
         context: MemoryApprovalContext = "chat",
         signal?: AbortSignal,
+        private readonly connectionName?: string,
     ) {
         super(app);
         this.plan = plan;
@@ -1467,7 +1539,7 @@ export class MemoryApprovalModal extends Modal {
             text: pluginT("plugin.memory.approval.intro", locale),
         });
 
-        for (const section of getLocalizedMemoryApprovalSections(this.plan, locale)) {
+        for (const section of getLocalizedMemoryApprovalSections(this.plan, locale, this.connectionName)) {
             this.addSection(section.title, section.body);
         }
 

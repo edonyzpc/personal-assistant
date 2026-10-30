@@ -1,6 +1,6 @@
 import { getPlatformDocument } from '../platform-dom';
 import { assertNewChatImageSupported, inspectImage } from './image-format';
-import { checkImageOperation, ImageProcessingError } from './image-policy';
+import { checkImageDimensions, checkImageOperation, ImageProcessingError } from './image-policy';
 
 const MAX_WAN_INPUT_BYTES = 20 * 1024 * 1024;
 
@@ -10,11 +10,25 @@ export async function prepareWanImageInput(bytes: ArrayBuffer, isCurrent: () => 
     dataUrl: string;
     whiteBackgroundApplied: boolean;
 }> {
+    return prepareImageInput(bytes, isCurrent, false, allowWhiteBackground);
+}
+
+/** Preserve alpha in the metadata-free OpenAI input copy. Originals remain unchanged. */
+export async function prepareOpenAIImageInput(bytes: ArrayBuffer, isCurrent: () => boolean): Promise<{
+    dataUrl: string;
+    whiteBackgroundApplied: boolean;
+}> {
+    return prepareImageInput(bytes, isCurrent, true, false);
+}
+
+async function prepareImageInput(bytes: ArrayBuffer, isCurrent: () => boolean,
+    preserveAlpha: boolean, allowWhiteBackground: boolean): Promise<{ dataUrl: string; whiteBackgroundApplied: boolean }> {
     if (bytes.byteLength > MAX_WAN_INPUT_BYTES) throw new ImageProcessingError('original-byte-limit');
     assertNewChatImageSupported(bytes);
     const source = inspectImage(bytes);
-    if (source.width < 240 || source.height < 240 || source.width > 8000 || source.height > 8000
-        || source.width / source.height > 8 || source.height / source.width > 8) {
+    checkImageDimensions(source.width, source.height);
+    if (!preserveAlpha && (source.width < 240 || source.height < 240 || source.width > 8000 || source.height > 8000
+        || source.width / source.height > 8 || source.height / source.width > 8)) {
         throw new ImageProcessingError('pixel-limit');
     }
     checkImageOperation(undefined, isCurrent);
@@ -37,7 +51,7 @@ export async function prepareWanImageInput(bytes: ArrayBuffer, isCurrent: () => 
             // Wan 2.7 does not accept alpha. Never change the outbound copy
             // until the user has approved a white background for this task.
             let whiteBackgroundApplied = false;
-            for (let y = 0; y < canvas.height; y += 64) {
+            for (let y = 0; !preserveAlpha && y < canvas.height; y += 64) {
                 const height = Math.min(64, canvas.height - y);
                 const pixels = context.getImageData(0, y, canvas.width, height).data;
                 for (let i = 3; i < pixels.length; i += 4) {

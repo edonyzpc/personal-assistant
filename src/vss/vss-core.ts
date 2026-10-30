@@ -8,10 +8,16 @@ import {
     type ProviderRequestOptions,
 } from '../ai-services/ai-utils';
 import type { MemoryHost } from '../memory';
+import type { ResolvedAIConnection } from '../ai-services/ai-connection-types';
 import { computeContentHash, selectFlushCandidates, DirtyTimestamps } from '../vss-helpers';
 import { createInlineSqliteWorker, getInlineSqliteWasmUrl } from './sqlite-inline-assets';
 import { SqliteVectorIndex } from './sqlite-vector-index';
 import { getVSSDeviceId } from './state';
+import { resolveAIConnection } from '../ai-services/ai-connection-resolver';
+import {
+    createMemoryProfileEntry, findMemoryProfile, getMemoryProfileId, parseLegacyEmbeddingProfile,
+    type MemoryProfileCatalog, type MemoryProfileEntry, type MemoryStorageTarget,
+} from './profile-catalog';
 import {
     createVSSIndexStateStore,
     type VSSIndexStateStore,
@@ -337,15 +343,263 @@ export class VSS {
     private lastLexicalSearchStatus: LexicalSearchStatus | null = null;
     private readonly pageletQueryEmbeddingCache = new Map<string, number[]>();
     private readonly pageletQueryEmbeddingInFlight = new Map<string, Promise<number[]>>();
+    private readonly rootStateStore: VSSIndexStateStore;
+    private stateStore: VSSIndexStateStore;
+    private profileCatalog: MemoryProfileCatalog | null = null;
+    private activeProfileEntry: MemoryProfileEntry | null = null;
+    private embeddingRequestIdentity: string | null = null;
+    private profileContextPromise: Promise<void> | null = null;
+    private activeStorageState: 'absent' | 'known' | 'unknown' = 'absent';
 
     constructor(
         host: MemoryHost,
         vssCacheDir: string,
-        private readonly stateStore: VSSIndexStateStore = createDefaultVSSIndexStateStore(host),
+        stateStore: VSSIndexStateStore = createDefaultVSSIndexStateStore(host),
     ) {
         this.host = host;
         this.vssCacheDir = vssCacheDir;
         this.aiUtils = new AIUtils(host);
+        this.rootStateStore = stateStore;
+        this.stateStore = stateStore;
+    }
+
+    getEmbeddingConfigurationIdentity(): string {
+        if (typeof this.aiUtils.getConnectionRequestIdentity === 'function') return this.aiUtils.getConnectionRequestIdentity('embedding');
+        if (!this.host.settings.aiConnections) return getEmbeddingProfileSignature(this.createEmbeddingProfile());
+        const resolved = resolveAIConnection(this.host.settings.aiConnections, 'embedding');
+        if (!resolved.ok) return JSON.stringify(resolved);
+        const connection = resolved.connection;
+        return JSON.stringify(['embedding', connection.connectionId, connection.providerId, connection.endpoint,
+            connection.model, undefined, connection.options.embeddingDimensions, connection.secretRef,
+            this.host.getAIConnectionCredentialRevision?.(connection.connectionId) ?? 0]);
+    }
+
+    /** Called after the manager has cancelled its old preparation/maintenance work. */
+    async synchronizeEmbeddingConfiguration(): Promise<void> {
+        if (!this.host.settings.aiConnections || this.disposed || this.closing) return;
+        if (this.embeddingRequestIdentity === this.getEmbeddingConfigurationIdentity()) return;
+        await this.runExclusive(async () => {
+            if (this.embeddingRequestIdentity === this.getEmbeddingConfigurationIdentity()) return;
+            await this.stateWriteChain;
+            this.assertActive();
+            const nextProfile = this.createEmbeddingProfile();
+            if (this.activeProfileEntry
+                && getEmbeddingProfileSignature(this.activeProfileEntry.profile) === getEmbeddingProfileSignature(nextProfile)) {
+                this.embeddingRequestIdentity = this.getEmbeddingConfigurationIdentity();
+                this.pageletQueryEmbeddingCache.clear();
+                this.pageletQueryEmbeddingInFlight.clear();
+                await this.applyMemorySelection();
+                return;
+            }
+            if (this.index) {
+                await this.disposeIndex(this.index, 'Failed to close the previous Memory profile');
+                this.index = null;
+            }
+            await this.flushPendingLocalStateWrites();
+            await this.stateWriteChain;
+            if (this.hasPendingLocalStateWrites()) throw new Error('The previous Memory profile still has unsaved local recovery state.');
+            this.stateGeneration++;
+            this.marker = null;
+            this.rebuildGuard = null;
+            this.preparedRebuildMarker = null;
+            this.preparedRebuildHandle = null;
+            this.pendingMarkerSnapshot = null;
+            this.markerWritePending = false;
+            this.markerRemovalPending = false;
+            this.dirtyJournalWritePending = false;
+            this.localStateClearPending = false;
+            this.markerRecoverySuppressed = false;
+            this.localStateHydrated = false;
+            this.localStateReady = false;
+            this.dirty.clear();
+            this.verifyQueue.clear();
+            this.pageletQueryEmbeddingCache.clear();
+            this.pageletQueryEmbeddingInFlight.clear();
+            this.lexicalStatus = null;
+            this.lastLexicalSearchStatus = null;
+            this.status = 'uninitialized';
+            this.lastErrorCode = undefined;
+            this.recordReconcileCursor = 0;
+            this.reconcileCursor = 0;
+            this.hashVerifyCursor = 0;
+            this.initialized = false;
+            this.activeProfileEntry = null;
+            this.embeddingRequestIdentity = null;
+            this.stateStore = this.rootStateStore;
+            await this.initialize();
+        });
+    }
+
+    async consumeFirstUseEligibility(): Promise<boolean> {
+        if (!this.host.settings.aiConnections) return true;
+        const catalog = this.profileCatalog;
+        if (!catalog || catalog.firstUse !== 'eligible' || !this.rootStateStore.setProfileCatalog) return false;
+        const next = { ...catalog, firstUse: 'consumed' as const };
+        try {
+            await this.rootStateStore.setProfileCatalog(next);
+            this.profileCatalog = next;
+            return true;
+        } catch (error) {
+            this.lastErrorCode = VSS_LOCAL_STATE_UNAVAILABLE_CODE;
+            this.host.log('Could not persist the first Memory preparation admission', error);
+            return false;
+        }
+    }
+
+    private async applyMemorySelection(): Promise<void> {
+        const catalog = this.profileCatalog;
+        const selection = this.host.settings.aiConnections?.memorySelection;
+        if (!catalog || !selection || !this.rootStateStore.setProfileCatalog) throw new Error('Memory selection state is unavailable.');
+        if (catalog.selectionRevision === selection.revision) return;
+        const next = { ...catalog, selectionRevision: selection.revision,
+            firstUse: selection.cause === 'initial-setup' && catalog.firstUse === 'eligible' ? 'eligible' as const : 'consumed' as const };
+        this.assertActive();
+        await this.rootStateStore.setProfileCatalog(next);
+        this.profileCatalog = next;
+    }
+
+    async recordPreparationAttempt(): Promise<void> {
+        if (!this.host.settings.aiConnections) return;
+        if (!this.profileCatalog || !this.rootStateStore.setProfileCatalog) throw new Error('Memory preparation state is unavailable.');
+        if (this.profileCatalog.firstUse === 'consumed') return;
+        const next = { ...this.profileCatalog, firstUse: 'consumed' as const };
+        await this.rootStateStore.setProfileCatalog(next);
+        this.profileCatalog = next;
+    }
+
+    private async ensureProfileContext(): Promise<void> {
+        if (!this.host.settings.aiConnections || this.activeProfileEntry) return;
+        this.profileContextPromise ??= this.openProfileContext().finally(() => { this.profileContextPromise = null; });
+        await this.profileContextPromise;
+    }
+
+    private async openProfileContext(): Promise<void> {
+        const root = this.rootStateStore;
+        if (!root.getProfileCatalog || !root.setProfileCatalog || !root.forProfile || !root.migrateLegacyProfile) {
+            throw new Error('Memory profile state storage is unavailable.');
+        }
+        await root.initialize();
+        this.assertActive();
+        const requestIdentity = this.getEmbeddingConfigurationIdentity();
+        const profile = this.createEmbeddingProfile();
+        const legacyStorage = this.getLegacyStorageTarget();
+        let catalog = await root.getProfileCatalog();
+        this.assertActive();
+        const hadCatalog = catalog !== null;
+        if (!catalog) {
+            const [marker, guard, dirty] = await Promise.all([root.getMarker(), root.getRebuildGuard(), root.getDirtyJournal()]);
+            const inspection = await this.inspectMemoryStorage(legacyStorage);
+            const legacyProfile = inspection.state === 'known' ? parseLegacyEmbeddingProfile(inspection.profileSignature) : null;
+            const virgin = inspection.state === 'absent' && !marker && !guard && dirty.size === 0
+                && this.host.settings.aiConnections?.memorySelection.cause === 'initial-setup';
+            catalog = { version: 1, entries: [], firstUse: virgin ? 'eligible' : 'consumed',
+                legacy: { state: legacyProfile ? 'bound' : inspection.state === 'absent' ? 'absent' : 'unknown', storage: legacyStorage } };
+            if (legacyProfile) {
+                const entry: MemoryProfileEntry = { profileId: getMemoryProfileId(legacyProfile), profile: legacyProfile,
+                    storage: legacyStorage, storageKind: 'legacy', origin: 'migration', legacySignature: inspection.state === 'known' ? inspection.profileSignature : undefined };
+                catalog.entries.push(entry);
+                if (marker && marker.profileSignature === getEmbeddingProfileSignature(legacyProfile)
+                    && (!marker.opfsScope || marker.opfsScope === this.getVaultStorageScope().safeName)) {
+                    this.assertActive();
+                    await root.migrateLegacyProfile(catalog, entry.profileId);
+                } else {
+                    // The original unscoped marker/journal remain an orphan, not evidence for this database.
+                    this.assertActive();
+                    await root.migrateLegacyProfile(catalog, entry.profileId, { marker: null, dirtyJournal: new Map(),
+                        guard: marker || guard ? { version: 1, reason: 'settings-changed', startedAt: new Date().toISOString() } : null });
+                }
+            } else {
+                this.assertActive();
+                await root.setProfileCatalog(catalog);
+            }
+        }
+        if (catalog.version !== 1 || !Array.isArray(catalog.entries)
+            || !['eligible', 'consumed', 'unknown'].includes(catalog.firstUse)) throw new Error('Memory profile catalog is not supported.');
+        for (const entry of catalog.entries) this.assertMemoryStorageTarget(entry.storage);
+        this.assertMemoryStorageTarget(catalog.legacy.storage);
+        if (hadCatalog && (catalog.legacy.state === 'unknown' || catalog.legacy.state === 'unexamined')) {
+            catalog = await this.retryLegacyProfile(catalog);
+        }
+        let entry = findMemoryProfile(catalog, profile);
+        if (!entry) {
+            const origin = this.host.settings.aiConnections?.memorySelection.cause ?? 'migration';
+            entry = createMemoryProfileEntry(this.getVaultStorageScope().safeName, profile, origin);
+            catalog = { ...catalog, entries: [...catalog.entries, entry] };
+            this.assertActive();
+            await root.setProfileCatalog(catalog);
+        }
+        this.profileCatalog = catalog;
+        await this.applyMemorySelection();
+        const inspection = await this.inspectMemoryStorage(entry.storage);
+        if (inspection.state === 'unknown') throw new Error(`Memory storage identity is unavailable: ${inspection.reason}`);
+        if (inspection.state === 'known' && inspection.profileSignature !== (entry.legacySignature ?? getEmbeddingProfileSignature(entry.profile))) {
+            throw new Error('Memory database does not match its recorded profile.');
+        }
+        if (requestIdentity !== this.getEmbeddingConfigurationIdentity()) throw new Error('Memory configuration changed during local activation.');
+        this.activeStorageState = inspection.state;
+        this.activeProfileEntry = entry;
+        this.stateStore = root.forProfile(entry.profileId);
+        this.embeddingRequestIdentity = this.getEmbeddingConfigurationIdentity();
+    }
+
+    private async retryLegacyProfile(catalog: MemoryProfileCatalog): Promise<MemoryProfileCatalog> {
+        const root = this.rootStateStore;
+        const inspection = await this.inspectMemoryStorage(catalog.legacy.storage);
+        if (inspection.state === 'unknown') return catalog;
+        if (inspection.state === 'absent') {
+            const next = { ...catalog, legacy: { ...catalog.legacy, state: 'absent' as const } };
+            await root.setProfileCatalog!(next);
+            return next;
+        }
+        const profile = parseLegacyEmbeddingProfile(inspection.profileSignature);
+        if (!profile) return catalog;
+        const existing = findMemoryProfile(catalog, profile);
+        if (existing) {
+            // Never replace another already-prepared copy while recovering an orphan.
+            const state = root.forProfile!(existing.profileId);
+            const target = await this.inspectMemoryStorage(existing.storage);
+            if (target.state !== 'absent' || await state.getMarker() || await state.getRebuildGuard()
+                || (await state.getDirtyJournal()).size > 0) return catalog;
+        }
+        const entry: MemoryProfileEntry = { profileId: getMemoryProfileId(profile), profile,
+            storage: catalog.legacy.storage, storageKind: 'legacy', legacySignature: inspection.profileSignature, origin: 'migration' };
+        const next: MemoryProfileCatalog = { ...catalog, firstUse: 'consumed',
+            entries: [...catalog.entries.filter((item) => item.profileId !== entry.profileId), entry],
+            legacy: { ...catalog.legacy, state: 'bound' } };
+        const [marker, guard] = await Promise.all([root.getMarker(), root.getRebuildGuard()]);
+        const compatible = marker?.profileSignature === inspection.profileSignature
+            && (!marker.opfsScope || marker.opfsScope === this.getVaultStorageScope().safeName);
+        this.assertActive();
+        await root.migrateLegacyProfile!(next, entry.profileId, compatible ? undefined : { marker: null,
+            dirtyJournal: new Map(), guard: marker || guard ? { version: 1, reason: 'settings-changed', startedAt: new Date().toISOString() } : null });
+        return next;
+    }
+
+    private getLegacyStorageTarget(): MemoryStorageTarget {
+        const scope = this.getVaultStorageScope().safeName;
+        return { databaseName: getVaultScopedDatabaseName({ safeName: scope }),
+            opfsDirectory: `${VSS_OPFS_ROOT}/${scope}`, opfsVfsName: `opfs-sahpool-${scope}`.slice(0, 120) };
+    }
+
+    private assertMemoryStorageTarget(storage: MemoryStorageTarget): void {
+        const legacy = this.getLegacyStorageTarget();
+        const root = `${legacy.opfsDirectory}/profiles/`;
+        if (!storage || typeof storage.databaseName !== 'string' || typeof storage.opfsDirectory !== 'string'
+            || typeof storage.opfsVfsName !== 'string' || storage.opfsDirectory.includes('..')
+            || !(storage.opfsDirectory === legacy.opfsDirectory || storage.opfsDirectory.startsWith(root))) {
+            throw new Error('Memory storage does not belong to this vault.');
+        }
+    }
+
+    private async inspectMemoryStorage(storage: MemoryStorageTarget) {
+        this.assertMemoryStorageTarget(storage);
+        const index = new SqliteVectorIndex({ workerUrl: '', workerFactory: async () => createInlineSqliteWorker(),
+            wasmUrl: getInlineSqliteWasmUrl(), ...storage });
+        let inspection;
+        try { inspection = await index.inspectStorage(); }
+        finally { await index.dispose(); }
+        this.assertActive();
+        return inspection;
     }
 
     async initialize() {
@@ -362,6 +616,15 @@ export class VSS {
 
     private async initializeUnlocked(): Promise<void> {
         if (this.disposed) return;
+        if (this.host.settings.aiConnections) {
+            try { await this.ensureProfileContext(); }
+            catch (error) {
+                this.status = 'error';
+                this.lastErrorCode = VSS_LOCAL_STATE_UNAVAILABLE_CODE;
+                this.host.log('Could not activate the selected Memory profile', error);
+                return;
+            }
+        }
         this.deviceId = getVSSDeviceId();
         this.profile = this.createEmbeddingProfile();
         if (await this.ensureLocalStateStoreReady()) {
@@ -372,6 +635,11 @@ export class VSS {
 
         if (this.rebuildGuard) {
             this.status = this.getStatusForRebuildReason(this.rebuildGuard.reason);
+            this.initialized = true;
+            return;
+        }
+        if (this.host.settings.aiConnections && this.activeStorageState === 'absent' && this.marker) {
+            this.status = 'missing-local-index';
             this.initialized = true;
             return;
         }
@@ -534,7 +802,7 @@ export class VSS {
             });
         }
         await this.stateWriteChain.catch(() => undefined);
-        await this.stateStore.dispose().catch((error) => {
+        await this.rootStateStore.dispose().catch((error) => {
             this.host.log("Failed to dispose Memory local state store", error);
         });
     }
@@ -1059,6 +1327,7 @@ export class VSS {
         await this.initialize();
         this.assertActive();
         const rebuildReason = options.rebuildReason ?? this.getCurrentRebuildReason();
+        if (this.host.settings.aiConnections) await this.recordPreparationAttempt();
         if (abortSignal?.aborted) {
             summary.aborted = true;
             return summary;
@@ -1524,7 +1793,85 @@ export class VSS {
 
     async resetLocalIndex(): Promise<void> {
         if (this.disposed) return;
+        if (this.host.settings.aiConnections) {
+            await this.initialize();
+            await this.runExclusive(() => this.resetAllProfilesUnlocked());
+            return;
+        }
         await this.runExclusive(() => this.resetLocalIndexUnlocked());
+    }
+
+    private async resetAllProfilesUnlocked(): Promise<void> {
+        const root = this.rootStateStore;
+        if (!root.getProfileCatalog || !root.setProfileCatalog || !root.removeProfileState) throw new Error('Memory catalog is unavailable; no storage was removed.');
+        if (!this.profileCatalog) {
+            await root.initialize();
+            this.profileCatalog = await root.getProfileCatalog() ?? { version: 1, entries: [], firstUse: 'consumed',
+                legacy: { state: 'unknown', storage: this.getLegacyStorageTarget() } };
+            await root.setProfileCatalog(this.profileCatalog);
+        }
+        const catalog = this.profileCatalog;
+        await this.recordPreparationAttempt();
+        await this.stateWriteChain;
+        if (this.index) {
+            await this.disposeIndex(this.index, 'Could not close Memory before reset');
+            this.index = null;
+        }
+        this.stateGeneration++;
+        const targets = new Map(catalog.entries.map((entry) => [entry.storage.opfsDirectory, entry.storage]));
+        targets.set(catalog.legacy.storage.opfsDirectory, catalog.legacy.storage);
+        const failures: string[] = [];
+        let updated = this.profileCatalog!;
+        for (const target of [...targets.values()].sort((a, b) => b.opfsDirectory.length - a.opfsDirectory.length)) {
+            this.assertMemoryStorageTarget(target);
+            if (failures.some((path) => path.startsWith(`${target.opfsDirectory}/`))) {
+                failures.push(target.opfsDirectory);
+                continue;
+            }
+            const index = new SqliteVectorIndex({ workerUrl: '', workerFactory: createInlineSqliteWorker,
+                wasmUrl: getInlineSqliteWasmUrl(), ...target });
+            try {
+                await index.removeStorage();
+                for (const entry of updated.entries.filter((entry) => entry.storage.opfsDirectory === target.opfsDirectory)) {
+                    const next = { ...updated, entries: updated.entries.filter((candidate) => candidate.profileId !== entry.profileId) };
+                    await root.removeProfileState(entry.profileId, next);
+                    updated = next;
+                }
+                if (target.opfsDirectory === updated.legacy.storage.opfsDirectory) {
+                    const next = { ...updated, legacy: { ...updated.legacy, state: 'absent' as const } };
+                    await root.setProfileCatalog(next);
+                    updated = next;
+                }
+            } catch (error) {
+                failures.push(target.opfsDirectory);
+                this.host.log('Could not remove a local Memory copy', { scope: target.opfsDirectory, error });
+            } finally {
+                await index.dispose();
+            }
+        }
+        this.profileCatalog = updated;
+        this.activeProfileEntry = null;
+        this.embeddingRequestIdentity = null;
+        this.stateStore = root;
+        this.marker = null;
+        this.rebuildGuard = null;
+        this.preparedRebuildHandle = null;
+        this.preparedRebuildMarker = null;
+        this.pendingMarkerSnapshot = null;
+        this.markerWritePending = false;
+        this.markerRemovalPending = false;
+        this.dirtyJournalWritePending = false;
+        this.localStateClearPending = false;
+        this.localStateReady = false;
+        this.localStateHydrated = false;
+        this.initialized = false;
+        this.dirty.clear();
+        this.verifyQueue.clear();
+        this.pageletQueryEmbeddingCache.clear();
+        this.pageletQueryEmbeddingInFlight.clear();
+        this.status = failures.length ? 'error' : 'uninitialized';
+        if (failures.length) throw new Error(`Memory reset was only partially completed (${failures.length} local copies remain).`);
+        new Notice(vssT('plugin.memory.notice.localCopyReset'), 3000);
     }
 
     private async resetLocalIndexUnlocked(): Promise<void> {
@@ -2257,6 +2604,7 @@ export class VSS {
 
     async searchSimilarity(prompt: string) {
         if (this.disposed || this.closing) return [];
+        const requestIdentity = this.getEmbeddingConfigurationIdentity();
         await this.initialize();
         if (this.index) {
             await this.ensureIndex({ allowFallback: false, mode: "foreground" });
@@ -2271,20 +2619,26 @@ export class VSS {
         if (this.status !== "ready" || !this.hasAdmittedReadyMarker()) {
             return [];
         }
+        if (requestIdentity !== this.getEmbeddingConfigurationIdentity()) return [];
 
         const profile = this.profile ?? this.createEmbeddingProfile();
         const profileSignature = getEmbeddingProfileSignature(profile);
         const embeddings = await this.aiUtils.createEmbeddings(profile.dimensions);
+        if (requestIdentity !== this.getEmbeddingConfigurationIdentity()) return [];
         const queryEmbedding = await embeddings.embedQuery(prompt);
+        if (requestIdentity !== this.getEmbeddingConfigurationIdentity()) return [];
         return this.runExclusive(async () => {
-            if (this.disposed) return [];
+            if (this.disposed || requestIdentity !== this.getEmbeddingConfigurationIdentity()) return [];
             if (this.index) {
                 await this.ensureIndex({ allowFallback: false, mode: "foreground" });
             }
             if (!this.index || this.status !== "ready" || !this.hasAdmittedReadyMarker() || !this.profile) return [];
-            if (getEmbeddingProfileSignature(this.profile) !== profileSignature) return [];
+            if (requestIdentity !== this.getEmbeddingConfigurationIdentity()
+                || getEmbeddingProfileSignature(this.profile) !== profileSignature) return [];
             const results = await this.index.search(queryEmbedding, 8);
-            return results.map(normalizeSearchResult);
+            const currentResults = await this.filterCurrentProfileResults(results, requestIdentity);
+            if (requestIdentity !== this.getEmbeddingConfigurationIdentity()) return [];
+            return currentResults.map(normalizeSearchResult);
         }, "foreground").catch((error) => {
             if (this.disposed || getErrorCode(error) === "vss-disposed") return [];
             throw error;
@@ -2328,6 +2682,7 @@ export class VSS {
             noteScope?: NoteSearchScope;
         },
     ) {
+        const requestIdentity = this.getEmbeddingConfigurationIdentity();
         const noteScope = copyNoteSearchScope(options?.noteScope);
         const lexicalCandidateEnabled = this.isLexicalProfileEnabled();
         const retrievalMode = options?.retrievalMode ?? "standard";
@@ -2380,6 +2735,7 @@ export class VSS {
         if (this.status !== "ready" || !this.hasAdmittedReadyMarker()) {
             return [];
         }
+        if (requestIdentity !== this.getEmbeddingConfigurationIdentity()) return [];
 
         const profile = this.profile ?? this.createEmbeddingProfile();
         const profileSignature = getEmbeddingProfileSignature(profile);
@@ -2406,13 +2762,15 @@ export class VSS {
                     ? { onProviderRequestStart: options.onProviderRequestStart }
                     : {}),
             });
+            if (requestIdentity !== this.getEmbeddingConfigurationIdentity()) return [];
             const invoke = () => embeddings.embedQuery(prompt);
             if (!options?.executeEmbeddingInvoke) return invoke();
             const cacheKey = stableHash(`${profileSignature}\u0000${prompt}`);
             return this.getOrCreatePageletQueryEmbedding(
                 cacheKey,
                 () => options.executeEmbeddingInvoke!(invoke),
-                () => !signal?.aborted && (options.canCacheEmbeddingResult?.() ?? true),
+                () => !signal?.aborted && requestIdentity === this.getEmbeddingConfigurationIdentity()
+                    && (options.canCacheEmbeddingResult?.() ?? true),
             );
         })();
         // Parallel: kick off both rewrite override and embed; tolerate rewrite failures.
@@ -2423,6 +2781,7 @@ export class VSS {
             safeTemporalPromise,
             queryEmbeddingPromise,
         ]), signal);
+        if (requestIdentity !== this.getEmbeddingConfigurationIdentity()) return [];
         // Provider rewrite/embedding latency belongs to the caller's turn
         // budget, not the bounded local lexical/Worker phase. Start one local
         // deadline only after those inputs settle, then share it across every
@@ -2451,17 +2810,19 @@ export class VSS {
                 this.assertActive();
             };
             assertInvocationActive();
-            if (this.disposed) return [];
+            if (this.disposed || requestIdentity !== this.getEmbeddingConfigurationIdentity()) return [];
             if (this.index) {
                 await this.ensureIndex({ allowFallback: false, mode: "foreground" });
             }
             assertInvocationActive();
+            if (requestIdentity !== this.getEmbeddingConfigurationIdentity()) return [];
             if (!this.index || this.status !== "ready" || !this.hasAdmittedReadyMarker() || !this.profile) return [];
             const invocationIndex = this.index;
             const assertInvocationIndexCurrent = () => {
                 assertInvocationActive();
                 if (
                     this.index !== invocationIndex
+                    || requestIdentity !== this.getEmbeddingConfigurationIdentity()
                     || this.status !== "ready"
                     || !this.hasAdmittedReadyMarker()
                     || !this.profile
@@ -2486,7 +2847,9 @@ export class VSS {
                 }
                 const results = await invocationIndex.search(queryEmbedding, 8);
                 assertInvocationIndexCurrent();
-                return results.map(normalizeSearchResult);
+                const currentResults = await this.filterCurrentProfileResults(results, requestIdentity);
+                assertInvocationIndexCurrent();
+                return currentResults.map(normalizeSearchResult);
             }
 
             const safeExclusions = options?.excludeUnchangedPathGenerations?.length
@@ -2614,7 +2977,9 @@ export class VSS {
                     durationMs: result.lexical.durationMs,
                 });
             }
-            return result.results.map(normalizeSearchResult);
+            const currentResults = await this.filterCurrentProfileResults(result.results, requestIdentity);
+            assertInvocationIndexCurrent();
+            return currentResults.map(normalizeSearchResult);
         }, "foreground", false, signal).catch((error) => {
             const errorCode = getErrorCode(error);
             const invocationInvalid = signal?.aborted
@@ -2905,7 +3270,7 @@ export class VSS {
                 }),
                 signal,
             );
-            return results.map(normalizeSearchResult);
+            return (await this.filterCurrentProfileResults(results)).map(normalizeSearchResult);
         }, "foreground", false, signal).catch((error) => {
             if (this.disposed || getErrorCode(error) === "vss-disposed") return [];
             throw error;
@@ -2973,6 +3338,7 @@ export class VSS {
 
     private canRecoverMarker(): boolean {
         return !this.disposed
+            && (!this.host.settings.aiConnections || this.activeStorageState === 'known')
             && !this.closing
             && this.localStateHydrated
             && !this.marker
@@ -3001,6 +3367,7 @@ export class VSS {
                 canAnswerNow: true,
             };
         }
+        if (this.host.settings.aiConnections && this.initialized) await this.synchronizeEmbeddingConfiguration();
         await this.initialize();
         if (this.canRecoverMarker()) {
             await this.tryRecoverMarkerFromSqlite("foreground");
@@ -3090,8 +3457,12 @@ export class VSS {
         }
 
         if (status === "uninitialized" && this.localStateHydrated && !this.disposed && !this.closing) {
+            const selection = this.host.settings.aiConnections?.memorySelection;
+            const mayUseFirstUse = !this.host.settings.aiConnections || this.profileCatalog?.firstUse === 'eligible'
+                && selection?.cause === 'initial-setup' && this.profileCatalog.selectionRevision === selection.revision
+                && this.activeProfileEntry?.origin === 'initial-setup';
             return {
-                reason: "first-use",
+                reason: mayUseFirstUse ? "first-use" : "settings-changed",
                 action: "rebuild",
                 notesToCheck,
                 notesLikelyToUpdate: notesToCheck,
@@ -4015,6 +4386,7 @@ export class VSS {
             try {
                 const status = await sqliteIndex.initialize(profile);
                 this.assertActive();
+                if (this.host.settings.aiConnections) this.activeStorageState = 'known';
                 return { index: sqliteIndex, status };
             } catch (error) {
                 lastError = error;
@@ -4044,7 +4416,7 @@ export class VSS {
             wasmUrl: getInlineSqliteWasmUrl(),
             databaseName: this.getDatabaseName(),
             opfsDirectory: this.getOpfsDirectory(),
-            legacyOpfsDirectory: VSS_LEGACY_OPFS_ROOT,
+            legacyOpfsDirectory: this.host.settings.aiConnections ? undefined : VSS_LEGACY_OPFS_ROOT,
             opfsVfsName: this.getOpfsVfsName(),
             workerFactory: createInlineSqliteWorker,
             lexicalProfileEnabled: this.isLexicalProfileEnabled(),
@@ -4321,6 +4693,49 @@ export class VSS {
         const embeddings = await this.aiUtils.createEmbeddings(profile.dimensions, options);
         this.assertActive();
         return embeddings;
+    }
+
+    /** Inactive profiles missed vault events. Validate actual candidate bodies before exposing old chunks. */
+    private async filterCurrentProfileResults(results: VectorSearchResult[], requestIdentity = this.getEmbeddingConfigurationIdentity()): Promise<VectorSearchResult[]> {
+        if (requestIdentity !== this.getEmbeddingConfigurationIdentity()) return [];
+        if (!this.host.settings.aiConnections || !this.index) return results;
+        const index = this.index;
+        const generation = this.stateGeneration;
+        const valid = new Set<string>();
+        let dirtyChanged = false;
+        for (const path of new Set(results.map((result) => result.doc.metadata?.path).filter((path): path is string => typeof path === 'string'))) {
+            if (generation !== this.stateGeneration || index !== this.index || requestIdentity !== this.getEmbeddingConfigurationIdentity()) return [];
+            const file = this.host.app.vault.getAbstractFileByPath(path);
+            if (!(file instanceof TFile) || !this.isEligible(file)) {
+                await this.deleteFileFromIndex(index, path);
+                continue;
+            }
+            const record = await index.getFileRecord(path);
+            if (!record) continue;
+            try {
+                const snapshot = await this.readFileContentSnapshot(file);
+                if (generation !== this.stateGeneration || index !== this.index || requestIdentity !== this.getEmbeddingConfigurationIdentity()) return [];
+                if (!snapshot.changedDuringCapture && snapshot.contentHash && snapshot.contentHash === record.contentHash) {
+                    valid.add(path);
+                } else {
+                    dirtyChanged = this.markDirtyPath(path) || dirtyChanged;
+                }
+            } catch (error) {
+                if (isVssFileIneligibleError(error) || isMissingFileError(error)) {
+                    await this.deleteFileFromIndex(index, path);
+                } else if (['EACCES', 'EPERM', 'NotAllowedError', 'NotReadableError'].includes(
+                    getErrorCode(error) ?? (error instanceof Error ? error.name : ''),
+                )) {
+                    dirtyChanged = this.markDirtyPath(path) || dirtyChanged;
+                    this.host.log('Memory candidate is not currently readable', { path, error });
+                } else {
+                    throw error;
+                }
+            }
+        }
+        if (dirtyChanged) await this.persistDirtyJournal();
+        if (generation !== this.stateGeneration || index !== this.index || requestIdentity !== this.getEmbeddingConfigurationIdentity()) return [];
+        return results.filter((result) => valid.has(result.doc.metadata?.path));
     }
 
     private async readFileContentSnapshot(
@@ -4841,7 +5256,35 @@ export class VSS {
         return { fileCount: paths.length, bytes, paths };
     }
 
-    private createEmbeddingProfile(): EmbeddingProfile {
+    async previewEmbeddingConnection(connection: ResolvedAIConnection): Promise<'existing' | 'unprepared' | 'unknown'> {
+        if (!this.profileCatalog || !this.rootStateStore.forProfile) return 'unknown';
+        const profile = this.createEmbeddingProfile(connection);
+        const entry = findMemoryProfile(this.profileCatalog, profile);
+        if (!entry) return this.profileCatalog.legacy.state === 'bound' || this.profileCatalog.legacy.state === 'absent'
+            ? 'unprepared' : 'unknown';
+        const store = this.rootStateStore.forProfile(entry.profileId);
+        const [marker, guard] = await Promise.all([store.getMarker(), store.getRebuildGuard()]);
+        return marker && !guard && marker.schemaVersion === VSS_SCHEMA_VERSION
+            && marker.profileSignature === getEmbeddingProfileSignature(profile)
+            ? 'existing' : 'unknown';
+    }
+
+    private createEmbeddingProfile(selected?: ResolvedAIConnection): EmbeddingProfile {
+        if (selected || this.host.settings.aiConnections !== undefined) {
+            const resolved = selected ? { ok: true as const, connection: selected }
+                : resolveAIConnection(this.host.settings.aiConnections, 'embedding');
+            if (!resolved.ok) throw new Error(`Memory connection is unavailable: ${resolved.issue}`);
+            const connection = resolved.connection;
+            return {
+                // This is the legacy embedding protocol signature, not a provider capability declaration.
+                // Endpoint/model still distinguish Custom from actual DashScope vector spaces.
+                provider: connection.providerId === 'openai' ? 'openai' : 'qwen',
+                baseURL: connection.endpoint,
+                model: connection.model,
+                dimensions: connection.options.embeddingDimensions ?? VSS_DEFAULT_DIMENSIONS,
+                distanceMetric: VSS_DEFAULT_DISTANCE_METRIC,
+            };
+        }
         return {
             provider: this.host.settings.aiProvider,
             baseURL: this.host.settings.baseURL,
@@ -4855,6 +5298,15 @@ export class VSS {
         const profile = this.createEmbeddingProfile();
         const profileSignature = getEmbeddingProfileSignature(profile);
         const previousSignature = this.profile ? getEmbeddingProfileSignature(this.profile) : null;
+
+        if (this.host.settings.aiConnections) {
+            if (!this.activeProfileEntry || this.embeddingRequestIdentity !== this.getEmbeddingConfigurationIdentity()
+                || getEmbeddingProfileSignature(this.activeProfileEntry.profile) !== profileSignature) {
+                throw Object.assign(new Error('The selected Memory connection changed.'), { code: 'vss-embedding-configuration-changed' });
+            }
+            this.profile = profile;
+            return { profile, profileSignature };
+        }
 
         if (previousSignature && previousSignature !== profileSignature) {
             this.pageletQueryEmbeddingCache.clear();
@@ -4939,14 +5391,17 @@ export class VSS {
     }
 
     private getDatabaseName(): string {
+        if (this.activeProfileEntry) return this.activeProfileEntry.storage.databaseName;
         return getVaultScopedDatabaseName(this.getVaultStorageScope());
     }
 
     private getOpfsDirectory(): string {
+        if (this.activeProfileEntry) return this.activeProfileEntry.storage.opfsDirectory;
         return `${VSS_OPFS_ROOT}/${this.getVaultStorageScope().safeName}`;
     }
 
     private getOpfsVfsName(): string {
+        if (this.activeProfileEntry) return this.activeProfileEntry.storage.opfsVfsName;
         return `opfs-sahpool-${this.getVaultStorageScope().safeName}`.slice(0, 120);
     }
 

@@ -20,11 +20,18 @@ import type {
     VSSFileRecord,
     VSSFileState,
     VSSIndexStats,
+    VSSStorageInspection,
     VectorIndexDeleteOptions,
 } from "./types";
 import type { RetrievalSearchRuntimeParameters } from "./retrieval-calibration";
 
 export type SqliteWorkerRequest =
+    | {
+        id: number;
+        type: "inspectStorage";
+        payload: { databaseName: string; opfsDirectory?: string; wasmUrl?: string };
+    }
+    | { id: number; type: "removeStorage"; payload: { opfsDirectory?: string } }
     | {
         id: number;
         type: "initialize";
@@ -148,6 +155,7 @@ export type SqliteWorkerControlMessage =
 export type SqliteWorkerMessage = SqliteWorkerRequest | SqliteWorkerControlMessage;
 
 export type SqliteWorkerSuccess =
+    | { id: number; ok: true; result: VSSStorageInspection }
     | { id: number; ok: true; result: VectorIndexStatus }
     | { id: number; ok: true; result: string[] }
     | { id: number; ok: true; result: VSSFileRecord[] }

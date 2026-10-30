@@ -27,6 +27,7 @@ import {
 import { ImageAttachmentDetailModal } from '../src/chat/image-attachment-view';
 import { ImageAssetService } from '../src/chat/image-assets';
 import type { ImageGenerationSubmitInput } from '../src/chat/image-generation-service';
+import type { ImageGenerationConnection } from '../src/ai-services/image-generation-connection';
 import { ImagePreacceptError, type ImageGenerationTask } from '../src/chat/image-generation-types';
 import { createCreateImageTool, type ChatToolContext } from '../src/ai-services/chat-tools';
 import { PaAgentContextOverflowError } from '../src/ai-services/context';
@@ -1145,6 +1146,14 @@ function createImageTextSource(overrides: Partial<ComposerImageTextSource> = {})
         },
         ...overrides,
     };
+}
+
+function openAIImageConnection(): ImageGenerationConnection {
+    return { mode: 'inherit-chat', baseURL: 'https://api.openai.com/v1',
+        synchronousEndpoint: 'https://api.openai.com/v1/images/generations', asynchronousEndpoint: '', tasksEndpoint: '',
+        credentialSlot: 'pa-openai-test', revision: 1, credentialRevision: 1,
+        connectionId: 'openai-personal', providerId: 'openai', adapter: 'openai-image',
+        model: 'gpt-image-2.5-flare', sourceImageModel: 'gpt-image-1' };
 }
 
 describe('Context Used formatter governed Memory identity', () => {
@@ -4277,6 +4286,119 @@ describe('LLMView turn lifecycle', () => {
         await view.onClose();
     });
 
+    it('uses the effective OpenAI model while retaining plain-image defaults of one image', async () => {
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'openai-plain' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const connection = openAIImageConnection();
+        const submit = jest.fn(async (_input: ImageGenerationSubmitInput) => ({ taskId: 'openai-image-task' }));
+        Object.assign(plugin, { captureImageGenerationConnection: () => connection,
+            getImageGenerationOptions: () => ({ model: connection.model!, count: 6, attachmentPathHint: 'images' }),
+            imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        view.prefillImageDraft('A blue paper crane');
+        expect(allText(containerEl)).toContain('Plain image defaults: gpt-image-2.5-flare · 1');
+        expect(getElementByClass(containerEl, 'pa-chat-create-image-model-select').disabled).toBe(true);
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        await streamCalls[0].options.createImage!.submit({ prompt: 'A blue paper crane', operation: 'generate',
+            count: 1, referenceImageRefs: [] });
+        expect(submit).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-image-2.5-flare', count: 1 }));
+        streamCalls[0].resolve();
+        await flushPromises();
+        await view.onClose();
+    });
+
+    it('keeps OpenAI source defaults and per-request model/count changes without rewriting the connection', async () => {
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'openai-source' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const connection = openAIImageConnection();
+        const submit = jest.fn(async (_input: ImageGenerationSubmitInput) => ({ taskId: 'openai-source-task' }));
+        Object.assign(plugin, { captureImageGenerationConnection: () => connection,
+            getImageGenerationOptions: () => ({ model: connection.model!, count: 6, attachmentPathHint: 'images' }),
+            imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit } });
+        await view.onOpen();
+        view.prefillImageDraft('A cover', createImageTextSource());
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        expect(draft.snapshot('A cover').imageIntent?.generationOptions).toMatchObject({ model: 'gpt-image-1', count: 6 });
+        getButtonByClass(containerEl, 'pa-chat-image-options-button').click();
+        const model = getElementByClass(containerEl, 'pa-chat-create-image-model-select') as MockElement & { onchange(): void };
+        model.value = 'gpt-image-2.5-flare';
+        model.onchange();
+        getButtonByClass(containerEl, 'pa-chat-image-options-button').click();
+        const count = getElementByClass(containerEl, 'pa-chat-create-image-count-select') as MockElement & { onchange(): void };
+        count.value = '7';
+        count.onchange();
+        expect(connection.sourceImageModel).toBe('gpt-image-1');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        await streamCalls[0].options.createImage!.submit({ prompt: 'A cover', operation: 'generate',
+            count: 7, totalCount: 7, referenceImageRefs: [] });
+        expect(submit).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-image-2.5-flare', count: 7 }));
+        expect(connection.sourceImageModel).toBe('gpt-image-1');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await view.onClose();
+    });
+
+    it.each([{ model: 'old-explicit-model', count: 6 }, { model: 'gpt-image-1', count: 11 }])(
+        'retains incompatible source choices before text preparation or image submission: %j', async options => {
+            const { view, plugin, containerEl } = createView();
+            const submit = jest.fn(async (_input: ImageGenerationSubmitInput) => ({ taskId: 'unexpected-image' }));
+            Object.assign(plugin, { captureImageGenerationConnection: () => openAIImageConnection(),
+                imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit } });
+            await view.onOpen();
+            view.prefillImageDraft('Keep this supplement', createImageTextSource());
+            const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+            draft.setImageGenerationOptions({ ...options, attachmentPathHint: 'images' });
+            getElementByClass(containerEl, 'send-button-visible').click();
+            await flushPromises();
+            expect(getTextArea(containerEl).value).toBe('Keep this supplement');
+            expect(draft.snapshot('Keep this supplement').imageIntent?.generationOptions).toMatchObject(options);
+            expect(plugin.prepareFeaturedImagePrompt).not.toHaveBeenCalled();
+            expect(mockStreamLLM).not.toHaveBeenCalled();
+            expect(submit).not.toHaveBeenCalled();
+            await view.onClose();
+        },
+    );
+
+    it.each([false, true])('uses the image request identity during source preparation (credential changed: %s)', async credentialChanged => {
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'image-identity' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const connection = openAIImageConnection();
+        let release!: (value: string) => void;
+        const prepared = new Promise<string>(resolve => { release = resolve; });
+        const submit = jest.fn(async (_input: ImageGenerationSubmitInput) => ({ taskId: 'identity-image' }));
+        Object.assign(plugin, { captureImageGenerationConnection: () => connection,
+            getImageGenerationOptions: () => ({ model: connection.model!, count: 1, attachmentPathHint: '' }),
+            prepareFeaturedImagePrompt: () => prepared,
+            imageGenerationService: { list: async () => [], subscribe: () => () => undefined, submit } });
+        await view.onOpen();
+        view.prefillImageDraft('A cover', createImageTextSource());
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        const call = streamCalls[0];
+        try {
+            const pending = call.options.createImage!.submit({ prompt: 'A cover', operation: 'generate', count: 1, referenceImageRefs: [] });
+            await flushPromises();
+            if (credentialChanged) connection.credentialRevision! += 1;
+            else connection.revision += 1;
+            release('Prepared cover');
+            if (credentialChanged) {
+                await expect(pending).rejects.toMatchObject({ cause: { message: 'image_generation:connection_changed' } });
+                expect(submit).not.toHaveBeenCalled();
+            } else {
+                await expect(pending).resolves.toEqual({ taskId: 'identity-image' });
+                expect(submit).toHaveBeenCalledTimes(1);
+            }
+        } finally {
+            release('Cleanup');
+            call.resolve();
+            await flushPromises();
+            await view.onClose();
+        }
+    });
+
     it('does not force generation when @CreateImage only asks for a prompt', async () => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'prompt-only-conversation' });
@@ -5379,6 +5501,68 @@ describe('LLMView turn lifecycle', () => {
         expect(resumeImageTask).not.toHaveBeenCalled();
         streamCalls[0].resolve();
         await waitForTurnCompletion(view);
+        await view.onClose();
+    });
+
+    it('shows retained plain regeneration options and lets the user correct them after switching image services', async () => {
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'plain-regeneration' });
+        await manager.initialize();
+        await manager.startConversation('A red bird');
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const task: ImageGenerationTask = {
+            schemaVersion: 1, taskId: 'prior_openai_task', operationId: 'prior_operation',
+            conversationId: 'plain-regeneration', stableMessageId: 'prior_message',
+            createdAt: '2026-09-18T00:00:00.000Z', updatedAt: '2026-09-18T00:00:00.000Z', revision: 1,
+            request: { userPrompt: 'A red bird', submittedPrompt: 'A red bird', operation: 'generate',
+                model: 'gpt-image-2.5-flare', count: 5, inputRefs: [] },
+            connection: { mode: 'inherit-chat', endpointIdentity: 'https://api.openai.com/v1',
+                credentialSlot: 'openai-key', revision: 1, connectionId: 'prior-openai', providerId: 'openai',
+                adapter: 'openai-image', credentialRevision: 1, requestIdentity: 'prior-openai-identity' },
+            state: 'completed', outputs: [],
+        };
+        const connection: ImageGenerationConnection = {
+            mode: 'inherit-chat', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            synchronousEndpoint: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+            asynchronousEndpoint: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/image-generation/generation',
+            tasksEndpoint: 'https://dashscope.aliyuncs.com/api/v1/tasks', credentialSlot: 'wan-key', revision: 1,
+            connectionId: 'current-wan', providerId: 'dashscope-cn', adapter: 'wan', model: 'wan2.7-image',
+        };
+        const submit = jest.fn(async (_request?: unknown) => ({ taskId: 'new_wan_task' }));
+        Object.assign(plugin, { captureImageGenerationConnection: () => connection,
+            imageGenerationService: { list: async () => [task], subscribe: () => () => undefined, submit },
+            confirmImageGenerationFirstUse: async () => true });
+        await view.onOpen();
+        for (let index = 0; index < 5 && !imageTaskMountMock.mounts.length; index++) await flushPromises();
+        imageTaskMount(task.taskId).props.actions.regenerate();
+
+        const textArea = getTextArea(containerEl);
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        getButtonByClass(containerEl, 'pa-chat-image-options-button').click();
+        const model = getElementByClass(containerEl, 'pa-chat-create-image-model-select') as MockElement & { onchange(): void };
+        const count = getElementByClass(containerEl, 'pa-chat-create-image-count-select') as MockElement & { onchange(): void };
+        expect(model.value).toBe('gpt-image-2.5-flare');
+        expect(count.value).toBe('5');
+        expect(model.disabled).toBe(false);
+        expect(count.disabled).toBe(false);
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        expect(submit).not.toHaveBeenCalled();
+        expect(streamCalls).toHaveLength(0);
+        expect(draft.snapshot(textArea.value).imageIntent?.generationOptions)
+            .toMatchObject({ model: 'gpt-image-2.5-flare', count: 5 });
+
+        model.value = 'wan2.7-image-pro';
+        model.onchange();
+        count.value = '3';
+        count.onchange();
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await waitForStreamCallCount(streamCalls, 1);
+        await streamCalls[0].options.createImage!.submit({ prompt: 'A red bird', operation: 'generate',
+            count: 3, totalCount: 3, referenceImageRefs: [] });
+        expect(submit).toHaveBeenCalledWith(expect.objectContaining({ model: 'wan2.7-image-pro', count: 3 }));
+        expect(connection.model).toBe('wan2.7-image');
+        streamCalls[0].resolve();
+        await flushPromises();
         await view.onClose();
     });
 

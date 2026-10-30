@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-10-28
+Updated: 2026-10-30
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-077 | 多服务连接与Memory保留 | 一项默认、三用途可独立；按需准备、各profile保留；OpenAI三类图片，禁止隐式fallback | [Decision](./decisions/dec-077-multi-provider-connections.md), [Spec](./specs/pa-multi-provider-connections-product-spec.md) | 实际接口迫使能力/数据/费用偏差，或新增自动清理/设备独立选择需求 |
 | DEC-076 | Settings 按任务分层与图谱初始自适应 | 沿用四组，保留 Policy model 和有效偏好；内部详情保护草稿，旧图谱宽高退出，兼顾双语双端；预览认可不等于代码验收 | [Decision](./decisions/dec-076-settings-ux-and-adaptive-graph.md), [Spec](./specs/pa-settings-ux-product-spec.md) | 有效配置不可达、草稿丢失、来源范围漂移，或图谱／窄屏操作越界 |
 | DEC-075 | 第一批旧入口与保留代码清理 | 仅退役指定七命令、无效设置/跳转、旧 Operations 设置链与 Pagelet 专用关联；热键兼容取舍已批准，历史数据和共享能力保持 | [Decision](./decisions/dec-075-legacy-surface-cleanup.md), [Spec](./specs/pa-bounded-code-cleanup-product-spec.md) | 发现有效生产/历史消费者，或用户明确需要恢复某个已退役入口 |
 | DEC-074 | Chat 原生 Mermaid 自动开启 | 渲染前确保当前设备当前 vault 的宿主开关开启；保留原生渲染，无后台或新设置 | [Decision](./decisions/dec-074-chat-mermaid-auto-enable.md), [Spec](./specs/pa-chat-mermaid-auto-enable-product-spec.md) | 宿主配置接口变化、Allow 回归或需要 Chat 独立信任范围 |

@@ -42,7 +42,8 @@ export interface PrepareFeaturedImagePromptRuntime {
     turnId?: string;
 }
 
-export type FeaturedImagePromptHost = Pick<AIUtilsHost, 'settings' | 'getAPIToken' | 'log'>;
+export type FeaturedImagePromptHost = Pick<AIUtilsHost,
+    'settings' | 'getAPIToken' | 'getAIConnectionToken' | 'getAIConnectionCredentialRevision' | 'log'>;
 
 function modelText(content: unknown): string | null {
     if (typeof content === 'string') return content.trim();
@@ -87,7 +88,25 @@ export async function prepareFeaturedImagePrompt(
     input: PrepareFeaturedImagePromptInput,
     runtime?: PrepareFeaturedImagePromptRuntime,
 ): Promise<string> {
-    const settings = host.settings;
+    const aiUtils = new AIUtils({
+        get settings() { return host.settings; },
+        getAPIToken: async () => {
+            assertCurrent();
+            const token = await host.getAPIToken();
+            assertCurrent();
+            return token;
+        },
+        getAIConnectionToken: host.getAIConnectionToken ? async id => {
+            assertCurrent();
+            const token = await host.getAIConnectionToken!(id);
+            assertCurrent();
+            return token;
+        } : undefined,
+        getAIConnectionCredentialRevision: host.getAIConnectionCredentialRevision?.bind(host),
+        log: host.log,
+    });
+    const settings = aiUtils.getEffectiveAISettings('chat');
+    const requestIdentity = aiUtils.getConnectionRequestIdentity('chat');
     const connection = {
         aiProvider: settings.aiProvider,
         baseURL: settings.baseURL,
@@ -97,9 +116,7 @@ export async function prepareFeaturedImagePrompt(
         if (input.signal.aborted) throw new FeaturedImagePromptPreparationError('cancelled');
         if (!input.isSourceCurrent()) throw new FeaturedImagePromptPreparationError('source_changed');
         if (input.isConnectionCurrent?.() === false) throw new FeaturedImagePromptPreparationError('connection_changed');
-        if (settings.aiProvider !== connection.aiProvider
-            || settings.baseURL !== connection.baseURL
-            || settings.chatModelName !== connection.chatModelName) {
+        if (aiUtils.getConnectionRequestIdentity('chat') !== requestIdentity) {
             throw new FeaturedImagePromptPreparationError('connection_changed');
         }
     };
@@ -137,16 +154,6 @@ export async function prepareFeaturedImagePrompt(
         lineage: { domains: ['vault_notes'] },
         promptEstimate: { tokens: estimatedTokens, method: 'cjk_text_and_serialized_schema' },
     }, runtime?.usageLedger);
-    const aiUtils = new AIUtils({
-        settings: { ...settings, ...connection },
-        getAPIToken: async () => {
-            assertCurrent();
-            const token = await host.getAPIToken();
-            assertCurrent();
-            return token;
-        },
-        log: host.log,
-    });
     const model = await aiUtils.createChatModel(0.8, {
         onProviderRequestStart: assertCurrent,
         agentDebugCall: debugCall,

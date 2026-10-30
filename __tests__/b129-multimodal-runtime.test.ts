@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import { BaseMessage } from "@langchain/core/messages";
 import { ChatOpenAI } from "@langchain/openai";
-import { AIUtils } from "../src/ai-services/ai-utils";
+import { AIUtils, type CreateChatModelOptions } from "../src/ai-services/ai-utils";
 import * as aiUtilsModule from '../src/ai-services/ai-utils';
 import { createReadNoteTool } from "../src/ai-services/chat-tool-factories";
 import { BuiltinWebSearchProvider, createBailianWebSearchNetworkPolicy,
@@ -97,6 +97,7 @@ function fixture(replies: Reply[] | ((body: RequestBody, index: number) => Reply
     const sdkAttempts: Array<{ stream: boolean; retryCount: string | null }> = [];
     const modelSpecifications: Array<{ isSummary: boolean; options: { prepareProviderRequest?: unknown } }> = [];
     let beforeSdkDispatch: (() => void) | undefined;
+    let beforeModelCreated: ((isSummary: boolean, options: CreateChatModelOptions) => void) | undefined;
     let afterModelCreated: ((isSummary: boolean) => void | Promise<void>) | undefined;
     const host = {
         settings: { aiProvider: "openai", baseURL: "https://b129-runtime.invalid/v1", chatModelName: "fixture-model", embeddingModelName: "fixture-embedding", policyModelName: "",
@@ -114,6 +115,9 @@ function fixture(replies: Reply[] | ((body: RequestBody, index: number) => Reply
     };
     const originalCreate = AIUtils.prototype.createChatModel;
     jest.spyOn(AIUtils.prototype, "createChatModel").mockImplementation(async function (this: AIUtils, ...args) {
+        // AIUtils snapshots request options during creation. Install physical
+        // preparation observers before that snapshot; source edits still use afterModelCreated.
+        beforeModelCreated?.(args[1]?.maxTokens !== undefined, args[1] ?? {});
         const configured = await originalCreate.apply(this, args);
         // Keep AIUtils' actual admission wrapper and observe SDK attempts before
         // it. Only the dedicated regression enables OpenAI's internal retries;
@@ -169,6 +173,7 @@ function fixture(replies: Reply[] | ((body: RequestBody, index: number) => Reply
     };
     return { host, requests, observed, sdkAttempts, modelSpecifications, events, lifecycle, service, release, run, invalidate: () => { sourceCurrent = false; },
         beforeSdkDispatch: (callback: () => void) => { beforeSdkDispatch = callback; },
+        beforeModelCreated: (callback: (isSummary: boolean, options: CreateChatModelOptions) => void) => { beforeModelCreated = callback; },
         afterModelCreated: (callback: (isSummary: boolean) => void | Promise<void>) => { afterModelCreated = callback; } };
 }
 const pixels = (request: RequestBody) => request.messages.flatMap((message) => Array.isArray(message.content) ? message.content.filter((part) => part.type === "image_url") : []);
@@ -1698,10 +1703,7 @@ describe("B-140 T-07 vault observation physical integration", () => {
             return await originalCachedRead(file);
         };
         const physicalPreparations = { summary: 0, answer: 0 };
-        f.afterModelCreated(isSummary => {
-            const options = f.modelSpecifications.at(-1)!.options as {
-                prepareProviderRequest?: (signal?: AbortSignal | null) => Promise<void>;
-            };
+        f.beforeModelCreated((isSummary, options) => {
             const originalPrepare = options.prepareProviderRequest;
             if (!originalPrepare) throw new Error("model did not expose physical preparation");
             options.prepareProviderRequest = async signal => {
@@ -1873,10 +1875,7 @@ describe("B-140 T-07 vault observation physical integration", () => {
         const installed = await installReadHistory(f, "A_CURRENT_HISTORY", "B_INDEPENDENT_HISTORY");
         (f.host as { getMemoryEvidenceEpoch?: unknown }).getMemoryEvidenceEpoch = () => epoch;
         let wrapperReached = false;
-        f.afterModelCreated(() => {
-            const options = f.modelSpecifications[f.modelSpecifications.length - 1]?.options as {
-                prepareProviderRequest?: (signal?: AbortSignal | null) => Promise<void>;
-            };
+        f.beforeModelCreated((_isSummary, options) => {
             const originalPrepare = options.prepareProviderRequest;
             if (!originalPrepare) throw new Error("answer model did not expose physical preparation");
             let preparedOnce = false;

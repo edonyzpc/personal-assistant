@@ -144,6 +144,31 @@ Current storage/search behavior:
 
 The active database is scoped to the plugin/vault/device-local context and opened through `opfs-sahpool`.
 
+[DEC-077](../product/decisions/dec-077-multi-provider-connections.md) adds a device-local
+profile catalog. New configurations route each complete embedding profile to its own
+OPFS database and IndexedDB marker/dirty/rebuild-guard state. Identity includes the
+provider, normalized embedding endpoint, model, dimensions and distance metric;
+connection name, connection ID and Key are excluded. Switching selects/reuses the
+target rather than resetting the previous database. Credential/connection changes
+invalidate outstanding requests separately, including late query results for an
+otherwise identical storage profile. Inactive profiles do not run paid maintenance.
+
+The old database is probed read-only before adoption; its recorded signature,
+rather than the current settings dropdown, determines ownership. Unknown storage
+remains intact and cannot authorize reset or provider work. The vault-level durable
+first-use eligibility is consumed once; a new profile or a failed switch cannot
+recreate DEC-028 eligibility. Target previews inspect local catalog/state only.
+Explicit local Memory reset closes and removes all known owned retrieval profiles,
+including a known-vault legacy database with unknown profile; connection deletion
+does not remove them. Markdown and personal learning are outside that reset scope.
+`memorySelection` cause/revision is committed with the selected settings, so a
+local-state transaction failure or restart cannot grant first-use eligibility again.
+Legacy marker/dirty/guard state is adopted atomically according to the actual database
+identity; incompatible state remains intact. A full local reset removes a catalog
+entry only after its storage is successfully cleared; partial failures remain retryable.
+Implementation/app evidence is retained in
+[B-192 final validation](../archive/2026/b192-multi-provider-validation.md).
+
 Durable tables include:
 
 - `vss_meta`: schema/profile/backend metadata.

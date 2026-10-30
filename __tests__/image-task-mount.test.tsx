@@ -204,6 +204,28 @@ describe('image task real React mount', () => {
         expect(element<HTMLDetailsElement>(otherHost, 'details').open).toBe(true);
     });
 
+    it('offers settings for authentication and permission failures without resubmitting a task', async () => {
+        const props = propsFixture();
+        const actions = { ...props.actions, openSettings: jest.fn() };
+        props.actions = actions;
+        props.task = { ...props.task, state: 'failed', outputs: [], recoveryReason: 'provider_authentication_failed' };
+        const handle = await mount(props);
+        expect(container.textContent).toContain(text('recovery.providerAuthenticationFailed'));
+        await act(async () => button(container, text('openConnectionSettings')).click());
+        expect(actions.openSettings).toHaveBeenCalledTimes(1);
+        expect(actions.resume).not.toHaveBeenCalled();
+        expect(actions.regenerate).not.toHaveBeenCalled();
+        await act(async () => handle.update({ ...props, task: { ...props.task, recoveryReason: 'provider_permission_denied' } }));
+        expect(container.textContent).toContain(text('recovery.providerPermissionDenied'));
+        expect(button(container, text('openConnectionSettings')).disabled).toBe(false);
+        await act(async () => handle.update({ ...props, task: { ...props.task, recoveryReason: 'provider_rate_limited' } }));
+        expect(container.textContent).toContain(text('recovery.providerRateLimited'));
+        await act(async () => handle.update({ ...props, task: { ...props.task,
+            state: 'submission_unknown', recoveryReason: 'provider_acceptance_unknown' } }));
+        expect(container.textContent).toContain(text('recovery.acceptanceUnknown'));
+        expect(container.querySelector('.pa-chat-image-task-card__actions')).toBeNull();
+    });
+
     it('renders unknown, partial and transparency recovery without inventing progress', async () => {
         const props = propsFixture();
         const handle = await mount(props);
@@ -237,6 +259,35 @@ describe('image task real React mount', () => {
         expect(props.actions.approveWhiteBackground).toHaveBeenCalledTimes(1);
         expect(element(container, '.pa-chat-image-task-card__header-controls')
             .querySelector('.pa-chat-image-task-card__more')).not.toBeNull();
+    });
+
+    it.each(['local_result_unavailable', 'provider_result_incomplete'])(
+        'keeps saved assets and explicit new generation without an empty Resume for %s', async recoveryReason => {
+            const props = propsFixture();
+            props.task = { ...props.task, state: 'partial', recoveryReason,
+                request: { ...props.task.request, model: 'gpt-image-2.5-flare', count: 2 },
+                connection: { ...props.task.connection, adapter: 'openai-image', connectionId: 'openai-personal' } };
+            await mount(props);
+            expect(Array.from(container.querySelectorAll('button')).some(control => control.getAttribute('aria-label') === text('recover')))
+                .toBe(false);
+            expect(props.actions.resume).not.toHaveBeenCalled();
+            await act(async () => button(container, text('saveToNote')).click());
+            expect(props.actions.save).toHaveBeenCalledWith(props.task.outputs[0]);
+            await act(async () => button(container, text('moreTaskActions')).click());
+            await act(async () => button(container, text('regenerate')).click());
+            expect(props.actions.regenerate).toHaveBeenCalledTimes(1);
+        },
+    );
+
+    it('keeps local-save recovery for an OpenAI partial task without a remote task ID', async () => {
+        const props = propsFixture();
+        props.task = { ...props.task, state: 'partial',
+            connection: { ...props.task.connection, adapter: 'openai-image', connectionId: 'openai-personal' },
+            outputs: [...props.task.outputs, { outputId: 'unsaved', providerOrdinal: 1,
+                saveState: 'failed', recoveryReason: 'save_failed' }] };
+        await mount(props);
+        await act(async () => button(container, text('recover')).click());
+        expect(props.actions.resume).toHaveBeenCalledTimes(1);
     });
 
     it('reads current menu capabilities, handles keyboard/outside/idle closing and cleans listeners', async () => {

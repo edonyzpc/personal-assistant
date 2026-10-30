@@ -1,8 +1,9 @@
-import { type ImageGenerationConnection } from '../ai-services/image-generation-connection';
+import { imageGenerationConnectionIdentity, type ImageGenerationConnection, type LegacyImageConnectionReference } from '../ai-services/image-generation-connection';
 import { getPlatformCrypto } from '../platform-dom';
 import { WanImageProvider, WanImageProviderError, type WanImageTask } from '../ai-services/wan-image-provider';
+import { OpenAIImageProvider, OpenAIImageProviderError, type CompletedImageSubmission } from '../ai-services/openai-image-provider';
 import { inspectImage } from './image-format';
-import { prepareWanImageInput } from './image-generation-input';
+import { prepareOpenAIImageInput, prepareWanImageInput } from './image-generation-input';
 import { imageSourceHash } from './image-policy';
 import { cloneInputLineage } from '../ai-services/input-lineage';
 import type { ChatHistoryStore } from './chat-history-store';
@@ -41,14 +42,20 @@ export interface ImageGenerationSubmitInput {
     isSourceCurrent?: () => boolean;
 }
 
+interface ImageGenerationProvider {
+    submit(input: { model: string; prompt: string; count: number; referenceImages?: string[]; size?: '1K' | '2K' | '4K' }): Promise<WanImageTask | CompletedImageSubmission | { kind: 'remote-task'; task: WanImageTask }>;
+    query?: WanImageProvider['query'];
+    cancel?: WanImageProvider['cancel'];
+}
+
 interface ImageGenerationServiceOptions {
     store: ChatHistoryStore;
     assets: ImageAssetService;
-    resolveConnection: () => ImageGenerationConnection | null;
-    getToken: (mode: ImageGenerationConnection['mode']) => Promise<string | null>;
+    resolveConnection: (connectionId?: string, legacy?: LegacyImageConnectionReference) => ImageGenerationConnection | null;
+    getToken: (mode: ImageGenerationConnection['mode'], connectionId?: string) => Promise<string | null>;
     log?: (message: string, error?: unknown) => void;
     now?: () => number;
-    providerFactory?: (connection: ImageGenerationConnection, token: string) => WanImageProvider;
+    providerFactory?: (connection: ImageGenerationConnection, token: string) => ImageGenerationProvider;
     download?: (url: string) => Promise<ArrayBuffer>;
     onSyncNotice?: (receipt: ImageSyncReceipt) => void;
 }
@@ -68,12 +75,24 @@ function sameStatusQueryTarget(previous: ImageGenerationTask, current: ImageGene
         && previous.connection.mode === current.connection.mode
         && previous.connection.endpointIdentity === current.connection.endpointIdentity
         && previous.connection.credentialSlot === current.connection.credentialSlot
-        && previous.connection.revision === current.connection.revision;
+        && previous.connection.revision === current.connection.revision
+        && previous.connection.connectionId === current.connection.connectionId
+        && previous.connection.providerId === current.connection.providerId
+        && previous.connection.adapter === current.connection.adapter;
 }
 
 function knownImageProviderState(value: string | undefined): WanImageTask['status'] | undefined {
     return ['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELED', 'UNKNOWN'].includes(value ?? '')
         ? value as WanImageTask['status'] : undefined;
+}
+
+function providerRejectionReason(status: number | undefined): string {
+    switch (status) {
+        case 401: return 'provider_authentication_failed';
+        case 403: return 'provider_permission_denied';
+        case 429: return 'provider_rate_limited';
+        default: return 'provider_rejected';
+    }
 }
 
 function ownerBlockingReason(value: string | undefined): ImageStatusBlockingReason | undefined {
@@ -118,6 +137,7 @@ export class ImageGenerationService {
     private readonly deletedConversations = new Set<string>();
     private readonly listeners = new Set<(task: ImageGenerationTask) => void>();
     private readonly contextPersistors = new Map<string, { conversationId: string; persist: (task: ImageGenerationTask) => Promise<void> }>();
+    private readonly completedResultBytes = new Map<string, ArrayBuffer[]>();
     private disposed = false;
 
     constructor(private readonly options: ImageGenerationServiceOptions) {}
@@ -157,6 +177,13 @@ export class ImageGenerationService {
         return this.options.store.listImageGenerationTasks(conversationId);
     }
 
+    async getUnfinishedTaskCount(connectionId: string): Promise<number> {
+        const tasks = await this.options.store.listImageGenerationTasks();
+        return tasks.filter(task => !task.deliverySuppressed
+            && ['prepared', 'not_submitted', 'submitting', 'submission_unknown', 'running', 'saving', 'partial'].includes(task.state)
+            && (task.connection.connectionId ?? this.connectionForTask(task)?.connectionId) === connectionId).length;
+    }
+
     get(taskId: string): Promise<ImageGenerationTask | null> {
         return this.options.store.getImageGenerationTask(taskId);
     }
@@ -180,6 +207,7 @@ export class ImageGenerationService {
             const beforeReason = this.statusQueryReason(beforeQuery, scope)
                 ?? (!sameStatusQueryTarget(task, beforeQuery) ? 'task_changed' : undefined);
             if (beforeReason) return this.statusObservation(beforeQuery, beforeReason);
+            if (!provider.query) return this.statusObservation(beforeQuery, 'no_provider_task');
             const result = await provider.query(task.providerTaskId!);
             this.assertStatusScopeCurrent(scope);
             const current = await this.get(task.taskId);
@@ -222,11 +250,8 @@ export class ImageGenerationService {
     private statusQueryReason(task: ImageGenerationTask, scope: ImageStatusReadScope): ImageStatusRefreshReason | undefined {
         if (!task.providerTaskId) return 'no_provider_task';
         if (!scope.canQueryProvider()) return 'network_not_allowed';
-        const connection = this.options.resolveConnection();
-        if (!connection || connection.mode !== task.connection.mode
-            || connection.baseURL !== task.connection.endpointIdentity
-            || connection.credentialSlot !== task.connection.credentialSlot
-            || connection.revision !== task.connection.revision) return 'connection_changed';
+        const connection = this.connectionForTask(task);
+        if (!this.matchesTaskConnection(task, connection)) return 'connection_changed';
         return undefined;
     }
 
@@ -288,17 +313,20 @@ export class ImageGenerationService {
         if (!await this.options.store.getConversation(input.conversationId)) {
             throw new ImagePreacceptError('source_changed', 'stale');
         }
-        const model = input.model ?? 'wan2.7-image';
-        if (model !== 'wan2.7-image' && model !== 'wan2.7-image-pro') {
+        const openai = connection.adapter === 'openai-image';
+        const model = input.model ?? connection.model ?? 'wan2.7-image';
+        if (openai ? !model.startsWith('gpt-image-') || model.length > 128
+            : model !== 'wan2.7-image' && model !== 'wan2.7-image-pro') {
             throw new ImagePreacceptError('invalid_request');
         }
         const count = input.count;
-        if (!Number.isSafeInteger(count) || count < 1 || count > 4) {
-            throw new ImagePreacceptError(count > 4 ? 'count_exceeds_provider_limit' : 'invalid_request');
+        const maxCount = openai ? 10 : 4;
+        if (!Number.isSafeInteger(count) || count < 1 || count > maxCount) {
+            throw new ImagePreacceptError(count > maxCount ? 'count_exceeds_provider_limit' : 'invalid_request');
         }
         if (input.totalCount !== undefined && (!Number.isSafeInteger(input.totalCount)
-            || input.totalCount < count || input.totalCount > 4)) throw new ImagePreacceptError('plan_conflict');
-        if (!input.userPrompt.trim() || !input.submittedPrompt.trim() || Array.from(input.submittedPrompt).length > 5000
+            || input.totalCount < count || input.totalCount > maxCount)) throw new ImagePreacceptError('plan_conflict');
+        if (!input.userPrompt.trim() || !input.submittedPrompt.trim() || Array.from(input.submittedPrompt).length > (openai ? 12000 : 5000)
             || input.inputRefs.length > 8) {
             throw new ImagePreacceptError('invalid_request');
         }
@@ -319,7 +347,7 @@ export class ImageGenerationService {
             request: { userPrompt: input.userPrompt, submittedPrompt: input.submittedPrompt,
                 operation: input.operation, model, count,
                 ...(input.totalCount !== undefined ? { totalCount: input.totalCount } : {}),
-                size: '2K', inputRefs: input.inputRefs.map(cloneImageRef),
+                ...(openai ? {} : { size: '2K' }), inputRefs: input.inputRefs.map(cloneImageRef),
                 ...(input.parentVersionId ? { parentVersionId: input.parentVersionId } : {}),
                             ...(input.promptOrigin ? { promptOrigin: input.promptOrigin } : {}),
                             ...(input.inputLineage ? { inputLineage: cloneInputLineage(input.inputLineage) } : {}),
@@ -327,7 +355,10 @@ export class ImageGenerationService {
                     attachmentPathHint: normalizeFeaturedImageFolderPath(input.attachmentPathHint),
                 } : {}) },
             connection: { mode: connection.mode, endpointIdentity: connection.baseURL,
-                credentialSlot: connection.credentialSlot, revision: connection.revision },
+                credentialSlot: connection.credentialSlot, revision: connection.revision,
+                ...(connection.connectionId ? { connectionId: connection.connectionId, providerId: connection.providerId,
+                    adapter: connection.adapter, credentialRevision: connection.credentialRevision ?? 0,
+                    requestIdentity: imageGenerationConnectionIdentity(connection) } : {}) },
             state: 'prepared', outputs: [],
             ...(input.isSourceCurrent ? { requiresSourceReceipt: true } : {}),
         };
@@ -349,7 +380,8 @@ export class ImageGenerationService {
             } else if (task.state === 'submitting' && !task.providerTaskId) {
                 await this.update(task.taskId, (current) => current.state === 'submitting' && !current.providerTaskId
                     ? { ...current, state: 'submission_unknown', recoveryReason: 'provider_acceptance_unknown' } : null);
-            } else if (['running', 'saving', 'partial'].includes(task.state) && task.providerTaskId
+            } else if (['running', 'saving', 'partial'].includes(task.state)
+                && (task.providerTaskId || task.connection.adapter === 'openai-image')
                 && !task.stopIntent && !task.deliverySuppressed) {
                 this.launch(task.taskId);
             }
@@ -362,12 +394,21 @@ export class ImageGenerationService {
         if (task.requiresSourceReceipt && !this.isSourceCurrent(task.taskId, task)) {
             throw new Error('image_generation:source_changed');
         }
+        if (task.connection.adapter === 'openai-image'
+            && ['local_result_unavailable', 'provider_result_incomplete'].includes(task.recoveryReason ?? '')) {
+            throw new Error('image_generation:resume_unavailable');
+        }
         if (task.state === 'not_submitted') {
             if (task.recoveryReason === 'transparent_input_needs_confirmation') {
                 throw new Error('image_generation:transparent_input_needs_confirmation');
             }
+            const connection = this.options.resolveConnection();
+            if (!this.matchesTaskConnection(task, connection)) throw new Error('image_generation:connection_changed');
             await this.update(taskId, (current) => current.state === 'not_submitted'
-                ? { ...current, state: 'prepared', recoveryReason: undefined } : null);
+                ? { ...current, state: 'prepared', recoveryReason: undefined,
+                    connection: current.connection.connectionId && connection
+                        ? { ...current.connection, requestIdentity: imageGenerationConnectionIdentity(connection),
+                            credentialRevision: connection.credentialRevision ?? 0 } : current.connection } : null);
         } else if (task.state !== 'partial' && task.state !== 'running' && task.state !== 'saving') {
             throw new Error('image_generation:resume_unavailable');
         }
@@ -406,6 +447,7 @@ export class ImageGenerationService {
 
     private async stopTask(taskId: string, suppressDelivery: boolean): Promise<void> {
         this.clearTimer(taskId);
+        this.completedResultBytes.delete(taskId);
         const previous = await this.get(taskId);
         if (!previous || (!suppressDelivery && ['completed', 'failed', 'stopped', 'expired'].includes(previous.state))) return;
         const stopped = await this.update(taskId, (current) =>
@@ -419,7 +461,7 @@ export class ImageGenerationService {
         if (!stopped || !previous.providerTaskId || previous.lastProviderState !== 'PENDING') return;
         try {
             const provider = await this.provider(previous);
-            await provider.cancel(previous.providerTaskId, 'PENDING');
+            await provider.cancel?.(previous.providerTaskId, 'PENDING');
         } catch (error) { this.options.log?.('Image task remote cancellation was not confirmed', error); }
     }
 
@@ -448,6 +490,7 @@ export class ImageGenerationService {
         this.deletedConversations.clear();
         this.listeners.clear();
         this.contextPersistors.clear();
+        this.completedResultBytes.clear();
     }
 
     private finishConversationDeletion(conversationId: string): void {
@@ -509,18 +552,62 @@ export class ImageGenerationService {
         return null;
     }
 
-    private async provider(task: ImageGenerationTask): Promise<WanImageProvider> {
-        const connection = this.options.resolveConnection();
-        if (!connection || connection.mode !== task.connection.mode
-            || connection.baseURL !== task.connection.endpointIdentity
-            || connection.credentialSlot !== task.connection.credentialSlot
-            || connection.revision !== task.connection.revision) {
+    private connectionForTask(task: ImageGenerationTask): ImageGenerationConnection | null {
+        return this.options.resolveConnection(task.connection.connectionId,
+            task.connection.connectionId ? undefined : task.connection);
+    }
+
+    private matchesTaskConnection(task: ImageGenerationTask, connection: ImageGenerationConnection | null): boolean {
+        if (!connection || connection.baseURL !== task.connection.endpointIdentity) return false;
+        if (task.connection.connectionId) return connection.connectionId === task.connection.connectionId
+            && connection.providerId === task.connection.providerId && connection.adapter === task.connection.adapter;
+        // A saved ID is returned here only by the owner's verified legacy alias resolver.
+        if (connection.connectionId) return this.connectionForTask(task)?.connectionId === connection.connectionId;
+        return connection.mode === task.connection.mode && connection.credentialSlot === task.connection.credentialSlot
+            && connection.revision === task.connection.revision;
+    }
+
+    private isSubmissionConnectionCurrent(task: ImageGenerationTask): boolean {
+        const current = this.options.resolveConnection();
+        return this.matchesTaskConnection(task, current) && (!task.connection.requestIdentity
+            || imageGenerationConnectionIdentity(current!) === task.connection.requestIdentity);
+    }
+
+    private async provider(task: ImageGenerationTask): Promise<ImageGenerationProvider> {
+        const connection = this.connectionForTask(task);
+        if (!connection || !this.matchesTaskConnection(task, connection)) {
             throw new Error('image_generation:connection_changed');
         }
-        const token = await this.options.getToken(connection.mode);
+        const credentialIdentity = (value: ImageGenerationConnection) => JSON.stringify([
+            value.connectionId, value.providerId, value.adapter, value.baseURL, value.credentialSlot,
+            value.credentialRevision ?? value.revision,
+        ]);
+        const capturedIdentity = credentialIdentity(connection);
+        const token = await this.options.getToken(connection.mode, connection.connectionId);
         if (!token) throw new Error('image_generation:credential_unavailable');
-        return this.options.providerFactory?.(connection, token)
-            ?? new WanImageProvider({ baseURL: connection.baseURL, apiKey: token });
+        const assertCredentialCurrent = () => {
+            const current = this.connectionForTask(task);
+            if (this.disposed || !current || credentialIdentity(current) !== capturedIdentity) throw new Error('image_generation:credential_unavailable');
+        };
+        assertCredentialCurrent();
+        let provider: ImageGenerationProvider;
+        if (this.options.providerFactory) provider = this.options.providerFactory(connection, token);
+        else if (connection.adapter === 'openai-image') provider = new OpenAIImageProvider({ baseURL: connection.baseURL, apiKey: token });
+        else {
+            const wan = new WanImageProvider({ baseURL: connection.baseURL, apiKey: token });
+            provider = {
+                submit: async input => ({ kind: 'remote-task', task: await wan.submit({ ...input,
+                    model: input.model as 'wan2.7-image' | 'wan2.7-image-pro' }) }),
+                query: id => wan.query(id), cancel: (id, status) => wan.cancel(id, status),
+            };
+        }
+        return {
+            submit: input => { assertCredentialCurrent(); return provider.submit(input); },
+            ...(provider.query ? { query: (id: string) => { assertCredentialCurrent(); return provider.query!(id); } } : {}),
+            ...(provider.cancel ? { cancel: (id: string, status: WanImageTask['status']) => {
+                assertCredentialCurrent(); return provider.cancel!(id, status);
+            } } : {}),
+        };
     }
 
     private async drive(taskId: string): Promise<void> {
@@ -530,7 +617,19 @@ export class ImageGenerationService {
         try {
             if (['saving', 'partial'].includes(task.state)) {
                 task = await this.repairSavedVersions(taskId);
-                if (!task || task.state === 'completed') return;
+                if (!task || task.state === 'completed') {
+                    this.completedResultBytes.delete(taskId);
+                    return;
+                }
+                if (task.connection.adapter === 'openai-image') {
+                    const bytes = this.completedResultBytes.get(taskId);
+                    if (bytes) await this.saveResults(taskId, bytes);
+                    else await this.update(taskId, current => ['saving', 'partial'].includes(current.state)
+                        ? { ...current, state: 'partial', recoveryReason: current.outputs.length < current.request.count
+                            && current.outputs.every(output => output.saveState === 'saved')
+                            ? 'provider_result_incomplete' : 'local_result_unavailable' } : null);
+                    return;
+                }
             }
             if (task.state === 'prepared') {
                 const receipts = [];
@@ -538,8 +637,9 @@ export class ImageGenerationService {
                 for (const ref of task.request.inputRefs) {
                     const receipt = await this.options.assets.verify(ref, 'provider');
                     const original = await this.options.assets.readOriginal(ref, 'provider');
-                    const prepared = await prepareWanImageInput(original.bytes, receipt.isCurrent,
-                        task.inputWhiteBackgroundApproved === true);
+                    const prepared = task.connection.adapter === 'openai-image'
+                        ? await prepareOpenAIImageInput(original.bytes, receipt.isCurrent)
+                        : await prepareWanImageInput(original.bytes, receipt.isCurrent, task.inputWhiteBackgroundApproved === true);
                     images.push(prepared.dataUrl);
                     if (prepared.whiteBackgroundApplied && !task.inputWhiteBackgroundApplied) {
                         task = await this.update(taskId, (current) => current.state === 'prepared' && !current.stopIntent
@@ -564,39 +664,49 @@ export class ImageGenerationService {
                 task = claimed;
                 const stillAdmitted = await this.get(taskId);
                 if (!stillAdmitted || stillAdmitted.state !== 'submitting' || stillAdmitted.stopIntent || this.disposed) return;
-                const currentConnection = this.options.resolveConnection();
                 const sourceChanged = !this.isSourceCurrent(taskId, task) || receipts.some((receipt) => !receipt.isCurrent());
-                const connectionChanged = !currentConnection || currentConnection.mode !== task.connection.mode
-                    || currentConnection.baseURL !== task.connection.endpointIdentity
-                    || currentConnection.credentialSlot !== task.connection.credentialSlot
-                    || currentConnection.revision !== task.connection.revision;
+                const connectionChanged = !this.isSubmissionConnectionCurrent(task);
                 if (sourceChanged || connectionChanged) {
                     await this.update(taskId, (current) => current.state === 'submitting'
                         ? { ...current, state: 'failed', recoveryReason: sourceChanged
                             ? 'source_changed_before_submit' : 'connection_changed_before_submit' } : null);
                     return;
                 }
-                let submitted: WanImageTask;
+                let submitted: Awaited<ReturnType<ImageGenerationProvider['submit']>>;
                 try {
                     if (!this.isSourceCurrent(taskId, task)) throw new Error('image_generation:source_changed');
-                    if (task.request.model !== 'wan2.7-image' && task.request.model !== 'wan2.7-image-pro') {
-                        throw new Error('image_generation:invalid_model');
-                    }
                     submitted = await provider.submit({ model: task.request.model,
                         prompt: task.request.submittedPrompt,
-                        count: task.request.count, size: '2K', referenceImages: images });
+                        count: task.request.count, ...(task.connection.adapter === 'openai-image' ? {} : { size: '2K' }), referenceImages: images });
                 } catch (error) {
                     const sourceChanged = error instanceof Error && error.message === 'image_generation:source_changed';
-                    const uncertain = error instanceof WanImageProviderError && error.kind === 'submission_unknown';
+                    const knownFailure = error instanceof WanImageProviderError || error instanceof OpenAIImageProviderError;
+                    const uncertain = !sourceChanged && (!knownFailure || error.kind === 'submission_unknown');
                     await this.update(taskId, (current) => current.state === 'submitting'
                         ? { ...current, state: uncertain ? 'submission_unknown' : 'failed',
                             recoveryReason: sourceChanged ? 'source_changed_before_submit'
-                                : uncertain ? 'provider_acceptance_unknown' : 'provider_rejected' } : null);
+                                : uncertain ? 'provider_acceptance_unknown'
+                                    : providerRejectionReason(knownFailure ? error.httpStatus : undefined) } : null);
                     return;
                 }
+                if ('kind' in submitted && submitted.kind === 'completed') {
+                    if (this.disposed) return;
+                    const completed = submitted;
+                    // The response cannot be queried again; keep it before the first local write.
+                    this.completedResultBytes.set(taskId, completed.outputs);
+                    task = await this.update(taskId, current => current.state === 'submitting' && !current.stopIntent
+                        ? { ...current, state: 'saving', providerRequestId: completed.requestId, lastProviderState: 'SUCCEEDED' } : null);
+                    if (!task) {
+                        this.completedResultBytes.delete(taskId);
+                        return;
+                    }
+                    await this.saveResults(taskId, completed.outputs);
+                    return;
+                }
+                const remote = 'kind' in submitted ? submitted.task : submitted;
                 task = await this.update(taskId, (current) => current.state === 'submitting'
-                    ? { ...current, state: 'running', providerTaskId: submitted.taskId,
-                        providerRequestId: submitted.requestId, lastProviderState: submitted.status } : null);
+                    ? { ...current, state: 'running', providerTaskId: remote.taskId,
+                        providerRequestId: remote.requestId, lastProviderState: remote.status } : null);
                 if (!task) return;
                 if (!this.isSourceCurrent(taskId, task)) {
                     await this.update(taskId, current => current.state === 'running'
@@ -611,6 +721,7 @@ export class ImageGenerationService {
                 return;
             }
             const provider = await this.provider(task);
+            if (!provider.query) return;
             const result = await provider.query(task.providerTaskId);
             this.failures.delete(taskId);
             if (this.disposed) return;
@@ -632,6 +743,13 @@ export class ImageGenerationService {
             const reason = error instanceof Error && error.message.startsWith('image_generation:')
                 ? error.message.slice('image_generation:'.length) : 'provider_unavailable';
             const current = await this.get(taskId);
+            if (current?.state === 'submitting' && this.completedResultBytes.has(taskId)) {
+                const saving = await this.update(taskId, value => value.state === 'submitting'
+                    && !value.stopIntent && !value.deliverySuppressed
+                    ? { ...value, state: 'saving', lastProviderState: 'SUCCEEDED', recoveryReason: 'save_failed' } : null);
+                if (saving) this.schedule(taskId, 0);
+                return;
+            }
             if (current && ['running', 'saving', 'partial', 'prepared'].includes(current.state)
                 && !current.stopIntent && !current.deliverySuppressed) {
                 await this.update(taskId, (value) => ['running', 'saving', 'partial', 'prepared'].includes(value.state)
@@ -721,18 +839,18 @@ export class ImageGenerationService {
         return task;
     }
 
-    private async saveResults(taskId: string, urls: string[]): Promise<void> {
+    private async saveResults(taskId: string, results: (string | ArrayBuffer)[]): Promise<void> {
         if (this.disposed) return;
         let task = await this.get(taskId);
         if (!task || task.stopIntent || task.deliverySuppressed || !['running', 'saving', 'partial'].includes(task.state)) return;
         if (await this.stopIfSourceChanged(taskId, task)) return;
-        if (urls.length > task.request.count) throw new Error('image_generation:result_count_invalid');
+        if (results.length > task.request.count) throw new Error('image_generation:result_count_invalid');
         task = await this.update(taskId, (current) => !current.stopIntent && ['running', 'saving', 'partial'].includes(current.state)
             ? { ...current, state: 'saving', lastProviderState: 'SUCCEEDED',
-                outputs: urls.map((_, index) => current.outputs.find((output) => output.providerOrdinal === index)
+                outputs: results.map((_, index) => current.outputs.find((output) => output.providerOrdinal === index)
                     ?? { outputId: `output_${index}`, providerOrdinal: index, saveState: 'pending' }) } : null);
         if (!task) return;
-        for (let index = 0; index < urls.length; index++) {
+        for (let index = 0; index < results.length; index++) {
             if (this.disposed) return;
             if (!task) return;
             if (await this.stopIfSourceChanged(taskId, task)) return;
@@ -756,7 +874,8 @@ export class ImageGenerationService {
                     ? { ...output, saveState: 'saving' } : output) } : null);
             if (!task) return;
             try {
-                const bytes = await (this.options.download ?? downloadResult)(urls[index]);
+                const result = results[index];
+                const bytes = typeof result === 'string' ? await (this.options.download ?? downloadResult)(result) : result;
                 if (this.disposed) return;
                 const beforeImport = await this.get(taskId);
                 if (!beforeImport || beforeImport.stopIntent || beforeImport.deliverySuppressed
@@ -807,7 +926,10 @@ export class ImageGenerationService {
             }
         }
         await this.update(taskId, (current) => current.state === 'saving'
-            ? { ...current, state: versionsReady ? 'completed' : 'partial' } : null);
+            ? { ...current, state: versionsReady ? 'completed' : 'partial', recoveryReason:
+                task!.outputs.length < task!.request.count && task!.outputs.every(output => output.saveState === 'saved')
+                    ? 'provider_result_incomplete' : undefined } : null);
+        if (task.outputs.every(output => output.saveState === 'saved')) this.completedResultBytes.delete(taskId);
     }
 
     private async ensureVersion(task: ImageGenerationTask, outputId: string): Promise<void> {

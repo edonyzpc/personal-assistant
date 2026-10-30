@@ -43,9 +43,26 @@ jest.mock("../src/vss", () => ({ VSS: class {} }));
 jest.mock("../src/memory-manager", () => ({ MemoryManager: class { startAutoMaintenance() {} } }));
 jest.mock("../src/local-graph", () => ({ LocalGraph: class {} }));
 
-import { createPluginHarness } from "./helpers/plugin-harness";
+import { createPluginHarness as createBasePluginHarness, type PluginHarnessOptions } from "./helpers/plugin-harness";
 import { hasDeprecatedSimpleSettingsFields, mergeLoadedSettings } from "../src/settings";
 import { MemoryUserProfileStore, type MemoryExtractionScheduler } from "../src/ai-services/memory-extraction";
+import type { AIConnectionsSettings } from "../src/ai-services/ai-connection-types";
+import { createConnectionDefaults } from "../src/ai-services/provider-definitions";
+
+// The native API enumerates names without reading values. Keep that boundary in
+// this integration fixture while the shared legacy harness retains its old API.
+function createPluginHarness(options: PluginHarnessOptions = {}) {
+    const harness = createBasePluginHarness(options);
+    const names = new Set(Object.entries(options.secretStorageValues ?? {}).filter(([, value]) => value).map(([id]) => id));
+    const setSecret = harness.secretStorage.setSecret.getMockImplementation()!;
+    harness.secretStorage.setSecret.mockImplementation((id: string, value: string) => {
+        setSecret(id, value);
+        if (value) names.add(id);
+        else names.delete(id);
+    });
+    Object.assign(harness.secretStorage, { listSecrets: jest.fn(() => Array.from(names)) });
+    return harness;
+}
 
 const getCalloutApi = getApi as unknown as jest.Mock;
 
@@ -1264,7 +1281,7 @@ describe("Plugin lifecycle integration", () => {
             },
         );
 
-        it("requires a current provider choice for Ollama while reusing its retained token", async () => {
+        it("requires an explicit service and new Key after the retired Ollama configuration", async () => {
             const { plugin, readPersisted, secretStorage } = createPluginHarness({
                 initialData: {
                     aiProvider: "ollama",
@@ -1289,12 +1306,17 @@ describe("Plugin lifecycle integration", () => {
             expect(secretStorage.setSecret).not.toHaveBeenCalled();
             expect(readPersisted()).toMatchObject({ aiProvider: "" });
 
-            await expect((plugin as unknown as {
-                completeAISetup(input: { presetKey: string }): Promise<{ ok: boolean }>;
-            }).completeAISetup({ presetKey: "openai" })).resolves.toEqual({ ok: true });
-            expect(plugin.settings.aiProvider).toBe("openai");
-            expect(secretStorage.getSecret).toHaveBeenCalled();
-            expect(secretStorage.setSecret).not.toHaveBeenCalled();
+            const complete = (input: { presetKey: string; token?: string }) => (plugin as unknown as {
+                completeAISetup(value: typeof input): Promise<{ ok: boolean; code?: string }>;
+            }).completeAISetup(input);
+            await expect(complete({ presetKey: 'openai' })).resolves.toEqual({ ok: false, code: 'token_required' });
+            expect(secretStorage.getSecret).not.toHaveBeenCalled();
+            await expect(complete({ presetKey: 'openai', token: 'sk-explicit-openai' })).resolves.toEqual({ ok: true });
+            const connection = plugin.settings.aiConnections!.connections[0];
+            expect(connection.providerId).toBe('openai');
+            expect(connection.secretRef).not.toBe('pa-api-token');
+            expect(secretStorage.getSecret('pa-api-token')).toBe('sk-retained');
+            await expect(plugin.getAIConnectionToken(connection.id)).resolves.toBe('sk-explicit-openai');
         });
     });
 
@@ -2158,344 +2180,171 @@ describe("inline AI setup coordinator", () => {
         }
     });
 
-    it("reuses an existing token while completing a partial provider tuple", async () => {
+    const createConnectionHarness = (token: string | null = 'sk-old', owned = true) => {
+        const aiConnections: AIConnectionsSettings = {
+            schemaVersion: 1,
+            connections: [{ ...createConnectionDefaults('openai'), id: 'account-a', name: 'Account A',
+                secretRef: 'account-a-key', secretOwned: owned, revision: 0 }],
+            defaultConnectionId: 'account-a',
+            bindings: { chat: { mode: 'inherit' }, embedding: { mode: 'inherit' }, image: { mode: 'inherit' } },
+            memorySelection: { revision: 'initial', cause: 'configuration-change' }, migrationVersion: 1,
+        };
+        return createPluginHarness({ initialData: { aiProvider: '', aiConnections },
+            secretStorageValues: { 'account-a-key': token } });
+    };
+
+    it("associates an explicitly selected service with the retained legacy Key without copying it", async () => {
         const { plugin, secretStorage, readPersisted } = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                baseURL: "",
-                chatModelName: "",
-                embeddingModelName: "",
-            },
-            secretStorageValues: { "pa-api-token": "sk-existing" },
+            initialData: { aiProvider: 'qwen', baseURL: '', chatModelName: '', embeddingModelName: '' },
+            secretStorageValues: { 'pa-api-token': 'sk-existing' },
         });
         await plugin.loadSettings();
+        secretStorage.getSecret.mockClear();
         secretStorage.setSecret.mockClear();
-
-        await expect(completeSetup(plugin, { presetKey: "openai" })).resolves.toEqual({ ok: true });
-
-        expect(secretStorage.getSecret).toHaveBeenCalled();
+        await expect(completeSetup(plugin, { presetKey: 'openai' })).resolves.toEqual({ ok: true });
+        const config = plugin.getAIConnectionsController().getAIConnections()!;
+        expect(config.connections).toEqual([expect.objectContaining({ providerId: 'openai', secretRef: 'pa-api-token' })]);
+        expect(config.defaultConnectionId).toBe(config.connections[0].id);
+        expect(readPersisted()?.aiConnections).toEqual(config);
         expect(secretStorage.setSecret).not.toHaveBeenCalled();
-        expect(plugin.settings.aiProvider).toBe("openai");
-        expect(plugin.settings.aiProviderPreset).toBe("openai");
-        expect(readPersisted()?.aiProviderPreset).toBe("openai");
+        await expect(plugin.getAPIToken()).resolves.toBe('sk-existing');
     });
 
-    it("preserves a complete custom provider when only the token is missing", async () => {
-        const { plugin, readPersisted } = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "custom",
-                baseURL: "https://custom.example/v1",
-                chatModelName: "custom-chat",
-                embeddingModelName: "custom-embed",
-            },
+    it.each([
+        ['custom address', 'https://custom.example/v1', 'custom'],
+        ['official address with customized models', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'dashscope-cn'],
+    ])("migrates a token-only repair for a %s without losing the configured models", async (_label, endpoint, providerId) => {
+        const { plugin, secretStorage, readPersisted } = createPluginHarness({
+            initialData: { aiProvider: 'qwen', aiProviderPreset: 'custom', baseURL: endpoint,
+                chatModelName: 'custom-chat', embeddingModelName: 'custom-embed' },
+            secretStorageValues: { 'pa-api-token': 'retained-unrelated-key' },
         });
         await plugin.loadSettings();
-        plugin.refreshAPITokenPresence();
-        const saveData = jest.fn(async () => { throw new Error("data.json must not be written"); });
-        plugin.saveData = saveData as never;
-        (plugin as unknown as { aiProviderConfigurationRevision: number }).aiProviderConfigurationRevision = 17;
-
-        await expect(completeSetup(plugin, { token: "sk-custom" })).resolves.toEqual({ ok: true });
-
-        expect(plugin.settings).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "custom",
-            baseURL: "https://custom.example/v1",
-            chatModelName: "custom-chat",
-            embeddingModelName: "custom-embed",
-        });
-        expect(readPersisted()).toMatchObject({
-            aiProviderPreset: "custom",
-            baseURL: "https://custom.example/v1",
-        });
-        expect(saveData).not.toHaveBeenCalled();
-        expect((plugin as unknown as { aiProviderConfigurationRevision: number })
-            .aiProviderConfigurationRevision).toBe(17);
-        expect(plugin.getConfiguredAPITokenSecret()).toBe("sk-custom");
-        expect(plugin.getAPITokenCacheState()).toBe("present");
+        secretStorage.getSecret.mockClear();
+        await expect(completeSetup(plugin, { token: 'sk-custom' })).resolves.toEqual({ ok: true });
+        const connection = plugin.getAIConnectionsController().getAIConnections()!.connections[0];
+        expect(connection).toMatchObject({ providerId, endpoints: { chat: endpoint, embedding: endpoint },
+            models: { chat: 'custom-chat', embedding: 'custom-embed' } });
+        expect(connection.secretRef).not.toBe('pa-api-token');
+        expect(secretStorage.setSecret).toHaveBeenCalledWith(connection.secretRef, 'sk-custom');
+        expect(secretStorage.getSecret).not.toHaveBeenCalledWith('pa-api-token');
+        expect(secretStorage.getSecret('pa-api-token')).toBe('retained-unrelated-key');
+        expect(readPersisted()?.aiConnections).toEqual(plugin.settings.aiConnections);
+        await expect(plugin.getAPIToken()).resolves.toBe('sk-custom');
     });
 
-    it("blocks new Chat and Memory credential admission until a new provider-token pair commits", async () => {
-        const harness = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "qwen",
-                baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                chatModelName: "qwen3.6-plus",
-                embeddingModelName: "text-embedding-v4",
-            },
-        });
+    it("blocks Chat and Memory credential admission until their shared connection Key commits", async () => {
+        const harness = createConnectionHarness(null);
         const { plugin, secretStorage } = harness;
         await plugin.loadSettings();
-        plugin.refreshAPITokenPresence();
-        expect(plugin.getAIReadiness()).toMatchObject({ issue: "token_missing" });
         (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
-        let releaseProviderSave!: () => void;
-        let markProviderSaveStarted!: () => void;
-        const providerSaveStarted = new Promise<void>((resolve) => { markProviderSaveStarted = resolve; });
-        const providerSaveGate = new Promise<void>((resolve) => { releaseProviderSave = resolve; });
+        plugin.refreshAPITokenPresence();
+        let releaseSave!: () => void;
+        let markStarted!: () => void;
+        const started = new Promise<void>(resolve => { markStarted = resolve; });
+        const gate = new Promise<void>(resolve => { releaseSave = resolve; });
         plugin.saveData = jest.fn(async (next: unknown) => {
-            markProviderSaveStarted();
-            await providerSaveGate;
-            harness.writePersisted(JSON.parse(JSON.stringify(next)) as Record<string, unknown>);
+            markStarted(); await gate; harness.writePersisted(next as Record<string, unknown>);
         }) as never;
         const observedIssues: Array<string | null> = [];
         plugin.onSettingsChanged(() => { observedIssues.push(plugin.getAIReadiness().issue); });
-
-        const setup = completeSetup(plugin, { presetKey: "openai", token: "sk-new" });
-        await providerSaveStarted;
-        const tokenReadsBeforeConsumers = secretStorage.getSecret.mock.calls.length;
-        expect(plugin.refreshAPITokenPresence()).toBe("unknown");
-        expect(secretStorage.getSecret).toHaveBeenCalledTimes(tokenReadsBeforeConsumers);
+        const setup = completeSetup(plugin, { token: 'sk-new' });
+        await started;
+        const reads = secretStorage.getSecret.mock.calls.length;
         const providerRequests = jest.fn();
-        const { AIUtils } = await import("../src/ai-services/ai-utils");
-        const aiUtils = new AIUtils(plugin);
-        const chatAttempt = plugin.createChatModel(0.2)
-            .then((model) => providerRequests("chat", model));
-        const memoryAttempt = aiUtils.createEmbeddings()
-            .then((model) => providerRequests("memory", model));
-
-        expect(plugin.getAIReadiness("chat")).toMatchObject({
-            ready: false,
-            issue: "token_unknown",
-            aiProvider: "qwen",
-            baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        });
-        expect(plugin.getAIReadiness("memory")).toMatchObject({
-            ready: false,
-            issue: "token_unknown",
-        });
-        await expect(chatAttempt).rejects.toThrow("AI provider configuration is being updated");
-        await expect(memoryAttempt).rejects.toThrow("AI provider configuration is being updated");
-        expect(secretStorage.getSecret).toHaveBeenCalledTimes(tokenReadsBeforeConsumers);
+        const { AIUtils } = await import('../src/ai-services/ai-utils');
+        const chatAttempt = plugin.createChatModel(0.2).then(model => providerRequests('chat', model));
+        const memoryAttempt = new AIUtils(plugin).createEmbeddings().then(model => providerRequests('memory', model));
+        expect(plugin.getAIReadiness()).toMatchObject({ ready: false, issue: 'token_unknown' });
+        expect(plugin.getAIReadiness('memory')).toMatchObject({ ready: false, issue: 'token_unknown' });
+        await expect(chatAttempt).rejects.toThrow('credential_unavailable');
+        await expect(memoryAttempt).rejects.toThrow('credential_unavailable');
+        expect(secretStorage.getSecret).toHaveBeenCalledTimes(reads);
         expect(providerRequests).not.toHaveBeenCalled();
         expect(observedIssues).toEqual([]);
-
-        releaseProviderSave();
+        releaseSave();
         await expect(setup).resolves.toEqual({ ok: true });
-
-        expect(plugin.settings).toMatchObject({
-            aiProvider: "openai",
-            aiProviderPreset: "openai",
-            baseURL: "https://api.openai.com/v1",
-        });
-        expect(plugin.getConfiguredAPITokenSecret()).toBe("sk-new");
-        expect(plugin.getAIReadiness("chat")).toMatchObject({ ready: true, issue: null });
-        await expect(plugin.getAPIToken()).resolves.toBe("sk-new");
+        await expect(plugin.getAPIToken()).resolves.toBe('sk-new');
         expect(observedIssues).toEqual([null]);
     });
 
-    it("keeps the old stable provider and missing token after a guarded setup save fails", async () => {
-        const harness = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "qwen",
-                baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                chatModelName: "qwen3.6-plus",
-                embeddingModelName: "text-embedding-v4",
-            },
-        });
-        const { plugin, secretStorage } = harness;
+    it("preserves the selected connection and missing Key after its guarded repair save fails", async () => {
+        const { plugin, secretStorage, readPersisted } = createConnectionHarness(null);
         await plugin.loadSettings();
-        plugin.refreshAPITokenPresence();
         (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
-        let releaseProviderFailure!: () => void;
-        let markProviderSaveStarted!: () => void;
-        const providerSaveStarted = new Promise<void>((resolve) => { markProviderSaveStarted = resolve; });
-        const providerFailureGate = new Promise<void>((resolve) => { releaseProviderFailure = resolve; });
-        let saveAttempt = 0;
-        plugin.saveData = jest.fn(async (next: unknown) => {
-            saveAttempt++;
-            if (saveAttempt === 1) {
-                markProviderSaveStarted();
-                await providerFailureGate;
-                throw new Error("provider save failed");
-            }
-            harness.writePersisted(JSON.parse(JSON.stringify(next)) as Record<string, unknown>);
-        }) as never;
-        const observedIssues: Array<string | null> = [];
-        plugin.onSettingsChanged(() => { observedIssues.push(plugin.getAIReadiness().issue); });
-
-        const setup = completeSetup(plugin, { presetKey: "openai", token: "sk-new" });
-        await providerSaveStarted;
-        const tokenReadsBeforeConsumer = secretStorage.getSecret.mock.calls.length;
-        const providerRequests = jest.fn();
-        const chatAttempt = plugin.createChatModel(0.2)
-            .then((model) => providerRequests("chat", model));
-
-        await expect(chatAttempt).rejects.toThrow("AI provider configuration is being updated");
-        expect(secretStorage.getSecret).toHaveBeenCalledTimes(tokenReadsBeforeConsumer);
-        expect(providerRequests).not.toHaveBeenCalled();
-        expect(observedIssues).toEqual([]);
-
-        releaseProviderFailure();
-        await expect(setup).resolves.toEqual({ ok: false, code: "settings_save_failed" });
-
-        expect(plugin.settings).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "qwen",
-            baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        });
-        expect(plugin.getConfiguredAPITokenSecret()).toBeNull();
-        expect(plugin.getAIReadiness()).toMatchObject({
-            ready: false,
-            issue: "token_missing",
-        });
-        expect(harness.readPersisted()).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "qwen",
-        });
-        expect(observedIssues).toEqual(["token_missing"]);
-    });
-
-    it("does not mutate provider settings when the token write fails", async () => {
-        const { plugin, secretStorage } = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "custom",
-                baseURL: "https://old.example/v1",
-                chatModelName: "old-chat",
-                embeddingModelName: "old-embed",
-            },
-        });
-        await plugin.loadSettings();
+        const before = JSON.parse(JSON.stringify(plugin.settings.aiConnections));
+        plugin.saveData = jest.fn<() => Promise<void>>().mockRejectedValueOnce(new Error('save failed')).mockResolvedValue(undefined) as never;
+        await expect(completeSetup(plugin, { token: 'sk-new' })).resolves.toEqual({ ok: false, code: 'settings_save_failed' });
+        expect(plugin.settings.aiConnections).toEqual(before);
+        expect(readPersisted()?.aiConnections).toEqual(before);
+        expect(secretStorage.getSecret('account-a-key')).toBe('');
         plugin.refreshAPITokenPresence();
-        secretStorage.setSecret.mockImplementationOnce(() => { throw new Error("write failed"); });
-
-        const result = await completeSetup(plugin, { presetKey: "openai", token: "sk-new" });
-
-        expect(result).toEqual({ ok: false, code: "token_save_failed" });
-        expect(plugin.settings).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "custom",
-            baseURL: "https://old.example/v1",
-            chatModelName: "old-chat",
-            embeddingModelName: "old-embed",
-        });
+        expect(plugin.getAIReadiness()).toMatchObject({ ready: false, issue: 'token_missing' });
     });
 
-    it("returns a structured failure without writing when the previous token cannot be read", async () => {
-        const { plugin, secretStorage } = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "custom",
-                baseURL: "https://old.example/v1",
-                chatModelName: "old-chat",
-                embeddingModelName: "old-embed",
-            },
-        });
+    it("does not publish a changed connection when its Key write fails", async () => {
+        const { plugin, secretStorage } = createConnectionHarness();
         await plugin.loadSettings();
-        secretStorage.getSecret.mockImplementation(() => { throw new Error("read failed"); });
+        (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
+        const before = JSON.parse(JSON.stringify(plugin.settings.aiConnections));
+        secretStorage.setSecret.mockImplementationOnce(() => { throw new Error('write failed'); });
+        await expect(completeSetup(plugin, { token: 'sk-new' })).resolves.toEqual({ ok: false, code: 'settings_save_failed' });
+        expect(plugin.settings.aiConnections).toEqual(before);
+        expect(secretStorage.getSecret('account-a-key')).toBe('sk-old');
+    });
 
-        await expect(completeSetup(plugin, {
-            presetKey: "openai",
-            token: "sk-new",
-        })).resolves.toEqual({ ok: false, code: "token_save_failed" });
-
+    it("returns a structured failure without writing when the selected connection Key cannot be read", async () => {
+        const { plugin, secretStorage } = createConnectionHarness('sk-old', true);
+        await plugin.loadSettings();
+        (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
+        const before = JSON.parse(JSON.stringify(plugin.settings.aiConnections));
+        secretStorage.getSecret.mockImplementation(() => { throw new Error('read failed'); });
+        await expect(completeSetup(plugin, { token: 'sk-new' })).resolves.toEqual({ ok: false, code: 'settings_save_failed' });
         expect(secretStorage.setSecret).not.toHaveBeenCalled();
-        expect(plugin.getAPITokenCacheState()).toBe("unknown");
-        expect(plugin.settings).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "custom",
-            baseURL: "https://old.example/v1",
-            chatModelName: "old-chat",
-            embeddingModelName: "old-embed",
-        });
+        expect(plugin.getAPITokenCacheState()).toBe('unknown');
+        expect(plugin.settings.aiConnections).toEqual(before);
     });
 
-    it("restores the previous token and provider settings when saving fails", async () => {
-        const { plugin, secretStorage } = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "custom",
-                baseURL: "https://old.example/v1",
-                chatModelName: "old-chat",
-                embeddingModelName: "old-embed",
-            },
-            secretStorageValues: { "pa-api-token": "sk-old" },
-        });
+    it("restores the selected connection Key and settings when inline saving fails", async () => {
+        const { plugin, secretStorage } = createConnectionHarness();
         await plugin.loadSettings();
-        plugin.refreshAPITokenPresence();
+        (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
+        const before = JSON.parse(JSON.stringify(plugin.settings.aiConnections));
         const settingsChanged = jest.fn<() => void>();
         plugin.onSettingsChanged(settingsChanged);
-        (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
-        const saveData = jest.fn<() => Promise<void>>()
-            .mockRejectedValueOnce(new Error("save failed"))
-            .mockResolvedValue(undefined);
-        plugin.saveData = saveData as never;
-
-        const result = await completeSetup(plugin, { presetKey: "openai", token: "sk-new" });
-
-        expect(result).toEqual({ ok: false, code: "settings_save_failed" });
-        expect(plugin.settings).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "custom",
-            baseURL: "https://old.example/v1",
-            chatModelName: "old-chat",
-            embeddingModelName: "old-embed",
-        });
-        expect(secretStorage.setSecret).toHaveBeenNthCalledWith(1, expect.any(String), "sk-new");
-        expect(secretStorage.setSecret).toHaveBeenNthCalledWith(2, expect.any(String), "sk-old");
+        plugin.saveData = jest.fn<() => Promise<void>>().mockRejectedValueOnce(new Error('save failed')).mockResolvedValue(undefined) as never;
+        await expect(completeSetup(plugin, { token: 'sk-new' })).resolves.toEqual({ ok: false, code: 'settings_save_failed' });
+        expect(plugin.settings.aiConnections).toEqual(before);
+        expect(secretStorage.setSecret).toHaveBeenNthCalledWith(1, 'account-a-key', 'sk-new');
+        expect(secretStorage.setSecret).toHaveBeenNthCalledWith(2, 'account-a-key', 'sk-old');
+        await expect(plugin.getAPIToken()).resolves.toBe('sk-old');
         expect(settingsChanged).not.toHaveBeenCalled();
     });
 
-    it("serializes setup mutation and compensation so an older failure cannot overwrite a newer success", async () => {
-        const harness = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "custom",
-                baseURL: "https://old.example/v1",
-                chatModelName: "old-chat",
-                embeddingModelName: "old-embed",
-            },
-            secretStorageValues: { "pa-api-token": "sk-old" },
-        });
+    it("serializes inline Key repair and compensation so an older failure cannot overwrite a newer success", async () => {
+        const harness = createConnectionHarness();
         const { plugin, secretStorage } = harness;
         await plugin.loadSettings();
-        plugin.refreshAPITokenPresence();
         (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
-        let releaseFirstSave!: () => void;
-        let markFirstSaveStarted!: () => void;
-        const firstSaveStarted = new Promise<void>((resolve) => { markFirstSaveStarted = resolve; });
-        const firstSaveGate = new Promise<void>((resolve) => { releaseFirstSave = resolve; });
-        let saveAttempt = 0;
+        let releaseFirst!: () => void;
+        let markStarted!: () => void;
+        const started = new Promise<void>(resolve => { markStarted = resolve; });
+        const gate = new Promise<void>(resolve => { releaseFirst = resolve; });
+        let saves = 0;
         plugin.saveData = jest.fn(async (next: unknown) => {
-            saveAttempt++;
-            if (saveAttempt === 1) {
-                markFirstSaveStarted();
-                await firstSaveGate;
-                throw new Error("first save failed");
-            }
+            if (++saves === 1) { markStarted(); await gate; throw new Error('first save failed'); }
             harness.writePersisted(next as Record<string, unknown>);
         }) as never;
-
-        const first = completeSetup(plugin, { presetKey: "openai", token: "sk-first" });
-        await firstSaveStarted;
-        const second = completeSetup(plugin, { presetKey: "qwen", token: "sk-second" });
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(secretStorage.setSecret).toHaveBeenCalledTimes(1);
-        expect(plugin.settings.aiProvider).toBe("qwen");
-
-        releaseFirstSave();
-        await expect(first).resolves.toEqual({ ok: false, code: "settings_save_failed" });
+        const first = completeSetup(plugin, { token: 'sk-first' });
+        await started;
+        const second = completeSetup(plugin, { token: 'sk-second' });
+        releaseFirst();
+        await expect(first).resolves.toEqual({ ok: false, code: 'settings_save_failed' });
         await expect(second).resolves.toEqual({ ok: true });
-
-        expect(secretStorage.setSecret).toHaveBeenNthCalledWith(1, expect.any(String), "sk-first");
-        expect(secretStorage.setSecret).toHaveBeenNthCalledWith(2, expect.any(String), "sk-old");
-        expect(secretStorage.setSecret).toHaveBeenNthCalledWith(3, expect.any(String), "sk-second");
-        expect(plugin.settings).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "qwen",
-            baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        });
-        expect(harness.readPersisted()).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "qwen",
-        });
-        expect(plugin.getConfiguredAPITokenSecret()).toBe("sk-second");
+        expect(plugin.settings.aiConnections?.defaultConnectionId).toBe('account-a');
+        expect(secretStorage.setSecret.mock.calls.map(call => call[1])).toEqual(['sk-first', 'sk-old', 'sk-second']);
+        await expect(plugin.getAPIToken()).resolves.toBe('sk-second');
+        expect(harness.readPersisted()?.aiConnections).toEqual(plugin.settings.aiConnections);
     });
 
     it("waits for an ordinary settings save before staging a provider update that later fails", async () => {
@@ -2891,165 +2740,33 @@ describe("inline AI setup coordinator", () => {
         expect(observedProviders).toEqual(["qwen-intl"]);
     });
 
-    it("rejects a queued Chat setup submitted before a later successful Settings provider and token change", async () => {
-        const harness = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "custom",
-                baseURL: "https://old.example/v1",
-                chatModelName: "old-chat",
-                embeddingModelName: "old-embed",
-            },
-            secretStorageValues: { "pa-api-token": "sk-old" },
-        });
+    it("orders queued inline Key repairs before a later Settings connection edit", async () => {
+        const harness = createConnectionHarness();
         const { plugin, secretStorage } = harness;
         await plugin.loadSettings();
-        plugin.refreshAPITokenPresence();
         (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
-        let releaseFirstChatSave!: () => void;
-        let markFirstChatSaveStarted!: () => void;
-        const firstChatSaveStarted = new Promise<void>((resolve) => { markFirstChatSaveStarted = resolve; });
-        const firstChatSaveGate = new Promise<void>((resolve) => { releaseFirstChatSave = resolve; });
-        let saveAttempt = 0;
+        let releaseSave!: () => void;
+        let markStarted!: () => void;
+        const started = new Promise<void>(resolve => { markStarted = resolve; });
+        const gate = new Promise<void>(resolve => { releaseSave = resolve; });
+        let saves = 0;
         plugin.saveData = jest.fn(async (next: unknown) => {
-            saveAttempt++;
-            const snapshot = JSON.parse(JSON.stringify(next)) as Record<string, unknown>;
-            if (saveAttempt === 1) {
-                markFirstChatSaveStarted();
-                await firstChatSaveGate;
-            }
-            harness.writePersisted(snapshot);
+            if (++saves === 1) { markStarted(); await gate; }
+            harness.writePersisted(next as Record<string, unknown>);
         }) as never;
-
-        const firstChat = completeSetup(plugin, { presetKey: "openai", token: "sk-chat-a" });
-        await firstChatSaveStarted;
-        const queuedChat = completeSetup(plugin, { presetKey: "qwen", token: "sk-chat-b" });
-
-        plugin.setAPITokenSecret("sk-settings");
-        const settingsEpoch = plugin.beginAIProviderConfigurationMutation();
-        const settingsSave = plugin.updateAIProviderConfiguration({
-            aiProvider: "qwen",
-            aiProviderPreset: "qwen-intl",
-            baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-            chatModelName: "qwen3.6-plus",
-            embeddingModelName: "text-embedding-v4",
-        }, settingsEpoch);
-        releaseFirstChatSave();
-
-        await expect(firstChat).resolves.toEqual({ ok: true });
-        await expect(queuedChat).resolves.toEqual({ ok: false, code: "settings_save_failed" });
-        await expect(settingsSave).resolves.toEqual({ ok: true });
-        expect(plugin.settings).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "qwen-intl",
-            baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        });
-        expect(harness.readPersisted()).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "qwen-intl",
-            baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        });
-        expect(plugin.getConfiguredAPITokenSecret()).toBe("sk-settings");
-        expect(secretStorage.setSecret).toHaveBeenCalledTimes(2);
-        expect(secretStorage.setSecret).toHaveBeenNthCalledWith(1, expect.any(String), "sk-chat-a");
-        expect(secretStorage.setSecret).toHaveBeenNthCalledWith(2, expect.any(String), "sk-settings");
-    });
-
-    it("rejects Chat submitted after a text provider draft but before its debounced flush", async () => {
-        const harness = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "custom",
-                baseURL: "https://old.example/v1",
-                chatModelName: "old-chat",
-                embeddingModelName: "old-embed",
-            },
-            secretStorageValues: { "pa-api-token": "sk-old" },
-        });
-        const { plugin, secretStorage } = harness;
-        await plugin.loadSettings();
-        plugin.refreshAPITokenPresence();
-        (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
-
-        const draftEpoch = plugin.beginAIProviderConfigurationMutation();
-        const chatSetup = completeSetup(plugin, { presetKey: "openai", token: "sk-chat" });
-
-        await expect(chatSetup).resolves.toEqual({ ok: false, code: "settings_save_failed" });
-        expect(secretStorage.setSecret).not.toHaveBeenCalled();
-
-        await expect(plugin.updateAIProviderConfiguration({
-            aiProviderPreset: "custom",
-            baseURL: "https://draft.example/v1",
-        }, draftEpoch)).resolves.toEqual({ ok: true });
-        expect(plugin.settings.baseURL).toBe("https://draft.example/v1");
-        expect(harness.readPersisted()?.baseURL).toBe("https://draft.example/v1");
-    });
-
-    it("fails closed when Chat token compensation precedes a queued Settings save failure", async () => {
-        const harness = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "custom",
-                baseURL: "https://old.example/v1",
-                chatModelName: "old-chat",
-                embeddingModelName: "old-embed",
-            },
-            secretStorageValues: { "pa-api-token": "sk-old" },
-        });
-        const { plugin } = harness;
-        await plugin.loadSettings();
-        plugin.refreshAPITokenPresence();
-        (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
-        const settingsChanged = jest.fn<() => void>();
-        plugin.onSettingsChanged(settingsChanged);
-        let releaseChatSave!: () => void;
-        let markChatSaveStarted!: () => void;
-        const chatSaveStarted = new Promise<void>((resolve) => { markChatSaveStarted = resolve; });
-        const chatSaveGate = new Promise<void>((resolve) => { releaseChatSave = resolve; });
-        let saveAttempt = 0;
-        plugin.saveData = jest.fn(async (next: unknown) => {
-            saveAttempt++;
-            const snapshot = JSON.parse(JSON.stringify(next)) as Record<string, unknown>;
-            if (saveAttempt === 1) {
-                markChatSaveStarted();
-                await chatSaveGate;
-                throw new Error("chat save failed");
-            }
-            if (saveAttempt === 3) {
-                throw new Error("settings save failed");
-            }
-            harness.writePersisted(snapshot);
-        }) as never;
-
-        const chatSetup = completeSetup(plugin, { presetKey: "openai", token: "sk-chat" });
-        await chatSaveStarted;
-        const settingsEpoch = plugin.beginAIProviderConfigurationMutation();
-        const settingsSave = plugin.updateAIProviderConfiguration({
-            aiProvider: "qwen",
-            aiProviderPreset: "qwen-intl",
-            baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-            chatModelName: "qwen3.6-plus",
-            embeddingModelName: "text-embedding-v4",
-        }, settingsEpoch);
-        releaseChatSave();
-
-        await expect(chatSetup).resolves.toEqual({ ok: false, code: "settings_save_failed" });
-        await expect(settingsSave).resolves.toEqual({ ok: false, code: "compensation_failed" });
-        expect(saveAttempt).toBe(4);
-        expect(plugin.settings.aiProvider).toBe("");
-        expect(plugin.settings.aiProviderPreset).toBeUndefined();
-        expect(plugin.getConfiguredAPITokenSecret()).toBe("sk-old");
-        expect(harness.readPersisted()).toMatchObject({ aiProvider: "" });
-        expect(settingsChanged).toHaveBeenCalledTimes(1);
-
-        const reloaded = createPluginHarness({
-            initialData: harness.readPersisted(),
-            secretStorageValues: { "pa-api-token": plugin.getConfiguredAPITokenSecret() },
-        });
-        await reloaded.plugin.loadSettings();
-        expect(reloaded.plugin.settings.aiProvider).toBe("");
-        expect(reloaded.plugin.getAIReadiness().issue).toBe("provider_missing");
-        expect(reloaded.plugin.getConfiguredAPITokenSecret()).toBe("sk-old");
+        const first = completeSetup(plugin, { token: 'sk-chat-a' });
+        await started;
+        const queued = completeSetup(plugin, { token: 'sk-chat-b' });
+        const settingsSave = plugin.getAIConnectionsController().updateAIConnection('account-a',
+            { models: { chat: 'gpt-4.1-mini' } }, 'sk-settings');
+        releaseSave();
+        await expect(first).resolves.toEqual({ ok: true });
+        await expect(queued).resolves.toEqual({ ok: true });
+        await settingsSave;
+        expect(plugin.settings.aiConnections?.connections[0].models.chat).toBe('gpt-4.1-mini');
+        expect(harness.readPersisted()?.aiConnections).toEqual(plugin.settings.aiConnections);
+        expect(secretStorage.setSecret.mock.calls.map(call => call[1])).toEqual(['sk-chat-a', 'sk-chat-b', 'sk-settings']);
+        await expect(plugin.getAPIToken()).resolves.toBe('sk-settings');
     });
 
     it("persists an incomplete provider when Settings rollback persistence also fails", async () => {
@@ -3097,217 +2814,61 @@ describe("inline AI setup coordinator", () => {
         expect(reloaded.plugin.getAIReadiness().issue).toBe("provider_missing");
     });
 
-    it("restores the old provider but preserves a standalone token saved while Chat persistence is pending", async () => {
-        const harness = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "custom",
-                baseURL: "https://old.example/v1",
-                chatModelName: "old-chat",
-                embeddingModelName: "old-embed",
-            },
-            secretStorageValues: { "pa-api-token": "sk-old" },
-        });
+    it("runs a Settings connection edit after the older inline repair is fully compensated", async () => {
+        const harness = createConnectionHarness();
         const { plugin, secretStorage } = harness;
         await plugin.loadSettings();
-        plugin.refreshAPITokenPresence();
         (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
-        let releaseChatSave!: () => void;
-        let markChatSaveStarted!: () => void;
-        const chatSaveStarted = new Promise<void>((resolve) => { markChatSaveStarted = resolve; });
-        const chatSaveGate = new Promise<void>((resolve) => { releaseChatSave = resolve; });
-        let saveAttempt = 0;
+        let releaseFailure!: () => void;
+        let markStarted!: () => void;
+        const started = new Promise<void>(resolve => { markStarted = resolve; });
+        const gate = new Promise<void>(resolve => { releaseFailure = resolve; });
+        let saves = 0;
         plugin.saveData = jest.fn(async (next: unknown) => {
-            saveAttempt++;
-            if (saveAttempt === 1) {
-                markChatSaveStarted();
-                await chatSaveGate;
-                throw new Error("chat save failed");
-            }
+            if (++saves === 1) { markStarted(); await gate; throw new Error('inline save failed'); }
             harness.writePersisted(next as Record<string, unknown>);
         }) as never;
-        const observedProviders: string[] = [];
-        plugin.onSettingsChanged(() => {
-            observedProviders.push(plugin.settings.aiProvider);
-        });
-
-        const chatSetup = completeSetup(plugin, { presetKey: "openai", token: "sk-chat" });
-        await chatSaveStarted;
-        plugin.setAPITokenSecret("sk-settings");
-        const readinessNotification = plugin.notifyAIReadinessChanged();
-        await Promise.resolve();
-        expect(observedProviders).toEqual([]);
-        releaseChatSave();
-
-        await expect(chatSetup).resolves.toEqual({ ok: false, code: "settings_save_failed" });
-        await readinessNotification;
-        expect(plugin.settings).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "custom",
-            baseURL: "https://old.example/v1",
-        });
-        expect(harness.readPersisted()).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "custom",
-        });
-        expect(plugin.getConfiguredAPITokenSecret()).toBe("sk-settings");
-        expect(secretStorage.setSecret).toHaveBeenCalledTimes(2);
-        expect(secretStorage.setSecret).toHaveBeenNthCalledWith(1, expect.any(String), "sk-chat");
-        expect(secretStorage.setSecret).toHaveBeenNthCalledWith(2, expect.any(String), "sk-settings");
-        expect(observedProviders).toEqual(["qwen"]);
+        const setup = completeSetup(plugin, { token: 'sk-chat' });
+        await started;
+        const settingsSave = plugin.getAIConnectionsController().updateAIConnection('account-a',
+            { models: { chat: 'gpt-4.1-mini' } }, 'sk-settings');
+        releaseFailure();
+        await expect(setup).resolves.toEqual({ ok: false, code: 'settings_save_failed' });
+        await settingsSave;
+        expect(secretStorage.setSecret.mock.calls.map(call => call[1])).toEqual(['sk-chat', 'sk-old', 'sk-settings']);
+        expect(plugin.settings.aiConnections?.connections[0].models.chat).toBe('gpt-4.1-mini');
+        expect(harness.readPersisted()?.aiConnections).toEqual(plugin.settings.aiConnections);
+        await expect(plugin.getAPIToken()).resolves.toBe('sk-settings');
     });
 
-    it("runs a Settings provider choice after the older Chat failure is fully compensated", async () => {
-        const harness = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "custom",
-                baseURL: "https://old.example/v1",
-                chatModelName: "old-chat",
-                embeddingModelName: "old-embed",
-            },
-            secretStorageValues: { "pa-api-token": "sk-old" },
-        });
-        const { plugin, secretStorage } = harness;
-        await plugin.loadSettings();
-        plugin.refreshAPITokenPresence();
-        (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
-        let releaseChatSave!: () => void;
-        let markChatSaveStarted!: () => void;
-        const chatSaveStarted = new Promise<void>((resolve) => { markChatSaveStarted = resolve; });
-        const chatSaveGate = new Promise<void>((resolve) => { releaseChatSave = resolve; });
-        let saveAttempt = 0;
-        plugin.saveData = jest.fn(async (next: unknown) => {
-            saveAttempt++;
-            if (saveAttempt === 1) {
-                markChatSaveStarted();
-                await chatSaveGate;
-                throw new Error("chat save failed");
-            }
-            harness.writePersisted(next as Record<string, unknown>);
-        }) as never;
+    it.each(['settings save', 'partially persisted Key write'] as const)(
+        "blocks the selected credential when %s compensation fails and permits an explicit repair", async phase => {
+            const harness = createConnectionHarness();
+            const { plugin, secretStorage } = harness;
+            await plugin.loadSettings();
+            (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
+            const setSecret = secretStorage.setSecret.getMockImplementation()!;
+            secretStorage.setSecret.mockImplementationOnce((id: string, value: string) => {
+                setSecret(id, value);
+                if (phase === 'partially persisted Key write') throw new Error('write persisted before rejection');
+            }).mockImplementationOnce(() => { throw new Error('restore failed'); });
+            let saves = 0;
+            plugin.saveData = jest.fn(async (next: unknown) => {
+                if (++saves === 1 && phase === 'settings save') throw new Error('settings save failed');
+                harness.writePersisted(next as Record<string, unknown>);
+            }) as never;
 
-        const chatSetup = completeSetup(plugin, { presetKey: "openai", token: "sk-chat" });
-        await chatSaveStarted;
-        const settingsEpoch = plugin.beginAIProviderConfigurationMutation();
-        const settingsSave = plugin.updateAIProviderConfiguration({
-            aiProvider: "qwen",
-            aiProviderPreset: "qwen-intl",
-            baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-            chatModelName: "qwen3.6-plus",
-            embeddingModelName: "text-embedding-v4",
-        }, settingsEpoch);
-        releaseChatSave();
+            await expect(completeSetup(plugin, { token: 'sk-new' })).resolves.toEqual({ ok: false, code: 'compensation_failed' });
 
-        await expect(chatSetup).resolves.toEqual({ ok: false, code: "settings_save_failed" });
-        await expect(settingsSave).resolves.toEqual({ ok: true });
-        expect(plugin.settings).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "qwen-intl",
-            baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        });
-        expect(harness.readPersisted()).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "qwen-intl",
-            baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        });
-        expect(plugin.getConfiguredAPITokenSecret()).toBe("sk-old");
-        expect(secretStorage.setSecret).toHaveBeenCalledTimes(2);
-    });
-
-    it("persists provider-missing and keeps the new token when token rollback fails", async () => {
-        const harness = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                baseURL: "https://old.example/v1",
-                chatModelName: "old-chat",
-                embeddingModelName: "old-embed",
-            },
-            secretStorageValues: { "pa-api-token": "sk-old" },
-        });
-        const { plugin, secretStorage } = harness;
-        await plugin.loadSettings();
-        plugin.refreshAPITokenPresence();
-        (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
-        const defaultSetSecret = secretStorage.setSecret.getMockImplementation();
-        expect(defaultSetSecret).toBeDefined();
-        secretStorage.setSecret
-            .mockImplementationOnce(defaultSetSecret!)
-            .mockImplementationOnce(() => { throw new Error("restore failed"); });
-        let saveAttempt = 0;
-        plugin.saveData = jest.fn(async (next: unknown) => {
-            saveAttempt++;
-            if (saveAttempt === 1) throw new Error("save failed");
-            harness.writePersisted(JSON.parse(JSON.stringify(next)) as Record<string, unknown>);
-        }) as never;
-        const observedProviders: string[] = [];
-        plugin.onSettingsChanged(() => { observedProviders.push(plugin.settings.aiProvider); });
-
-        const result = await completeSetup(plugin, { presetKey: "openai", token: "sk-new" });
-
-        expect(result).toEqual({ ok: false, code: "compensation_failed" });
-        expect(plugin.getAPITokenCacheState()).toBe("unknown");
-        expect(plugin.getConfiguredAPITokenSecret()).toBe("sk-new");
-        expect(plugin.settings.aiProvider).toBe("");
-        expect(harness.readPersisted()).toMatchObject({ aiProvider: "" });
-        expect(observedProviders).toEqual([""]);
-
-        const reloaded = createPluginHarness({
-            initialData: harness.readPersisted(),
-            secretStorageValues: { "pa-api-token": "sk-new" },
-        });
-        await reloaded.plugin.loadSettings();
-        reloaded.plugin.refreshAPITokenPresence();
-        expect(reloaded.plugin.getAIReadiness().issue).toBe("provider_missing");
-    });
-
-    it("fails closed on reload when both an initial token write and its restore throw", async () => {
-        const harness = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "custom",
-                baseURL: "https://old.example/v1",
-                chatModelName: "old-chat",
-                embeddingModelName: "old-embed",
-            },
-            secretStorageValues: { "pa-api-token": "sk-old" },
-        });
-        const { plugin, secretStorage } = harness;
-        await plugin.loadSettings();
-        plugin.refreshAPITokenPresence();
-        (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
-        const defaultSetSecret = secretStorage.setSecret.getMockImplementation();
-        expect(defaultSetSecret).toBeDefined();
-        secretStorage.setSecret
-            .mockImplementationOnce((id: string, value: string) => {
-                defaultSetSecret!(id, value);
-                throw new Error("write surfaced a failure after persistence");
-            })
-            .mockImplementationOnce(() => { throw new Error("restore failed"); });
-        plugin.saveData = jest.fn(async (next: unknown) => {
-            harness.writePersisted(JSON.parse(JSON.stringify(next)) as Record<string, unknown>);
-        }) as never;
-        const observedProviders: string[] = [];
-        plugin.onSettingsChanged(() => { observedProviders.push(plugin.settings.aiProvider); });
-
-        await expect(completeSetup(plugin, {
-            presetKey: "openai",
-            token: "sk-new",
-        })).resolves.toEqual({ ok: false, code: "compensation_failed" });
-
-        expect(plugin.getConfiguredAPITokenSecret()).toBe("sk-new");
-        expect(plugin.settings.aiProvider).toBe("");
-        expect(harness.readPersisted()).toMatchObject({ aiProvider: "" });
-        expect(observedProviders).toEqual([""]);
-
-        const reloaded = createPluginHarness({
-            initialData: harness.readPersisted(),
-            secretStorageValues: { "pa-api-token": "sk-new" },
-        });
-        await reloaded.plugin.loadSettings();
-        reloaded.plugin.refreshAPITokenPresence();
-        expect(reloaded.plugin.getAIReadiness().issue).toBe("provider_missing");
-    });
+            expect(plugin.getAIReadiness()).toMatchObject({ ready: false, issue: 'token_unknown' });
+            await expect(plugin.getAPIToken()).rejects.toThrow('credential_unavailable');
+            expect(secretStorage.getSecret('account-a-key')).toBe('sk-new');
+            expect(plugin.settings.aiConnections?.defaultConnectionId).toBe('account-a');
+            expect(harness.readPersisted()?.aiConnections).toEqual(plugin.settings.aiConnections);
+            await expect(completeSetup(plugin, { token: 'sk-repaired' })).resolves.toEqual({ ok: true });
+            await expect(plugin.getAPIToken()).resolves.toBe('sk-repaired');
+        },
+    );
 
     it("does not start Memory preparation when the embedding model is missing", async () => {
         const { plugin } = createPluginHarness({
@@ -3754,57 +3315,25 @@ describe("inline AI setup coordinator", () => {
         });
     });
 
-    it("drains Chat setup submitted immediately before unload even if it has not started", async () => {
-        const harness = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "qwen",
-                baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                chatModelName: "qwen3.6-plus",
-                embeddingModelName: "text-embedding-v4",
-            },
-            secretStorageValues: { "pa-api-token": "sk-old" },
-        });
-        const { plugin } = harness;
+    it("rejects an inline setup that has not entered settings admission when unload begins", async () => {
+        const { plugin, secretStorage } = createPluginHarness({ initialData: { aiProvider: '' } });
         await plugin.loadSettings();
-        plugin.refreshAPITokenPresence();
-        (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
-        let releaseSave!: () => void;
-        let markSaveStarted!: () => void;
-        const saveStarted = new Promise<void>((resolve) => { markSaveStarted = resolve; });
-        const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
-        plugin.saveData = jest.fn(async (next: unknown) => {
-            markSaveStarted();
-            await saveGate;
-            harness.writePersisted(JSON.parse(JSON.stringify(next)) as Record<string, unknown>);
-        }) as never;
+        const saveData = jest.fn(async () => undefined);
+        plugin.saveData = saveData as never;
         const dispose = prepareForUnload(plugin);
-
-        const setup = completeSetup(plugin, { presetKey: "openai", token: "sk-new" });
+        const setup = completeSetup(plugin, { presetKey: 'openai', token: 'sk-new' });
         const unloading = (plugin as unknown as { unloadAsync(): Promise<void> }).unloadAsync();
-
-        await saveStarted;
-        expect(dispose).not.toHaveBeenCalled();
-        releaseSave();
-        await expect(setup).resolves.toEqual({ ok: true });
+        await expect(setup).resolves.toEqual({ ok: false, code: 'settings_save_failed' });
         await unloading;
-
+        expect(secretStorage.setSecret).not.toHaveBeenCalled();
+        expect(saveData).not.toHaveBeenCalled();
+        expect(plugin.settings.aiConnections).toBeUndefined();
         expect(dispose).toHaveBeenCalledTimes(1);
-        expect(harness.readPersisted()).toMatchObject({
-            aiProvider: "openai",
-            aiProviderPreset: "openai",
-        });
     });
 
     it("drains a queued inline setup save before unload and reloads a consistent provider token", async () => {
         const harness = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "custom",
-                baseURL: "https://old.example/v1",
-                chatModelName: "old-chat",
-                embeddingModelName: "old-embed",
-            },
+            initialData: { aiProvider: '' },
             secretStorageValues: { "pa-api-token": "sk-old" },
         });
         const { plugin, secretStorage } = harness;
@@ -3853,30 +3382,23 @@ describe("inline AI setup coordinator", () => {
         expect(dispose).toHaveBeenCalledTimes(1);
 
         const persisted = harness.readPersisted();
-        expect(persisted).toMatchObject({
-            aiProvider: "openai",
-            aiProviderPreset: "openai",
-        });
-        const persistedToken = secretStorage.getSecret("pa-api-token") as string;
-        const reloaded = createPluginHarness({
-            initialData: persisted,
-            secretStorageValues: { "pa-api-token": persistedToken },
-        });
+        const config = persisted?.aiConnections as AIConnectionsSettings;
+        const connection = config.connections[0];
+        expect(connection.providerId).toBe('openai');
+        expect(config.defaultConnectionId).toBe(connection.id);
+        expect(secretStorage.getSecret('pa-api-token')).toBe('sk-old');
+        const persistedToken = secretStorage.getSecret(connection.secretRef) as string;
+        const reloaded = createPluginHarness({ initialData: persisted,
+            secretStorageValues: { [connection.secretRef]: persistedToken } });
         await reloaded.plugin.loadSettings();
         reloaded.plugin.refreshAPITokenPresence();
-        expect(reloaded.plugin.settings.aiProvider).toBe("openai");
-        expect(reloaded.plugin.getAPITokenCacheState()).toBe("present");
+        expect(reloaded.plugin.getAIReadiness()).toMatchObject({ ready: true, aiProvider: 'openai' });
+        await expect(reloaded.plugin.getAIConnectionToken(connection.id)).resolves.toBe('sk-new');
     });
 
     it("waits for inline setup compensation after a persisted save rejects during unload", async () => {
         const harness = createPluginHarness({
-            initialData: {
-                aiProvider: "qwen",
-                aiProviderPreset: "custom",
-                baseURL: "https://old.example/v1",
-                chatModelName: "old-chat",
-                embeddingModelName: "old-embed",
-            },
+            initialData: { aiProvider: '' },
             secretStorageValues: { "pa-api-token": "sk-old" },
         });
         const { plugin, secretStorage } = harness;
@@ -3927,32 +3449,28 @@ describe("inline AI setup coordinator", () => {
 
         const setup = completeSetup(plugin, { presetKey: "openai", token: "sk-new" });
         await firstPersisted;
-        expect(harness.readPersisted()).toMatchObject({ aiProvider: "openai" });
+        const staged = harness.readPersisted()?.aiConnections as AIConnectionsSettings;
+        expect(staged.connections[0].providerId).toBe('openai');
         const unloading = (plugin as unknown as { unloadAsync(): Promise<void> }).unloadAsync();
         releaseFirstFailure();
         await compensationStarted;
 
         expect(dispose).not.toHaveBeenCalled();
         expect(secretStorage.getSecret("pa-api-token")).toBe("sk-old");
-        expect(harness.readPersisted()).toMatchObject({ aiProvider: "openai" });
+        expect(harness.readPersisted()?.aiConnections).toEqual(staged);
 
         releaseCompensation();
         await expect(setup).resolves.toEqual({ ok: false, code: "settings_save_failed" });
         await unloading;
         expect(dispose).toHaveBeenCalledTimes(1);
-        expect(harness.readPersisted()).toMatchObject({
-            aiProvider: "qwen",
-            aiProviderPreset: "custom",
-        });
-
-        const reloaded = createPluginHarness({
-            initialData: harness.readPersisted(),
-            secretStorageValues: { "pa-api-token": "sk-old" },
-        });
+        expect(harness.readPersisted()?.aiConnections).toBeUndefined();
+        expect(secretStorage.getSecret(staged.connections[0].secretRef)).toBe('');
+        expect(secretStorage.getSecret('pa-api-token')).toBe('sk-old');
+        const reloaded = createPluginHarness({ initialData: harness.readPersisted(),
+            secretStorageValues: { 'pa-api-token': 'sk-old' } });
         await reloaded.plugin.loadSettings();
-        reloaded.plugin.refreshAPITokenPresence();
-        expect(reloaded.plugin.settings.aiProvider).toBe("qwen");
-        expect(reloaded.plugin.getAPITokenCacheState()).toBe("present");
+        expect(reloaded.plugin.settings.aiConnections).toBeUndefined();
+        expect(reloaded.plugin.getAIReadiness().issue).toBe('provider_missing');
     });
 
     it("rejects inline setup started after unload without writing the token", async () => {

@@ -14,6 +14,8 @@ import type {
     VSSPreparedRebuildHandle,
     VSSProgressEvent,
 } from '../src/vss';
+import type { AIConnectionsSettings } from '../src/ai-services/ai-connection-types';
+import { createConnectionDefaults } from '../src/ai-services/provider-definitions';
 
 const mockNoticeMessages: string[] = [];
 const mockProgressSteps: string[] = [];
@@ -203,6 +205,10 @@ const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unkn
             ...settings,
         },
         vss: {
+            getEmbeddingConfigurationIdentity: jest.fn(() => 'connection-a'),
+            synchronizeEmbeddingConfiguration: jest.fn<() => Promise<void>>(async () => undefined),
+            consumeFirstUseEligibility: jest.fn(async () => true),
+            recordPreparationAttempt: jest.fn(async () => undefined),
             getMemoryReadiness: jest.fn(async () => plan),
             getMemoryStatusSnapshot: jest.fn<() => VSSMemoryStatusSnapshot>(() => ({
                 status: 'unknown' as const,
@@ -282,6 +288,40 @@ beforeEach(() => {
 const createMockDomElement = mockCreateDomElement;
 
 describe('MemoryManager status snapshot', () => {
+    it('does not publish a late profile activation after Memory shutdown', async () => {
+        const plugin = createPlugin(createPlan(), { aiConnections: {} });
+        const manager = createManager(plugin);
+        const pending = createDeferred<void>();
+        plugin.vss.synchronizeEmbeddingConfiguration.mockImplementation(async () => pending.promise);
+        plugin.vss.getEmbeddingConfigurationIdentity.mockReturnValue('connection-b');
+        await manager.onEmbeddingConfigurationChanged();
+        await waitForCondition(() => plugin.vss.synchronizeEmbeddingConfiguration.mock.calls.length > 0);
+        manager.stopAutoMaintenance();
+        const notifications = plugin.notifyStatusChanged.mock.calls.length;
+        pending.resolve();
+        await waitForCondition(() => !(manager as any).embeddingActivationPromise); // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(plugin.notifyStatusChanged).toHaveBeenCalledTimes(notifications);
+    });
+
+    it('does not wait for an admission persistence notification that reenters the connection watcher', async () => {
+        const plugin = createPlugin(createPlan(), { aiConnections: {} });
+        const manager = createManager(plugin);
+        const notify = createDeferred<void>();
+        const admissionPersistence = (async () => {
+            await notify.promise;
+            // settings-persistence awaits its listeners before the old prepare can finish.
+            await manager.onEmbeddingConfigurationChanged();
+        })();
+        (manager as any).trackActiveOperation(admissionPersistence); // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.vss.getEmbeddingConfigurationIdentity.mockReturnValue('connection-b');
+        const configurationNotification = manager.onEmbeddingConfigurationChanged();
+        notify.resolve();
+        await configurationNotification;
+        await manager.getMaintenancePlan();
+        expect(plugin.vss.synchronizeEmbeddingConfiguration).toHaveBeenCalledTimes(1);
+        await admissionPersistence;
+    }, 1000);
+
     it('projects cached VSS state without running readiness work', () => {
         const plugin = createPlugin(createPlan());
         plugin.vss.getMemoryStatusSnapshot.mockReturnValue({
@@ -672,6 +712,33 @@ describe('MemoryManager chat decisions', () => {
         }
     });
 
+    it('does not transfer a first-use plan across an embedding switch during durable admission', async () => {
+        const restoreDocument = installMockDocument();
+        const plugin = createPlugin(createPlan({ reason: 'first-use', action: 'rebuild', requiresApproval: true }),
+            { aiConnections: {} });
+        const admission = createDeferred<boolean>();
+        plugin.vss.consumeFirstUseEligibility.mockImplementation(() => admission.promise);
+        const manager = createManager(plugin);
+
+        try {
+            const deciding = manager.ensureReadyForChat('question');
+            await waitForCondition(() => plugin.vss.consumeFirstUseEligibility.mock.calls.length === 1);
+            plugin.vss.getEmbeddingConfigurationIdentity.mockReturnValue('connection-b');
+            await manager.onEmbeddingConfigurationChanged();
+            await manager.getMaintenancePlan();
+            admission.resolve(true);
+
+            await expect(deciding).resolves.toMatchObject({ decision: 'answer-now' });
+            await manager.waitForIdle();
+            expect(plugin.vss.rebuildLocalIndex).not.toHaveBeenCalled();
+            expect(plugin.vss.refreshLocalIndex).not.toHaveBeenCalled();
+            expect(plugin.vss.recordPreparationAttempt).not.toHaveBeenCalled();
+            expect(manager.getActivePreparationStatus()).toBeNull();
+        } finally {
+            restoreDocument();
+        }
+    });
+
     it('keeps first-use preparation owned by the run after the attempt completes', async () => {
         const restoreDocument = installMockDocument();
         const plan = createPlan({
@@ -679,7 +746,7 @@ describe('MemoryManager chat decisions', () => {
             action: 'rebuild',
             requiresApproval: true,
         });
-        const plugin = createPlugin(plan);
+        const plugin = createPlugin(plan, { aiConnections: {} });
         const rebuildStarted = createDeferred<AbortSignal>();
         plugin.vss.rebuildLocalIndex.mockImplementation(async (options?: { abortSignal?: AbortSignal }) => {
             const signal = options?.abortSignal;
@@ -705,6 +772,8 @@ describe('MemoryManager chat decisions', () => {
                 message: 'Memory is being prepared in the background. It will be used automatically once ready.',
             });
             const preparationSignal = await rebuildStarted.promise;
+
+            expect(plugin.vss.consumeFirstUseEligibility).toHaveBeenCalledTimes(1);
 
             attemptController.abort();
             expect(preparationSignal.aborted).toBe(false);
@@ -1100,6 +1169,67 @@ describe('MemoryManager command decisions', () => {
     beforeEach(() => {
         mockNoticeMessages.length = 0;
         mockProgressSteps.length = 0;
+    });
+
+    const createIndependentMemory = () => {
+        const settings: AIConnectionsSettings = {
+            schemaVersion: 1,
+            connections: [
+                { ...createConnectionDefaults('openai'), id: 'default', name: 'Default OpenAI', secretRef: 'default-key', revision: 0 },
+                { ...createConnectionDefaults('dashscope-cn'), id: 'memory', name: 'Memory DashScope', secretRef: 'memory-key', revision: 0 },
+            ],
+            defaultConnectionId: 'default',
+            bindings: { chat: { mode: 'inherit' }, embedding: { mode: 'connection', connectionId: 'memory' }, image: { mode: 'inherit' } },
+            memorySelection: { revision: 'saved', cause: 'configuration-change' }, migrationVersion: 1,
+        };
+        return { settings, plugin: createPlugin(createPlan({ reason: 'settings-changed', action: 'rebuild', requiresApproval: true }),
+            { aiConnections: settings }) };
+    };
+
+    it('does not prepare a new connection using a command confirmation opened for the previous Memory selection', async () => {
+        const restoreDocument = installMockDocument();
+        const { plugin, settings } = createIndependentMemory();
+        const manager = createManager(plugin);
+        const prepare = jest.spyOn(manager, 'prepareMemory');
+        try {
+            const pending = manager.prepareFromCommand();
+            await waitForCondition(() => mockSettingGroups.length > 0);
+            settings.bindings.embedding = { mode: 'inherit' };
+            plugin.vss.getEmbeddingConfigurationIdentity.mockReturnValue('default-with-new-credential');
+            await manager.onEmbeddingConfigurationChanged();
+            mockSettingGroups[0][0].click?.();
+            await pending;
+            await manager.waitForIdle();
+            expect(prepare).not.toHaveBeenCalled();
+            expect(plugin.vss.rebuildLocalIndex).not.toHaveBeenCalled();
+            expect(plugin.vss.refreshLocalIndex).not.toHaveBeenCalled();
+            expect(plugin.vss.recordPreparationAttempt).not.toHaveBeenCalled();
+        } finally {
+            prepare.mockRestore();
+            restoreDocument();
+        }
+    });
+
+    it('names the independently selected Memory connection in its confirmation and preserves data and cost disclosure', async () => {
+        const { plugin } = createIndependentMemory();
+        const manager = createManager(plugin);
+        const opened = jest.spyOn(MemoryApprovalModal.prototype, 'onOpen');
+        const textFrom = (element: Element): string => [element.textContent ?? '',
+            ...Array.from(element.children).map(textFrom)].join(' ');
+        try {
+            const pending = manager.prepareFromCommand();
+            await waitForCondition(() => opened.mock.calls.length > 0);
+            const modal = opened.mock.contexts[0] as MemoryApprovalModal;
+            const text = textFrom(modal.contentEl);
+            mockSettingGroups[0][1].click?.();
+            await pending;
+            expect(text).toContain('Memory DashScope');
+            expect(text).not.toContain('Default OpenAI');
+            expect(text).toContain('Your notes will not be changed or deleted.');
+            expect(text).toContain('AI credits or API calls');
+        } finally {
+            opened.mockRestore();
+        }
     });
 
     it('keeps manual update on an approval-gated refresh path', async () => {

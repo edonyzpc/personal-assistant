@@ -349,7 +349,14 @@ export class SettingsPersistence {
     }
 
     async saveFeaturedImageDefaults(options: FeaturedImageDefaultsPatch): Promise<void> {
-        const requested = { ...options };
+        const { featuredImageModel, ...preferences } = options;
+        const requested: Partial<PluginManagerSettings> = { ...preferences };
+        if (featuredImageModel !== undefined) {
+            if (featuredImageModel !== 'wan2.7-image' && featuredImageModel !== 'wan2.7-image-pro') {
+                throw new Error('Image models for saved connections must be saved through the AI connection owner');
+            }
+            requested.featuredImageModel = featuredImageModel;
+        }
         await this.enqueueWrite(async () => {
             if (this.dependencies.isUnloading()) throw new Error("Plugin is unloading");
             await this.saveSettingsData({ ...this.settings, ...requested });

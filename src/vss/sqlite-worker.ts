@@ -33,6 +33,7 @@ import {
     type VSSFileRecord,
     type VSSFileState,
     type VSSIndexStats,
+    type VSSStorageInspection,
 } from "./types";
 import { fuseRRF } from "./rrf";
 import { bruteForceTopK, cosineDistance } from "./brute-force-search";
@@ -78,6 +79,10 @@ type SQLiteDatabase = {
 type SQLiteModule = {
     installOpfsSAHPoolVfs?: (options: Record<string, unknown>) => Promise<SQLiteOpfsPool>;
     capi?: {
+        SQLITE_DESERIALIZE_READONLY?: number;
+        sqlite3_deserialize?: (
+            database: number, schema: string, pointer: number, databaseSize: number, bufferSize: number, flags: number,
+        ) => number;
         sqlite3_progress_handler(
             this: void,
             database: SQLiteDatabase,
@@ -85,6 +90,12 @@ type SQLiteModule = {
             callback: (() => number) | number,
             callbackArgument: number,
         ): void;
+    };
+    oo1?: { DB: new (filename: string, flags?: string) => SQLiteDatabase };
+    wasm?: {
+        alloc(size: number): number;
+        heap8u(): Uint8Array;
+        dealloc(pointer: number): void;
     };
 };
 type SQLiteOpfsPool = SQLiteModule & OpfsSahPool & {
@@ -294,6 +305,11 @@ async function handleRequest(request: SqliteWorkerRequest): Promise<unknown> {
         throw createWorkerError("sqlite-worker-disposed", "SQLite worker has been disposed.");
     }
     switch (request.type) {
+        case "inspectStorage":
+            return inspectStorage(request.payload.databaseName, request.payload.opfsDirectory, request.payload.wasmUrl);
+        case "removeStorage":
+            await removeStorage(request.payload.opfsDirectory);
+            return null;
         case "initialize":
             return await initialize(request.payload.profile, request.payload.databaseName, request.payload.wasmUrl, {
                 directory: request.payload.opfsDirectory,
@@ -446,20 +462,7 @@ async function initialize(
     status = "initializing";
 
     try {
-        configureSqliteLogging();
-        // The official @sqlite.org/sqlite-wasm types declare init() with no args,
-        // but the Emscripten module loader accepts locateFile/printErr at runtime.
-        sqlite3 ??= await (sqlite3InitModule as (opts: Record<string, unknown>) => Promise<SQLiteModule>)({
-            locateFile: (path: string, prefix: string) => {
-                if (path.endsWith(".wasm") && wasmUrl) return wasmUrl;
-                return `${prefix}${path}`;
-            },
-            printErr: (message: string) => {
-                if (!isExpectedUnusedOpfsVfsMessage(message)) {
-                    console.error(message);
-                }
-            },
-        });
+        sqlite3 = await loadSqliteModule(wasmUrl);
         assertWorkerActive();
 
         if (!db) {
@@ -510,6 +513,18 @@ async function initialize(
         lastErrorCode = getErrorCode(error);
         throw error;
     }
+}
+
+async function loadSqliteModule(wasmUrl?: string): Promise<SQLiteModule> {
+    configureSqliteLogging();
+    // Initialization loads the engine only; no SAH pool or persistent database is opened here.
+    sqlite3 ??= await (sqlite3InitModule as (opts: Record<string, unknown>) => Promise<SQLiteModule>)({
+        locateFile: (path: string, prefix: string) => path.endsWith(".wasm") && wasmUrl ? wasmUrl : `${prefix}${path}`,
+        printErr: (message: string) => {
+            if (!isExpectedUnusedOpfsVfsMessage(message)) console.error(message);
+        },
+    });
+    return sqlite3;
 }
 
 function assertWorkerActive(): void {
@@ -645,9 +660,199 @@ async function cleanupLegacyOpfsDirectory(legacyDirectory?: string, activeDirect
 }
 
 type OpfsDirectoryHandle = {
-    getDirectoryHandle(name: string): Promise<OpfsDirectoryHandle>;
+    kind?: "directory";
+    getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<OpfsDirectoryHandle>;
     removeEntry(name: string, options?: { recursive?: boolean }): Promise<void>;
+    entries?(): AsyncIterableIterator<[string, OpfsDirectoryHandle | OpfsFileHandle]>;
 };
+
+type OpfsFileHandle = {
+    kind: "file";
+    createSyncAccessHandle(options: { mode: "read-only" }): Promise<OpfsReadHandle>;
+};
+
+type OpfsReadHandle = {
+    getSize(): number;
+    read(buffer: Uint8Array, options: { at: number }): number;
+    close(): void;
+};
+
+// @sqlite.org/sqlite-wasm 3.53.0 SAH-pool format. Only the VFS envelope is
+// decoded here; SQLite itself reads the database and its metadata in memory.
+const SAH_PATH_BYTES = 512;
+const SAH_CORPUS_BYTES = SAH_PATH_BYTES + 4;
+const SAH_METADATA_BYTES = SAH_CORPUS_BYTES + 8;
+const SAH_DATA_OFFSET = 4096;
+const SAH_DIGEST_V2_FLAG = 0x80; // SQLITE_OPEN_MEMORY in the pinned VFS.
+const SQLITE_OPEN_MAIN_DB = 0x100;
+const SQLITE_PERSISTENT_FILE_FLAGS = SQLITE_OPEN_MAIN_DB | 0x800 | 0x4000 | 0x80000;
+
+async function inspectStorage(databaseName: string, directory?: string, wasmUrl?: string): Promise<VSSStorageInspection> {
+    if (db || activePool) return { state: "unknown", reason: "storage_in_use" };
+    const handles: OpfsReadHandle[] = [];
+    let result: VSSStorageInspection;
+    try {
+        result = await inspectUnopenedStorage(databaseName, directory, wasmUrl, handles);
+    } catch (error) {
+        result = { state: "unknown", reason: isOpfsBusyError(error) ? "storage_locked" : getErrorCode(error) };
+    }
+    for (const handle of handles) {
+        try { handle.close(); }
+        catch { result = { state: "unknown", reason: "storage_release_failed" }; }
+    }
+    return result;
+}
+
+async function inspectUnopenedStorage(
+    databaseName: string,
+    directory: string | undefined,
+    wasmUrl: string | undefined,
+    handles: OpfsReadHandle[],
+): Promise<VSSStorageInspection> {
+    const storage = (ctx as unknown as SqliteWorkerGlobalScope).navigator?.storage;
+    if (typeof storage?.getDirectory !== "function") return { state: "unknown", reason: "opfs_unavailable" };
+    const root = await storage.getDirectory();
+    let store: OpfsDirectoryHandle;
+    try {
+        store = await getExistingOpfsDirectory(root, directory ?? "/personal-assistant-vss");
+    } catch (error) {
+        if (isNotFoundError(error)) return { state: "absent" };
+        throw error;
+    }
+    let opaque: OpfsDirectoryHandle;
+    try { opaque = await store.getDirectoryHandle(".opaque", { create: false }); }
+    catch (error) {
+        if (isNotFoundError(error)) return { state: "unknown", reason: "storage_layout_unknown" };
+        throw error;
+    }
+    const files = await listOpaqueFiles(opaque);
+    const path = new URL(databaseName, "file://localhost/").pathname;
+    let main: OpfsReadHandle | undefined;
+    for (const [, file] of files) {
+        // Read-only SAHs conflict with the pool's read/write locks. Keep every
+        // acquired handle until the snapshot is read, so no pool can modify it.
+        const handle = await file.createSyncAccessHandle({ mode: "read-only" });
+        handles.push(handle);
+        const header = new Uint8Array(SAH_METADATA_BYTES);
+        if (handle.getSize() < SAH_DATA_OFFSET || handle.read(header, { at: 0 }) !== header.length) {
+            return { state: "unknown", reason: "opaque_header_invalid" };
+        }
+        const associated = readSahAssociation(header);
+        if (!associated) return { state: "unknown", reason: "opaque_header_invalid" };
+        if ([`${path}-journal`, `${path}-wal`, `${path}-shm`].includes(associated.path)) {
+            return { state: "unknown", reason: "storage_journal_present" };
+        }
+        if (associated.path !== path) continue;
+        if (main || !(associated.flags & SQLITE_OPEN_MAIN_DB)) {
+            return { state: "unknown", reason: "storage_mapping_ambiguous" };
+        }
+        main = handle;
+    }
+    const namesBefore = files.map(([name]) => name).sort();
+    const namesAfter = (await listOpaqueFiles(opaque)).map(([name]) => name).sort();
+    if (JSON.stringify(namesBefore) !== JSON.stringify(namesAfter)) {
+        return { state: "unknown", reason: "storage_changed" };
+    }
+    if (!main) return { state: "absent" };
+    const bytes = new Uint8Array(main.getSize() - SAH_DATA_OFFSET);
+    if (!bytes.length || main.read(bytes, { at: SAH_DATA_OFFSET }) !== bytes.length) {
+        return { state: "unknown", reason: "storage_snapshot_unreadable" };
+    }
+    return readSnapshotProfile(bytes, wasmUrl);
+}
+
+function readSahAssociation(header: Uint8Array): { path: string; flags: number } | undefined {
+    const flags = new DataView(header.buffer, header.byteOffset, header.byteLength).getUint32(SAH_PATH_BYTES);
+    const corpus = header.subarray(0, SAH_CORPUS_BYTES);
+    let h1 = 3735928559;
+    let h2 = 1103547991;
+    if (flags & SAH_DIGEST_V2_FLAG) {
+        for (const byte of corpus) {
+            h1 = Math.imul(h1 ^ byte, 2654435761);
+            h2 = Math.imul(h2 ^ byte, 104729);
+        }
+    } else { h1 = 0; h2 = 0; }
+    const digest = new Uint8Array(new Uint32Array([h1 >>> 0, h2 >>> 0]).buffer);
+    if (!header.subarray(SAH_CORPUS_BYTES).every((byte, index) => byte === digest[index])) return undefined;
+    const end = header.subarray(0, SAH_PATH_BYTES).indexOf(0);
+    if (end < 0) return undefined;
+    if (end && ((flags & 0x8) || !(flags & SQLITE_PERSISTENT_FILE_FLAGS))) return undefined;
+    return { path: new TextDecoder("utf-8", { fatal: true }).decode(header.subarray(0, end)), flags };
+}
+
+async function readSnapshotProfile(bytes: Uint8Array, wasmUrl?: string): Promise<VSSStorageInspection> {
+    const module = await loadSqliteModule(wasmUrl);
+    const wasm = module.wasm;
+    const deserialize = module.capi?.sqlite3_deserialize;
+    const readonlyFlag = module.capi?.SQLITE_DESERIALIZE_READONLY;
+    if (!module.oo1?.DB || !wasm || !deserialize || readonlyFlag === undefined) {
+        return { state: "unknown", reason: "sqlite_inspection_unavailable" };
+    }
+    const snapshot = new module.oo1.DB(":memory:");
+    let pointer: number | undefined;
+    try {
+        // SQLite advises padding untrusted serialized images by 20 bytes. The
+        // buffer remains caller-owned and is freed only after the DB closes.
+        const bufferSize = bytes.byteLength + 20;
+        pointer = wasm.alloc(bufferSize);
+        wasm.heap8u().fill(0, pointer, pointer + bufferSize);
+        wasm.heap8u().set(bytes, pointer);
+        if (!snapshot.pointer || deserialize(snapshot.pointer, "main", pointer, bytes.byteLength, bufferSize, readonlyFlag) !== 0) {
+            return { state: "unknown", reason: "sqlite_snapshot_invalid" };
+        }
+        const rows: Array<Record<string, unknown>> = [];
+        snapshot.exec({ sql: "SELECT value FROM vss_meta WHERE key = ? LIMIT 2",
+            bind: ["profileSignature"], rowMode: "object", resultRows: rows });
+        const value = rows[0]?.value;
+        return rows.length === 1 && typeof value === "string" && value.length > 0
+            ? { state: "known", profileSignature: value }
+            : { state: "unknown", reason: "profile_signature_missing" };
+    } finally {
+        try { snapshot.close(); }
+        finally { if (pointer !== undefined) wasm.dealloc(pointer); }
+    }
+}
+
+async function listOpaqueFiles(directory: OpfsDirectoryHandle): Promise<Array<[string, OpfsFileHandle]>> {
+    if (!directory.entries) throw createWorkerError("storage_layout_unknown", "Storage directory cannot be enumerated.");
+    const files: Array<[string, OpfsFileHandle]> = [];
+    for await (const [name, handle] of directory.entries()) {
+        if (handle.kind !== "file") throw createWorkerError("storage_layout_unknown", "Storage contains an unknown entry.");
+        files.push([name, handle]);
+    }
+    return files;
+}
+
+async function getExistingOpfsDirectory(root: OpfsDirectoryHandle, path: string): Promise<OpfsDirectoryHandle> {
+    const normalized = normalizeOpfsPath(path);
+    const parts = normalized?.split("/") ?? [];
+    if (!parts.length || parts.some(part => !part || part === "." || part === "..")) {
+        throw createWorkerError("storage_path_invalid", "An explicit storage directory is required.");
+    }
+    let directory = root;
+    for (const part of parts) directory = await directory.getDirectoryHandle(part, { create: false });
+    return directory;
+}
+
+function isNotFoundError(error: unknown): boolean {
+    return error instanceof Error && error.name === "NotFoundError";
+}
+
+async function removeStorage(directory?: string): Promise<void> {
+    if (!normalizeOpfsPath(directory) || directory?.split("/").some(part => part === "." || part === "..")) {
+        throw createWorkerError("storage_path_invalid", "An explicit owned storage directory is required.");
+    }
+    dispose(true);
+    activeProfile = null;
+    status = "uninitialized";
+    const storage = (ctx as unknown as SqliteWorkerGlobalScope).navigator?.storage;
+    if (typeof storage?.getDirectory !== "function") {
+        throw createWorkerError("opfs_unavailable", "Local storage cannot be accessed.");
+    }
+    const root = await storage.getDirectory();
+    try { await removeOpfsPath(root, normalizeOpfsPath(directory)!); }
+    catch (error) { if (!isNotFoundError(error)) throw error; }
+}
 
 function normalizeOpfsPath(path?: string): string | null {
     const normalized = path?.trim().replace(/^\/+|\/+$/g, "");
@@ -3647,7 +3852,7 @@ function reset(): void {
     lastErrorCode = undefined;
 }
 
-function dispose(): void {
+function dispose(strictPause = false): void {
     vectorCache = null;
     pendingGraphRequests.clear();
     cancelledGraphRequests.clear();
@@ -3664,15 +3869,16 @@ function dispose(): void {
     try {
         database?.close();
     } finally {
-        pausePool(pool);
+        pausePool(pool, strictPause);
     }
 }
 
-function pausePool(pool: OpfsSahPool | null): void {
+function pausePool(pool: OpfsSahPool | null, strict = false): void {
     if (!pool?.pauseVfs || isPoolPaused(pool)) return;
     try {
         pool.pauseVfs();
     } catch (error) {
+        if (strict) throw error;
         console.warn("Failed to pause OPFS SAH pool during Memory shutdown:", error);
     }
 }

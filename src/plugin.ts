@@ -38,7 +38,7 @@ import {
 } from "./ai-services/operations";
 import { createObsidianNoteImageHost } from "./ai-services/operations/obsidian-note-image-host";
 import { VSS } from './vss'
-import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeConfirmedMemoryCount, isMemoryExtractionConsentConfirmed } from './settings'
+import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, PROVIDER_PRESETS, normalizeConfirmedMemoryCount, isMemoryExtractionConsentConfirmed } from './settings'
 import { LocalGraph } from './local-graph';
 import { GraphOptionsModal, type GraphOptionsPatch } from './settings/graph-options-modal';
 import type { FeaturedImageDefaultsPatch } from './settings/featured-image-options-modal';
@@ -723,6 +723,7 @@ export class PluginManager extends Plugin {
             createGovernedProfileStore: () => this.createGovernedUserProfileStore(),
             createExistingProfileReader: () => this.createExistingUserProfileReader(),
             createExtractionModel: async () => {
+                const modelSettings = this.getEffectiveChatSettings();
                 const model = await this.createChatModel(0, { maxTokens: 256 });
                 if (!model) return null;
                 return {
@@ -732,8 +733,8 @@ export class PluginManager extends Plugin {
                         this.pageletCostTracker.record({
                             inputTokens: estimateTokens(prompt),
                             outputTokens: estimateTokens(text),
-                            provider: this.settings.aiProvider,
-                            model: this.settings.chatModelName,
+                            provider: modelSettings.aiProvider,
+                            model: modelSettings.chatModelName,
                         });
                         return text;
                     },
@@ -1107,8 +1108,10 @@ export class PluginManager extends Plugin {
             isDataBoundaryAllowedFile: (file) => this.isDataBoundaryAllowedFile(file),
             getDataBoundaryTags: (file) => this.getDataBoundaryTags(file),
         },
-        getImageGenerationConnection: () => this.getImageGenerationConnection(),
-        getImageToken: async (mode) => mode === "dedicated-wan"
+        getImageGenerationConnection: (connectionId, legacy) => this.getImageGenerationConnection(connectionId, legacy),
+        getImageToken: async (mode, connectionId) => connectionId
+            ? this.getAIConnectionToken(connectionId)
+            : mode === "dedicated-wan"
             ? this.getConfiguredImageAPITokenSecret()
             : await this.getAPIToken(),
         getProviderConfigurationRevision: () => this.aiProviderConfigurationRevision,
@@ -1900,6 +1903,8 @@ export class PluginManager extends Plugin {
                     generateMetadata: input => prepareGhostMetadata({
                         getSettings: () => this.settings,
                         getAPIToken: () => this.getAPIToken(),
+                        getAIConnectionToken: id => this.getAIConnectionToken(id),
+                        getAIConnectionCredentialRevision: id => this.getAIConnectionCredentialRevision(id),
                         log: (message, detail) => this.log(message, detail),
                     }, input),
                 });
@@ -2258,6 +2263,7 @@ export class PluginManager extends Plugin {
             if (!this.settings.memoryEnabled) {
                 this.memoryManager?.cancelActivePreparation();
             }
+            await this.memoryManager?.onEmbeddingConfigurationChanged();
             await this.refreshLegacyProfileContext();
         });
     }
@@ -5033,6 +5039,8 @@ export class PluginManager extends Plugin {
             isVSSFileEligible: (file, markdown) => this.isVSSFileEligible(file, markdown),
             isDataBoundaryAllowedPath: (path) => this.isDataBoundaryAllowedPath(path),
             getAPIToken: () => this.getAPIToken(),
+            getAIConnectionToken: (id) => this.getAIConnectionToken(id),
+            getAIConnectionCredentialRevision: (id) => this.getAIConnectionCredentialRevision(id),
             getRetrievalOptimizationFlags: () => this.getEffectiveRetrievalOptimizationFlags(),
             notifyStatusChanged: () => this.memoryStatusNotifier.schedule(),
             updateMemorySetting: (key, value) => {
@@ -5042,12 +5050,13 @@ export class PluginManager extends Plugin {
     }
 
     private createAiServiceHost(surface: RetrievalDiagnosticSurface): AiServiceHost {
+        const getSettings = () => this.getEffectiveChatSettings();
         const getOperationsAgentEnabled = () => this.isOperationsAgentEnabled;
         const retrievalDiagnostics = this.retrievalDiagnostics.bindSurface(surface);
         const host: AiServiceHost = {
             ...(surface === 'chat' ? { agentDebug: this.getAgentDebugIntegration().service } : {}),
             app: this.app,
-            settings: this.settings,
+            get settings() { return getSettings(); },
             log: (...args: unknown[]) => this.log(args[0], ...args.slice(1)),
             recordRetrievalDiagnostic: retrievalDiagnostics.record,
             createRetrievalDiagnosticRecorder: retrievalDiagnostics.createRecorder,
@@ -5058,6 +5067,8 @@ export class PluginManager extends Plugin {
             getRetrievalOptimizationEpoch: () => this.getRetrievalOptimizationEpoch(),
             onSettingsChanged: (listener) => this.onSettingsChanged(listener),
             getAPIToken: () => this.getAPIToken(),
+            getAIConnectionToken: (id) => this.getAIConnectionToken(id),
+            getAIConnectionCredentialRevision: (id) => this.getAIConnectionCredentialRevision(id),
             get isOperationsAgentEnabled() {
                 return getOperationsAgentEnabled();
             },
@@ -5198,7 +5209,7 @@ export class PluginManager extends Plugin {
         // callers that do not come through Chat's composer or Pagelet's
         // explicit-action gate. Passive startup still never calls this path.
         if (this.getAIReadiness("memory").issue === "token_unknown") {
-            this.refreshAPITokenPresence();
+            this.refreshAPITokenPresence('memory');
         }
         if (!this.getAIReadiness("memory").ready) {
             return Promise.resolve({ decision: "answer-now" });
@@ -7888,7 +7899,17 @@ export class PluginManager extends Plugin {
 
     private openSharedFeatureModal(host: FeaturedImageOptionsModalHost): Modal {
         this.activeFeatureOptionsModal?.close();
-        const modal = new FeaturedImageOptionsModal(this.app, host);
+        const connection = this.getImageGenerationConnection();
+        const connectedHost: FeaturedImageOptionsModalHost = connection?.connectionId ? {
+            ...host,
+            connection,
+            defaults: { ...host.defaults,
+                featuredImageModel: connection.sourceImageModel || connection.model || host.defaults.featuredImageModel },
+            saveSourceImageModel: async (model) => {
+                await this.aiConfiguration.updateAIConnection(connection.connectionId!, { models: { sourceImage: model } });
+            },
+        } : host;
+        const modal = new FeaturedImageOptionsModal(this.app, connectedHost);
         this.activeFeatureOptionsModal = modal;
         modal.open();
         return modal;
@@ -8889,7 +8910,7 @@ export class PluginManager extends Plugin {
             return false;
         }
         if (this.getAIReadiness(scope).issue === "token_unknown") {
-            this.refreshAPITokenPresence();
+            this.refreshAPITokenPresence(scope);
             void this.notifySettingsChanged();
             void this.updateMemoryStatusBar();
         }
@@ -8914,8 +8935,9 @@ export class PluginManager extends Plugin {
         return this.aiConfiguration.getImageAPITokenSecretId();
     }
 
-    getImageGenerationConnection(): ImageGenerationConnection | null {
-        return this.aiConfiguration.getImageGenerationConnection();
+    getImageGenerationConnection(connectionId?: string,
+        legacy?: Parameters<PluginAIConfiguration['getImageGenerationConnection']>[1]): ImageGenerationConnection | null {
+        return this.aiConfiguration.getImageGenerationConnection(connectionId, legacy);
     }
 
     getConfiguredImageAPITokenSecret(): string | null {
@@ -8976,18 +8998,36 @@ export class PluginManager extends Plugin {
     }
 
     hasConfiguredAPIToken(): boolean {
+        if (this.settings.aiConnections !== undefined) return this.getAPITokenCacheState() === 'present';
         return this.aiConfiguration.hasConfiguredAPIToken();
     }
 
     hasTokenCachedValue(): boolean | null {
+        if (this.settings.aiConnections !== undefined) {
+            const state = this.getAPITokenCacheState();
+            return state === 'unknown' ? null : state === 'present';
+        }
         return this.aiConfiguration.hasTokenCachedValue();
     }
 
     getAPITokenCacheState(): APITokenCacheState {
+        if (this.settings.aiConnections !== undefined) {
+            const resolved = this.aiConfiguration.resolveAIConnection('chat');
+            return resolved.ok ? this.aiConfiguration.getAIConnectionTokenState(resolved.connection.connectionId) : 'missing';
+        }
         return this.aiConfiguration.getTokenCacheState();
     }
 
-    refreshAPITokenPresence(): APITokenCacheState {
+    refreshAPITokenPresence(scope: AIReadinessScope = 'chat'): APITokenCacheState {
+        if (this.settings.aiConnections !== undefined) {
+            const resolved = this.aiConfiguration.resolveAIConnection(scope === 'memory' ? 'embedding' : 'chat');
+            if (!resolved.ok) return 'missing';
+            // SecretStorage is synchronous; the async owner updates its local state before returning.
+            // This is reached only by an explicit action, never by Settings rendering.
+            void this.aiConfiguration.getAIConnectionToken(resolved.connection.connectionId)
+                .catch(() => this.log('Could not read the selected AI connection credential'));
+            return this.aiConfiguration.getAIConnectionTokenState(resolved.connection.connectionId);
+        }
         return this.aiConfiguration.refreshAPITokenPresence();
     }
 
@@ -9000,7 +9040,28 @@ export class PluginManager extends Plugin {
     }
 
     async getAPIToken(): Promise<string> {
+        if (this.settings.aiConnections !== undefined) {
+            const resolution = this.aiConfiguration.resolveAIConnection('chat');
+            if (!resolution.ok) throw new Error(`AI connection unavailable: ${resolution.issue}`);
+            return this.aiConfiguration.getAIConnectionToken(resolution.connection.connectionId);
+        }
         return this.aiConfiguration.getAPIToken();
+    }
+
+    getAIConnectionToken(connectionId: string): Promise<string> {
+        return this.aiConfiguration.getAIConnectionToken(connectionId);
+    }
+
+    getAIConnectionCredentialRevision(connectionId: string): number {
+        return this.aiConfiguration.getAIConnectionCredentialRevision(connectionId);
+    }
+
+    getAIConnectionsController(): PluginAIConfiguration {
+        return this.aiConfiguration;
+    }
+
+    private getEffectiveChatSettings(): PluginManagerSettings {
+        return { ...this.settings, ...new AIUtils(this).getEffectiveAISettings('chat') };
     }
 
     clearTokenCache(): void {
@@ -9018,8 +9079,51 @@ export class PluginManager extends Plugin {
         return this.aiConfiguration.updateAIProviderConfiguration(patch, invocationEpoch);
     }
 
-    private completeAISetup(input: AISetupInput): Promise<AISetupResult> {
-        return this.aiConfiguration.completeAISetup(input);
+    private async completeAISetup(input: AISetupInput): Promise<AISetupResult> {
+        const providerId = input.presetKey === 'qwen' ? 'dashscope-cn'
+            : input.presetKey === 'qwen-intl' ? 'dashscope-intl'
+                : input.presetKey === 'openai' ? 'openai' : undefined;
+        try {
+            const saved = this.aiConfiguration.getAIConnections();
+            if (saved === undefined && this.settings.aiProvider) {
+                const baseURL = this.settings.baseURL.trim().replace(/\/+$/, '');
+                const configuredProvider = baseURL === PROVIDER_PRESETS.openai.baseURL ? 'openai'
+                    : baseURL === PROVIDER_PRESETS.qwen.baseURL ? 'dashscope-cn'
+                        : baseURL === PROVIDER_PRESETS['qwen-intl'].baseURL ? 'dashscope-intl' : 'custom';
+                if (input.token?.trim()) {
+                    // This is a new Key explicitly supplied for the service already shown in Chat.
+                    // Reusing an old unknown Key or choosing another service requires the Settings migration detail.
+                    if (providerId && providerId !== configuredProvider) return { ok: false, code: 'invalid_configuration' };
+                    await this.aiConfiguration.migrateLegacyAIConnections({ providerId: configuredProvider, key: input.token });
+                    return { ok: true };
+                } else {
+                    if (!providerId) return { ok: false, code: 'invalid_configuration' };
+                    await this.aiConfiguration.migrateLegacyAIConnections({ providerId });
+                }
+                this.refreshAPITokenPresence();
+                return this.getAIReadiness().ready ? { ok: true } : { ok: false, code: 'token_required' };
+            }
+            if (saved !== undefined && !input.presetKey) {
+                const resolved = this.aiConfiguration.resolveAIConnection('chat');
+                if (!resolved.ok) return { ok: false, code: 'invalid_configuration' };
+                if (input.token?.trim()) {
+                    await this.aiConfiguration.updateAIConnection(resolved.connection.connectionId, {}, input.token);
+                    // Report this committed repair; a later queued edit owns its own result.
+                    return { ok: true };
+                }
+                this.refreshAPITokenPresence();
+                return this.getAIReadiness().ready ? { ok: true } : { ok: false, code: 'token_required' };
+            }
+            if (!providerId) return { ok: false, code: 'invalid_configuration' };
+            if (!input.token?.trim()) return { ok: false, code: 'token_required' };
+            await this.aiConfiguration.createAIConnection({ providerId }, input.token, saved === undefined ? 'default' : 'chat',
+                { initialSetup: saved === undefined && !this.settings.aiProvider });
+            return { ok: true };
+        } catch (error) {
+            const code = error instanceof Error ? error.message : '';
+            return { ok: false, code: code.includes('compensation_failed') ? 'compensation_failed'
+                : code.includes('legacy_') ? 'invalid_configuration' : 'settings_save_failed' };
+        }
     }
 }
 

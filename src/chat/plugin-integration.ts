@@ -17,7 +17,7 @@ import { prepareFeaturedImagePrompt } from "../ai-services/prepare-featured-imag
 import { normalizeFeaturedImageFolderPath } from "../ai-services/featured-image-path";
 import { normalizeFeaturedImageCount, normalizeFeaturedImageModel } from "../settings";
 import { MemoryGovernanceCoordinator } from "../pa/memory-governance-coordinator";
-import type { ImageGenerationConnection } from "../ai-services/image-generation-connection";
+import type { ImageGenerationConnection, LegacyImageConnectionReference } from "../ai-services/image-generation-connection";
 import type { OperationsSession } from "../ai-services/operations";
 import type { AISetupInput, AISetupResult, ChatHost } from "./ChatHost";
 import type { PluginManagerSettings } from "../settings";
@@ -92,8 +92,8 @@ export interface ChatPluginIntegrationDependencies {
     getSettings(): PluginManagerSettings;
     getPluginId(): string;
     source: ChatPluginSourceCapability;
-    getImageGenerationConnection(): ImageGenerationConnection | null;
-    getImageToken(mode: ImageGenerationConnection["mode"]): Promise<string | null>;
+    getImageGenerationConnection(connectionId?: string, legacy?: LegacyImageConnectionReference): ImageGenerationConnection | null;
+    getImageToken(mode: ImageGenerationConnection["mode"], connectionId?: string): Promise<string | null>;
     getProviderConfigurationRevision(): number;
     getTokenRevision(): number;
     hasActiveAIProviderCredentialTransition(): boolean;
@@ -150,8 +150,8 @@ export class ChatPluginIntegration {
         this.imageGenerationService = new ImageGenerationService({
             store: this.chatHistoryStore,
             assets: this.imageAssetService,
-            resolveConnection: () => this.dependencies.getImageGenerationConnection(),
-            getToken: (mode) => this.dependencies.getImageToken(mode),
+            resolveConnection: (id, legacy) => this.dependencies.getImageGenerationConnection(id, legacy),
+            getToken: (mode, id) => this.dependencies.getImageToken(mode, id),
             log: (message, error) => this.dependencies.log(message, error),
             onSyncNotice: (receipt) => this.dependencies.showImageSyncNotice(receipt),
         });
@@ -258,6 +258,14 @@ export class ChatPluginIntegration {
 
     getImageGenerationOptions(): ComposerImageGenerationOptions {
         const settings = this.dependencies.getSettings();
+        if (settings.aiConnections !== undefined) {
+            const connection = this.dependencies.getImageGenerationConnection();
+            return {
+                model: connection?.model ?? '',
+                count: normalizeFeaturedImageCount(settings.numFeaturedImages, Number.MAX_SAFE_INTEGER),
+                attachmentPathHint: normalizeFeaturedImageFolderPath(settings.featuredImagePath),
+            };
+        }
         return {
             model: normalizeFeaturedImageModel(settings.featuredImageModel),
             count: normalizeFeaturedImageCount(settings.numFeaturedImages),

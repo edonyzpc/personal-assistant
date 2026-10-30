@@ -1,6 +1,6 @@
 import { expect, it, jest } from '@jest/globals';
 import * as platformDom from '../src/platform-dom';
-import { prepareWanImageInput } from '../src/chat/image-generation-input';
+import { prepareOpenAIImageInput, prepareWanImageInput } from '../src/chat/image-generation-input';
 import { installObsidianDocumentHelpers } from './helpers/obsidian-dom';
 
 it('waits for approval before making an opaque white-backed Wan copy', async () => {
@@ -34,6 +34,12 @@ it('waits for approval before making an opaque white-backed Wan copy', async () 
         expect(prepared.dataUrl).toMatch(/^data:image\/png;base64,/);
         expect(fillRect).toHaveBeenCalledWith(0, 0, 240, 240);
         expect(context.globalCompositeOperation).toBe('source-over');
+        expect(bytes).toEqual(original);
+        fillRect.mockClear();
+        const transparent = await prepareOpenAIImageInput(bytes.buffer, () => true);
+        expect(transparent.whiteBackgroundApplied).toBe(false);
+        expect(transparent.dataUrl).toMatch(/^data:image\/png;base64,/);
+        expect(fillRect).not.toHaveBeenCalled();
         expect(bytes).toEqual(original);
     } finally {
         documentSpy.mockRestore();

@@ -24,6 +24,7 @@ import type {
     VSSFileRecord,
     VSSFileState,
     VSSIndexStats,
+    VSSStorageInspection,
     VectorIndexDeleteOptions,
 } from "./types";
 import type {
@@ -117,6 +118,39 @@ export class SqliteVectorIndex implements VectorIndex {
             this.workerInitialized = true;
             this.hasEverInitialized = true;
             return result;
+        });
+    }
+
+    /** Inspect an unopened store without replaying a prior initialize after Worker recovery. */
+    inspectStorage(): Promise<VSSStorageInspection> {
+        return this.enqueue(async () => {
+            if (this.hasEverInitialized) return { state: "unknown", reason: "storage_in_use" };
+            try {
+                const wasmUrl = await this.prepareWasmUrl();
+                return await this.send<VSSStorageInspection>("inspectStorage", {
+                    databaseName: this.databaseName,
+                    opfsDirectory: this.opfsDirectory,
+                    wasmUrl,
+                });
+            } catch {
+                return { state: "unknown", reason: "storage_inspection_failed" };
+            }
+        });
+    }
+
+    /** The caller must already have established this directory's vault ownership. */
+    removeStorage(): Promise<void> {
+        return this.enqueue(async () => {
+            // A failed/replaced Worker must never initialize the directory before deleting it.
+            this.hasEverInitialized = false;
+            this.workerInitialized = false;
+            this.lastInitializePayload = null;
+            try {
+                await this.send<null>("removeStorage", { opfsDirectory: this.opfsDirectory });
+            } finally {
+                // The old module's SAH-pool registration must not be reused after removal.
+                this.resetWorker(this.worker ?? undefined);
+            }
         });
     }
 

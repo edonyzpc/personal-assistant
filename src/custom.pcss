@@ -3999,6 +3999,22 @@ body.is-mobile .pa-settings-group-summary {
 .pa-settings-section-desc-sm { font-size: var(--font-ui-small); }
 .pa-settings-section-desc-md { font-size: var(--font-ui-medium); }
 
+.pa-ai-connections { scroll-margin-block-start: 12px; }
+.pa-ai-connections .setting-item { flex-wrap: wrap; gap: 8px; }
+.pa-ai-connections .setting-item-info { min-width: 0; overflow-wrap: anywhere; }
+.pa-ai-connections .setting-item-control { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+.pa-ai-connections input, .pa-ai-connections select { max-width: 100%; }
+.pa-ai-connections-action { display: inline-flex; border: 0; padding: 6px 0; margin-inline-end: 12px; }
+.pa-ai-connections-action .setting-item-info { display: none; }
+.pa-settings-connection-preview { color: var(--text-muted); overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+    .pa-ai-connections .setting-item { align-items: stretch; }
+    .pa-ai-connections .setting-item-info, .pa-ai-connections .setting-item-control { width: 100%; }
+    .pa-ai-connections .setting-item-control { justify-content: flex-start; }
+    .pa-ai-connections input, .pa-ai-connections select { font-size: 16px; min-height: 44px; }
+    .pa-ai-connections button { min-height: 44px; }
+}
+
 .pa-settings-memory-preference-status {
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
@@ -4716,7 +4732,8 @@ body.is-mobile .pa-settings-jump-progress {
 	padding-inline: 8px;
 }
 
-body.is-mobile .pa-settings-group-summary {
+body.is-mobile .pa-settings-group-summary,
+body.is-mobile .pa-ai-connections {
 	scroll-margin-block-start: var(--pa-settings-mobile-nav-offset, 72px);
 }
 

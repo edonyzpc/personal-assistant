@@ -58,6 +58,11 @@ export interface ImageGenerationTask {
         endpointIdentity: string;
         credentialSlot: string;
         revision: number;
+        connectionId?: string;
+        providerId?: string;
+        adapter?: 'wan' | 'openai-image';
+        credentialRevision?: number;
+        requestIdentity?: string;
     };
     state: ImageGenerationState;
     providerTaskId?: string;
@@ -82,12 +87,12 @@ const IMAGE_PREACCEPT_ACTIONS = {
 export const IMAGE_PREACCEPT_MESSAGES = {
     invalid_request: 'The structured image request is invalid. Correct it; no image task was accepted.',
     invalid_inputs: 'The selected image operation and references do not match. Correct the structured request; no image task was accepted.',
-    count_exceeds_provider_limit: 'Wan supports up to 4 images in one request. Ask the user to choose 1–4 images.',
+    count_exceeds_provider_limit: 'The requested count exceeds the selected image service limit. Ask the user to adjust the count; do not split it into extra paid requests.',
     plan_conflict: 'The structured image counts conflict with the frozen plan or actual options. Correct or clarify the plan; no new image task was accepted.',
     source_changed: 'The image request source is no longer current. Start from the current source; no new image task was accepted.',
     source_unavailable: 'The requested note source is unavailable or has no usable text. Locate an allowed note or clarify the source; no image task was accepted.',
     source_conflict: 'The named note conflicts with the explicitly selected source. Keep that selection or clarify the intended source; no image task was accepted.',
-    connection_unavailable: 'Image generation needs a compatible Wan connection in Settings. No image task was accepted.',
+    connection_unavailable: 'Image generation needs an available image service in Settings. No image task was accepted.',
     cancelled: 'Image preparation was declined or cancelled. No image task was accepted.',
     preparation_failed: 'Image description preparation or admission failed. No image task was accepted; ask the user before continuing. Description model costs may already have been used.',
     operation_unresolved: 'This image part has not started. An earlier part of the original operation is unresolved. Verify that original part before continuing; do not start a replacement operation.',
@@ -250,7 +255,7 @@ export function cloneImageGenerationTask(value: unknown): ImageGenerationTask {
             userPrompt: prompt(request.userPrompt), submittedPrompt: prompt(request.submittedPrompt),
             operation: request.operation as ImageGenerationTask['request']['operation'],
             model: text(request.model, 128), count: integer(request.count, 1, 16),
-            ...(request.totalCount !== undefined ? { totalCount: integer(request.totalCount, 1, 4) } : {}),
+            ...(request.totalCount !== undefined ? { totalCount: integer(request.totalCount, 1, 10) } : {}),
             inputRefs: refs(request.inputRefs),
         },
         connection: {
@@ -262,6 +267,17 @@ export function cloneImageGenerationTask(value: unknown): ImageGenerationTask {
         state: input.state as ImageGenerationState,
         outputs,
     };
+    if (connection.connectionId !== undefined) {
+        result.connection.connectionId = id(connection.connectionId);
+        result.connection.providerId = text(connection.providerId, 128);
+        if (connection.adapter !== 'wan' && connection.adapter !== 'openai-image') throw new Error('Invalid image adapter.');
+        result.connection.adapter = connection.adapter;
+        result.connection.credentialRevision = integer(connection.credentialRevision);
+        result.connection.requestIdentity = text(connection.requestIdentity, 4096);
+    } else if (connection.providerId !== undefined || connection.adapter !== undefined
+        || connection.credentialRevision !== undefined || connection.requestIdentity !== undefined) {
+        throw new Error('Incomplete image connection identity.');
+    }
     if (request.size !== undefined) result.request.size = text(request.size, 64);
     if (request.parentVersionId !== undefined) result.request.parentVersionId = id(request.parentVersionId);
     if (request.promptOrigin !== undefined) result.request.promptOrigin = promptOrigin(request.promptOrigin);

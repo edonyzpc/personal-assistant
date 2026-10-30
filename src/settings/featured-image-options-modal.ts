@@ -1,7 +1,8 @@
 import { Modal, type App } from 'obsidian';
-import { normalizeFeaturedImageCount, normalizeFeaturedImageModel } from '../settings';
 import { getPluginUiLanguage, makePluginTranslator } from '../locales/plugin';
-import type { FeaturedImageDefaults } from '../ai-services/featured-image-options';
+import { imageCountLimit, imageModelChoices, isImageModelSupported,
+    type FeaturedImageDefaults } from '../ai-services/featured-image-options';
+import type { ImageGenerationConnection } from '../ai-services/image-generation-connection';
 
 type WritableFeaturedImageDefaults = {
     -readonly [K in keyof FeaturedImageDefaults]: FeaturedImageDefaults[K];
@@ -12,6 +13,8 @@ export type FeaturedImageDefaultsField = keyof FeaturedImageDefaults;
 export interface FeaturedImageOptionsModalHost {
     readonly mode: 'edit';
     readonly defaults: FeaturedImageDefaults;
+    readonly connection?: Readonly<ImageGenerationConnection> | null;
+    saveSourceImageModel?(model: string): Promise<void>;
     saveDefaults(defaults: FeaturedImageDefaultsPatch): Promise<void>;
 }
 
@@ -50,14 +53,17 @@ export function mountFeaturedImageOptionsEditor(
         model = modelLabel.createEl('select', {
             attr: { 'aria-label': t('plugin.settings.featuredImage.model.name') },
         });
-        for (const [value, key] of [
-            ['wan2.7-image', 'plugin.settings.featuredImage.model.balanced'],
-            ['wan2.7-image-pro', 'plugin.settings.featuredImage.model.quality'],
-        ] as const) model.createEl('option', { text: t(key), attr: { value } });
-        model.value = normalizeFeaturedImageModel(host.defaults.featuredImageModel);
+        const choices = [...new Set([...imageModelChoices(host.connection), host.defaults.featuredImageModel])];
+        for (const value of choices) {
+            const text = value === 'wan2.7-image' ? t('plugin.settings.featuredImage.model.balanced')
+                : value === 'wan2.7-image-pro' ? t('plugin.settings.featuredImage.model.quality') : value;
+            model.createEl('option', { text, attr: { value } });
+        }
+        model.value = host.defaults.featuredImageModel;
         fieldset.createEl('p', {
             cls: 'pa-featured-image-options__hint',
-            text: t('plugin.settings.featuredImage.model.desc'),
+            text: t(host.connection?.adapter === 'openai-image'
+                ? 'plugin.settings.featuredImage.model.connectionDesc' : 'plugin.settings.featuredImage.model.desc'),
         });
     }
     if (show('numFeaturedImages')) {
@@ -66,10 +72,12 @@ export function mountFeaturedImageOptionsEditor(
         count = countLabel.createEl('select', {
             attr: { 'aria-label': t('plugin.settings.featuredImage.count.name') },
         });
-        for (const value of [1, 2, 3, 4]) {
+        const counts = [...new Set([...Array.from({ length: imageCountLimit(host.connection) }, (_, index) => index + 1),
+            host.defaults.numFeaturedImages])];
+        for (const value of counts) {
             count.createEl('option', { text: String(value), attr: { value: String(value) } });
         }
-        count.value = String(normalizeFeaturedImageCount(host.defaults.numFeaturedImages));
+        count.value = String(host.defaults.numFeaturedImages);
         fieldset.createEl('p', {
             cls: 'pa-featured-image-options__hint',
             text: t('plugin.settings.featuredImage.count.desc'),
@@ -110,11 +118,22 @@ export function mountFeaturedImageOptionsEditor(
     save.onclick = async () => {
         if (!canEdit()) return;
         const patch: FeaturedImageDefaultsPatch = {};
-        if (model && normalizeFeaturedImageModel(model.value) !== baseline.featuredImageModel) {
-            patch.featuredImageModel = normalizeFeaturedImageModel(model.value);
+        if (model && model.value !== baseline.featuredImageModel) {
+            if (!isImageModelSupported(model.value, host.connection)) {
+                status.setText(t('plugin.chat.createImage.invalidModel'));
+                model.focus();
+                return;
+            }
+            patch.featuredImageModel = model.value;
         }
-        if (count && normalizeFeaturedImageCount(count.value) !== baseline.numFeaturedImages) {
-            patch.numFeaturedImages = normalizeFeaturedImageCount(count.value);
+        if (count && Number(count.value) !== baseline.numFeaturedImages) {
+            const value = Number(count.value);
+            if (!Number.isSafeInteger(value) || value < 1 || value > imageCountLimit(host.connection)) {
+                status.setText(t('plugin.chat.createImage.invalidCount', { maximum: imageCountLimit(host.connection) }));
+                count.focus();
+                return;
+            }
+            patch.numFeaturedImages = value;
         }
         if (path && path.value !== baseline.featuredImagePath) {
             patch.featuredImagePath = path.value;
@@ -128,12 +147,23 @@ export function mountFeaturedImageOptionsEditor(
         save.disabled = true;
         container.setAttribute('aria-busy', 'true');
         status.setText(t('plugin.settings.featuredImage.options.saving'));
+        let partialSuccess = false;
         try {
-            await host.saveDefaults(patch);
-            Object.assign(baseline, patch);
+            if (patch.featuredImageModel !== undefined && host.connection?.connectionId) {
+                if (!host.saveSourceImageModel) throw new Error('Image connection model editing is unavailable.');
+                await host.saveSourceImageModel(patch.featuredImageModel);
+                baseline.featuredImageModel = patch.featuredImageModel;
+                partialSuccess = true;
+                delete patch.featuredImageModel;
+            }
+            if (Object.keys(patch).length) {
+                await host.saveDefaults(patch);
+                Object.assign(baseline, patch);
+            }
             if (isOpen()) callbacks.close();
         } catch {
-            if (isOpen()) status.setText(t('plugin.settings.featuredImage.options.saveFailed'));
+            if (isOpen()) status.setText(t(partialSuccess
+                ? 'plugin.settings.featuredImage.options.partiallySaved' : 'plugin.settings.featuredImage.options.saveFailed'));
         } finally {
             if (isOpen()) {
                 busy = false;

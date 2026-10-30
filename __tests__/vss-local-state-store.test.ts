@@ -8,6 +8,7 @@ import {
     type VSSRebuildGuard,
 } from "../src/vss/local-state-store";
 import type { VSSIndexMarker } from "../src/vss/types";
+import { createMemoryProfileEntry, type MemoryProfileCatalog } from '../src/vss/profile-catalog';
 
 function createMarker(overrides: Partial<VSSIndexMarker> = {}): VSSIndexMarker {
     return {
@@ -36,6 +37,79 @@ function createVault(basePath: string, configDir = ".obsidian"): Vault {
 }
 
 describe("VSS local state store", () => {
+    it('isolates all profile state and shares only its vault catalog', async () => {
+        const factory = new FakeIndexedDbFactory();
+        const root = new IndexedDbVSSIndexStateStore('profiles', factory as unknown as IDBFactory);
+        const a = root.forProfile('a');
+        const b = root.forProfile('b');
+        await a.initialize();
+        await b.initialize();
+        const guard: VSSRebuildGuard = { version: 1, reason: 'settings-changed', startedAt: 'now' };
+        await a.replaceRebuildState({ marker: createMarker(), dirtyJournal: new Map([['a.md', { first: 1, last: 2 }]]), guard });
+        await b.replaceRebuildState({ marker: null, dirtyJournal: new Map([['b.md', { first: 3, last: 4 }]]), guard: null });
+        await a.setMigrationMetadata({ version: 1, importedLegacyMarkerAt: 'a' });
+        expect(factory.openCalls).toBe(1);
+        await expect(a.getMarker()).resolves.toMatchObject({ indexId: 'index-a' });
+        await expect(a.getRebuildGuard()).resolves.toEqual(guard);
+        await expect(a.getDirtyJournal()).resolves.toEqual(new Map([['a.md', { first: 1, last: 2, epoch: undefined }]]));
+        await expect(b.getMarker()).resolves.toBeNull();
+        await expect(b.getRebuildGuard()).resolves.toBeNull();
+        await expect(b.getMigrationMetadata()).resolves.toBeNull();
+        await expect(root.getMarker()).resolves.toBeNull();
+        await b.dispose();
+        expect(factory.db.closeCalls).toBe(0);
+        await root.dispose();
+        expect(factory.db.closeCalls).toBe(1);
+    });
+
+    it('atomically claims matching legacy state and catalog without erasing the original', async () => {
+        const factory = new FakeIndexedDbFactory();
+        const root = new IndexedDbVSSIndexStateStore('migration', factory as unknown as IDBFactory);
+        await root.initialize();
+        await root.replaceRebuildState({ marker: createMarker(), dirtyJournal: new Map([['old.md', { first: 1, last: 2 }]]), guard: null });
+        const entry = createMemoryProfileEntry('vault', { provider: 'openai', baseURL: '', model: 'model', dimensions: 1024, distanceMetric: 'COSINE' }, 'migration');
+        const catalog: MemoryProfileCatalog = { version: 1, entries: [entry], firstUse: 'consumed', legacy: { state: 'bound', storage: entry.storage } };
+        const transaction = jest.spyOn(factory.db, 'transaction');
+        await root.migrateLegacyProfile(catalog, entry.profileId);
+        expect(transaction.mock.calls.filter((call) => call[1] === 'readwrite')).toHaveLength(1);
+        await expect(root.forProfile(entry.profileId).getMarker()).resolves.toMatchObject({ indexId: 'index-a' });
+        await expect(root.getMarker()).resolves.toMatchObject({ indexId: 'index-a' });
+        await expect(root.getProfileCatalog()).resolves.toEqual(catalog);
+    });
+
+    it('keeps other profile state when one profile is removed', async () => {
+        const root = new MemoryVSSIndexStateStore();
+        const a = root.forProfile('a');
+        const b = root.forProfile('b');
+        await a.setMarker(createMarker({ indexId: 'a' }));
+        await b.setMarker(createMarker({ indexId: 'b' }));
+        const catalog: MemoryProfileCatalog = { version: 1, entries: [], firstUse: 'consumed',
+            legacy: { state: 'absent', storage: { databaseName: 'legacy', opfsDirectory: '/vault', opfsVfsName: 'vault' } } };
+        await root.removeProfileState('b', catalog);
+        await expect(root.forProfile('a').getMarker()).resolves.toMatchObject({ indexId: 'a' });
+        await expect(root.forProfile('b').getMarker()).resolves.toBeNull();
+        await expect(root.getProfileCatalog()).resolves.toMatchObject({ firstUse: 'consumed' });
+    });
+
+    it('publishes neither migrated state nor catalog when their transaction fails', async () => {
+        const factory = new FakeIndexedDbFactory();
+        const root = new IndexedDbVSSIndexStateStore('failed-migration', factory as unknown as IDBFactory);
+        await root.initialize();
+        await root.setMarker(createMarker());
+        const catalog: MemoryProfileCatalog = { version: 1, entries: [], firstUse: 'consumed',
+            legacy: { state: 'unknown', storage: { databaseName: 'legacy', opfsDirectory: '/vault', opfsVfsName: 'vault' } } };
+        const transaction = factory.db.transaction.bind(factory.db);
+        const fail = jest.spyOn(factory.db, 'transaction').mockImplementation((name, mode) => {
+            if (mode === 'readwrite') factory.db.abortNextTransaction();
+            return transaction(name, mode);
+        });
+        await expect(root.migrateLegacyProfile(catalog, 'a')).rejects.toThrow('transaction aborted');
+        fail.mockRestore();
+        await expect(root.getProfileCatalog()).resolves.toBeNull();
+        await expect(root.forProfile('a').getMarker()).resolves.toBeNull();
+        await expect(root.getMarker()).resolves.toMatchObject({ indexId: 'index-a' });
+    });
+
     it("keeps memory marker, dirty journal, and migration metadata cloned", async () => {
         const store = new MemoryVSSIndexStateStore();
         const marker = createMarker();

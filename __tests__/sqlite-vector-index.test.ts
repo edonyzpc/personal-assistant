@@ -110,6 +110,70 @@ describe('SqliteVectorIndex worker recovery', () => {
         URL.revokeObjectURL = originalRevokeObjectURL;
     });
 
+    it('inspects an unopened store without sending initialize or preparing a writable profile', async () => {
+        Object.defineProperty(globalThis, 'Worker', { configurable: true, value: class { } });
+        const worker = new MockWorker(true, { state: 'known', profileSignature: 'old-profile' });
+        const index = new SqliteVectorIndex({ workerUrl: 'vss-sqlite-worker.js',
+            databaseName: 'old.sqlite3', opfsDirectory: '/owned/old',
+            workerFactory: () => worker as unknown as Worker });
+        expect(await index.inspectStorage()).toEqual({ state: 'known', profileSignature: 'old-profile' });
+        expect(worker.postMessage.mock.calls.map(([request]) => request)).toEqual([
+            { id: 1, type: 'inspectStorage', payload: {
+                databaseName: 'old.sqlite3', opfsDirectory: '/owned/old', wasmUrl: undefined,
+            } },
+        ]);
+        await index.dispose();
+    });
+
+    it('keeps an inspection transport failure unknown instead of assuming absent storage', async () => {
+        Object.defineProperty(globalThis, 'Worker', { configurable: true, value: class { } });
+        const worker = new MockWorker(false);
+        const index = new SqliteVectorIndex({ workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker });
+        const pending = index.inspectStorage();
+        await waitForPostMessage(worker);
+        worker.failRequest(1, 'out-of-memory');
+        expect(await pending).toEqual({ state: 'unknown', reason: 'storage_inspection_failed' });
+        expect(worker.postMessage.mock.calls.some(([request]) => request.type === 'initialize')).toBe(false);
+        worker.postMessage.mockImplementation(request => {
+            if ('id' in request) queueMicrotask(() => worker.succeedRequest(request.id, null));
+        });
+        await index.dispose();
+    });
+
+    it('does not replay initialize while removing storage after a fatal worker error', async () => {
+        Object.defineProperty(globalThis, 'Worker', { configurable: true, value: class { } });
+        const first = new MockWorker(true, 'ready');
+        const replacement = new MockWorker(true, null);
+        const workers = [first, replacement];
+        const index = new SqliteVectorIndex({ workerUrl: 'vss-sqlite-worker.js',
+            opfsDirectory: '/owned/old', workerFactory: () => workers.shift() as unknown as Worker });
+        await index.initialize({ provider: 'qwen', model: 'old', baseURL: 'https://example.com/v1',
+            dimensions: 2, distanceMetric: 'COSINE' });
+        first.fail('worker terminated');
+        expect(await index.inspectStorage()).toEqual({ state: 'unknown', reason: 'storage_in_use' });
+        expect(workers).toHaveLength(1);
+        await index.removeStorage();
+        expect(replacement.postMessage.mock.calls.map(([request]) => request)).toEqual([
+            { id: 2, type: 'removeStorage', payload: { opfsDirectory: '/owned/old' } },
+        ]);
+        expect(replacement.terminate).toHaveBeenCalledTimes(1);
+        await index.dispose();
+    });
+
+    it('reports cleanup failure and discards the worker instead of claiming a reset', async () => {
+        Object.defineProperty(globalThis, 'Worker', { configurable: true, value: class { } });
+        const worker = new MockWorker(false);
+        const index = new SqliteVectorIndex({ workerUrl: 'vss-sqlite-worker.js', opfsDirectory: '/owned/old',
+            workerFactory: () => worker as unknown as Worker });
+        const pending = index.removeStorage();
+        await waitForPostMessage(worker);
+        worker.failRequest(1, 'storage-locked');
+        await expect(pending).rejects.toThrow('storage-locked');
+        expect(worker.terminate).toHaveBeenCalledTimes(1);
+        await index.dispose();
+    });
+
     it('terminates and recreates the worker after a fatal worker error', async () => {
         Object.defineProperty(globalThis, 'Worker', {
             configurable: true,

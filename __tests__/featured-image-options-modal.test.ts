@@ -6,6 +6,7 @@ import {
     type FeaturedImageOptionsModalHost,
 } from '../src/settings/featured-image-options-modal';
 import type { FeaturedImageDefaults } from '../src/ai-services/featured-image-options';
+import type { ImageGenerationConnection } from '../src/ai-services/image-generation-connection';
 import { pluginT } from '../src/locales/plugin';
 
 jest.mock('../src/settings', () => ({
@@ -52,8 +53,8 @@ function deferred<T>() {
     return { promise, resolve };
 }
 
-function setup(saveDefaults: FeaturedImageOptionsModalHost['saveDefaults']) {
-    const modal = new FeaturedImageOptionsModal({} as App, { mode: 'edit', defaults, saveDefaults });
+function setup(saveDefaults: FeaturedImageOptionsModalHost['saveDefaults'], extra: Partial<FeaturedImageOptionsModalHost> = {}) {
+    const modal = new FeaturedImageOptionsModal({} as App, { mode: 'edit', defaults, saveDefaults, ...extra });
     const content = new ModalElement('div');
     Object.assign(modal, { contentEl: content, titleEl: new ModalElement('h2') });
     modal.close = jest.fn(() => modal.onClose());
@@ -66,6 +67,56 @@ function setup(saveDefaults: FeaturedImageOptionsModalHost['saveDefaults']) {
 }
 
 describe('FeaturedImageOptionsModal', () => {
+    const openai: ImageGenerationConnection = {
+        mode: 'inherit-chat', adapter: 'openai-image', providerId: 'openai', connectionId: 'openai-personal',
+        baseURL: 'https://api.openai.com/v1', synchronousEndpoint: 'https://api.openai.com/v1/images/generations',
+        asynchronousEndpoint: '', tasksEndpoint: '', credentialSlot: 'pa-openai-test', revision: 1,
+        model: 'gpt-image-2.5-flare', sourceImageModel: 'gpt-image-1',
+    };
+
+    it('saves an OpenAI source model through the connection owner without writing it to legacy defaults', async () => {
+        const saveDefaults = jest.fn(async () => undefined);
+        const saveModel = jest.fn(async (_model: string) => undefined);
+        const ui = setup(saveDefaults, { connection: openai, saveSourceImageModel: saveModel,
+            defaults: { ...defaults, featuredImageModel: 'gpt-image-1', numFeaturedImages: 6 } });
+        ui.nodes('select')[0].value = 'gpt-image-2.5-flare';
+        await ui.button('save').click();
+        expect(saveModel).toHaveBeenCalledWith('gpt-image-2.5-flare');
+        expect(saveDefaults).not.toHaveBeenCalled();
+        expect(ui.modal.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('retains unsupported stored model/count values when saving only an attachment path', async () => {
+        const saveDefaults = jest.fn(async () => undefined);
+        const saveModel = jest.fn(async (_model: string) => undefined);
+        const ui = setup(saveDefaults, { connection: openai, saveSourceImageModel: saveModel,
+            defaults: { ...defaults, featuredImageModel: 'old-explicit-model', numFeaturedImages: 12 } });
+        expect(ui.nodes('select').map(node => node.value)).toEqual(['old-explicit-model', '12']);
+        ui.nodes('input')[0].value = 'new-images';
+        await ui.button('save').click();
+        expect(saveDefaults).toHaveBeenCalledWith({ featuredImagePath: 'new-images' });
+        expect(saveModel).not.toHaveBeenCalled();
+    });
+
+    it('reports a saved model plus failed preferences and retries only the remaining draft', async () => {
+        const saveDefaults = jest.fn<ReturnType<FeaturedImageOptionsModalHost['saveDefaults']>, Parameters<FeaturedImageOptionsModalHost['saveDefaults']>>()
+            .mockRejectedValueOnce(new Error('preferences unavailable')).mockResolvedValue(undefined);
+        const saveModel = jest.fn(async (_model: string) => undefined);
+        const ui = setup(saveDefaults, { connection: openai, saveSourceImageModel: saveModel,
+            defaults: { ...defaults, featuredImageModel: 'gpt-image-1', numFeaturedImages: 6 } });
+        ui.nodes('select')[0].value = 'gpt-image-2.5-flare';
+        ui.nodes('select')[1].value = '7';
+        await ui.button('save').click();
+        expect(ui.status().textContent).toBe(pluginT('plugin.settings.featuredImage.options.partiallySaved'));
+        expect(ui.modal.close).not.toHaveBeenCalled();
+        expect(ui.nodes('select').map(node => node.value)).toEqual(['gpt-image-2.5-flare', '7']);
+        await ui.button('save').click();
+        expect(saveModel).toHaveBeenCalledTimes(1);
+        expect(saveDefaults).toHaveBeenNthCalledWith(1, { numFeaturedImages: 7 });
+        expect(saveDefaults).toHaveBeenNthCalledWith(2, { numFeaturedImages: 7 });
+        expect(ui.modal.close).toHaveBeenCalledTimes(1);
+    });
+
     it('edits valid existing defaults without invoking a provider surface', async () => {
         const saveDefaults = jest.fn(async () => undefined);
         const ui = setup(saveDefaults);

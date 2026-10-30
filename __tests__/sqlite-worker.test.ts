@@ -26,6 +26,190 @@ describe('sqlite worker OPFS lifecycle', () => {
         }
     });
 
+    it('keeps a missing store absent without creating a directory or loading SQLite', async () => {
+        const fixture = await setupStorageInspectionWorker([]);
+        fixture.root.getDirectoryHandle.mockRejectedValueOnce(notFoundError());
+        const response = await send(fixture.scope, { id: 1, type: 'inspectStorage',
+            payload: { databaseName: 'memory.sqlite3', opfsDirectory: '/owned' } });
+        expect(response).toEqual({ id: 1, ok: true, result: { state: 'absent' } });
+        expect(fixture.root.getDirectoryHandle).toHaveBeenCalledWith('owned', { create: false });
+        expect(fixture.init).not.toHaveBeenCalled();
+        expect(fixture.root.removeEntry).not.toHaveBeenCalled();
+    });
+
+    it('reads the V2 SAH mapping and profile only from a read-only in-memory snapshot', async () => {
+        const bytes = opaqueFile('/memory.sqlite3', new Uint8Array([1, 2, 3]), true);
+        const before = bytes.slice();
+        const fixture = await setupStorageInspectionWorker([bytes]);
+        const response = await send(fixture.scope, { id: 1, type: 'inspectStorage',
+            payload: { databaseName: 'memory.sqlite3', opfsDirectory: '/owned' } });
+        expect(response).toEqual({ id: 1, ok: true, result: { state: 'known', profileSignature: 'old-profile' } });
+        expect(fixture.files[0].createSyncAccessHandle).toHaveBeenCalledWith({ mode: 'read-only' });
+        expect(fixture.deserialize).toHaveBeenCalledWith(16, 'main', 32, 3, 23, 4);
+        expect(fixture.database.exec).toHaveBeenCalledWith({ sql: 'SELECT value FROM vss_meta WHERE key = ? LIMIT 2',
+            bind: ['profileSignature'], rowMode: 'object', resultRows: [{ value: 'old-profile' }] });
+        expect(fixture.database.close.mock.invocationCallOrder[0]).toBeLessThan(fixture.dealloc.mock.invocationCallOrder[0]);
+        expect(fixture.installPool).not.toHaveBeenCalled();
+        expect(fixture.handles[0].write).not.toHaveBeenCalled();
+        expect(fixture.handles[0].truncate).not.toHaveBeenCalled();
+        expect(fixture.handles[0].close).toHaveBeenCalledTimes(1);
+        expect(bytes).toEqual(before);
+    });
+
+    it('preserves a bad mapping and does not let SAH-pool repair truncate it', async () => {
+        const bytes = opaqueFile('/memory.sqlite3', new Uint8Array([1, 2, 3]), true);
+        bytes[516] ^= 1;
+        const before = bytes.slice();
+        const fixture = await setupStorageInspectionWorker([bytes]);
+        expect(await send(fixture.scope, { id: 1, type: 'inspectStorage',
+            payload: { databaseName: 'memory.sqlite3', opfsDirectory: '/owned' } }))
+            .toMatchObject({ ok: true, result: { state: 'unknown', reason: 'opaque_header_invalid' } });
+        expect(fixture.init).not.toHaveBeenCalled();
+        expect(fixture.handles[0].truncate).not.toHaveBeenCalled();
+        expect(bytes).toEqual(before);
+    });
+
+    it('does not infer a profile from a database with an associated journal', async () => {
+        const fixture = await setupStorageInspectionWorker([
+            opaqueFile('/memory.sqlite3'), opaqueFile('/memory.sqlite3-journal'),
+        ]);
+        expect(await send(fixture.scope, { id: 1, type: 'inspectStorage',
+            payload: { databaseName: 'memory.sqlite3', opfsDirectory: '/owned' } }))
+            .toMatchObject({ ok: true, result: { state: 'unknown', reason: 'storage_journal_present' } });
+        expect(fixture.init).not.toHaveBeenCalled();
+        expect(fixture.handles.every(handle => handle.close.mock.calls.length === 1)).toBe(true);
+    });
+
+    it('releases earlier read handles when another pool holds the target file', async () => {
+        const fixture = await setupStorageInspectionWorker([opaqueFile(''), opaqueFile('/memory.sqlite3')]);
+        const locked = new Error('Access Handles cannot be opened');
+        locked.name = 'NoModificationAllowedError';
+        fixture.files[1].createSyncAccessHandle.mockRejectedValueOnce(locked);
+        expect(await send(fixture.scope, { id: 1, type: 'inspectStorage',
+            payload: { databaseName: 'memory.sqlite3', opfsDirectory: '/owned' } }))
+            .toMatchObject({ ok: true, result: { state: 'unknown', reason: 'storage_locked' } });
+        expect(fixture.handles[0].close).toHaveBeenCalledTimes(1);
+        expect(fixture.init).not.toHaveBeenCalled();
+    });
+
+    it.each(['missing-metadata', 'invalid-database', 'allocation-failed'])(
+        'keeps %s unknown while releasing read handles and memory', async failure => {
+            const fixture = await setupStorageInspectionWorker([opaqueFile('/memory.sqlite3')],
+                failure === 'missing-metadata' ? null : 'old-profile');
+            if (failure === 'invalid-database') fixture.deserialize.mockReturnValueOnce(26);
+            if (failure === 'allocation-failed') fixture.alloc.mockImplementationOnce(() => { throw new RangeError('memory unavailable'); });
+            expect(await send(fixture.scope, { id: 1, type: 'inspectStorage',
+                payload: { databaseName: 'memory.sqlite3', opfsDirectory: '/owned' } }))
+                .toMatchObject({ ok: true, result: { state: 'unknown' } });
+            expect(fixture.handles[0].close).toHaveBeenCalledTimes(1);
+            expect(fixture.database.close).toHaveBeenCalledTimes(1);
+            expect(fixture.installPool).not.toHaveBeenCalled();
+        },
+    );
+
+    it('clears only an explicitly owned directory without needing readable profile metadata', async () => {
+        const fixture = await setupStorageInspectionWorker([new Uint8Array([0])]);
+        expect(await send(fixture.scope, { id: 1, type: 'removeStorage', payload: { opfsDirectory: '/owned' } }))
+            .toEqual({ id: 1, ok: true, result: null });
+        expect(fixture.root.removeEntry).toHaveBeenCalledWith('owned', { recursive: true });
+        expect(fixture.init).not.toHaveBeenCalled();
+        fixture.root.removeEntry.mockRejectedValueOnce(notFoundError());
+        expect(await send(fixture.scope, { id: 2, type: 'removeStorage', payload: { opfsDirectory: '/owned' } }))
+            .toMatchObject({ ok: true });
+    });
+
+    it('does not turn a failed or unscoped storage removal into success', async () => {
+        const fixture = await setupStorageInspectionWorker([]);
+        fixture.root.removeEntry.mockRejectedValueOnce(new Error('storage locked'));
+        expect(await send(fixture.scope, { id: 1, type: 'removeStorage', payload: { opfsDirectory: '/owned' } }))
+            .toMatchObject({ ok: false });
+        expect(await send(fixture.scope, { id: 2, type: 'removeStorage', payload: {} }))
+            .toMatchObject({ ok: false, error: { code: 'storage_path_invalid' } });
+        expect(fixture.root.removeEntry).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([false, true])('closes the current DB and requires a successful pool release before removal (pause failure: %s)', async fails => {
+        const fixture = await setupStorageInspectionWorker([]);
+        const close = jest.fn();
+        const pauseVfs = jest.fn(() => { if (fails) throw new Error('pool locked'); });
+        const database = { close, exec: jest.fn((request: unknown) => {
+            if (isExecRowsRequest(request) && request.rowMode === 'array') {
+                request.resultRows.push([isPragmaTableInfoQuery(request) ? 1 : 0]);
+            }
+        }) };
+        class MockDb { constructor() { return database; } }
+        fixture.installPool.mockImplementationOnce(async () => ({ OpfsSAHPoolDb: MockDb, pauseVfs }));
+        expect(await send(fixture.scope, { id: 1, type: 'initialize', payload: {
+            databaseName: 'memory.sqlite3', opfsDirectory: '/owned',
+            profile: { provider: 'openai', model: 'model', baseURL: '', dimensions: 2, distanceMetric: 'COSINE' },
+        } })).toMatchObject({ ok: true });
+        const response = await send(fixture.scope, { id: 2, type: 'removeStorage', payload: { opfsDirectory: '/owned' } });
+        expect(close).toHaveBeenCalledTimes(1);
+        expect(pauseVfs).toHaveBeenCalledTimes(1);
+        expect(close.mock.invocationCallOrder[0]).toBeLessThan(pauseVfs.mock.invocationCallOrder[0]);
+        expect(response.ok).toBe(!fails);
+        expect(fixture.root.removeEntry).toHaveBeenCalledTimes(fails ? 0 : 1);
+    });
+
+    it('runs the actual worker snapshot path against the installed SQLite engine', async () => {
+        // This isolated source harness compiles in memory only. Its OPFS is a
+        // synthetic byte fixture; no build assets or real vault are touched.
+        const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
+            import init from '@sqlite.org/sqlite-wasm';
+            import { build, stop } from 'esbuild';
+            const sqlite = await init();
+            const source = new sqlite.oo1.DB(':memory:');
+            source.exec('CREATE TABLE vss_meta(key TEXT PRIMARY KEY, value TEXT)');
+            source.exec({sql:'INSERT INTO vss_meta VALUES(?,?)', bind:['profileSignature','original-profile']});
+            const image = sqlite.capi.sqlite3_js_db_export(source.pointer);
+            source.close();
+            const file = new Uint8Array(4096 + image.byteLength);
+            file.set(new TextEncoder().encode('/memory.sqlite3'));
+            new DataView(file.buffer).setUint32(512, 0x180);
+            file.set([219,230,50,104,27,215,249,217],516);
+            file.set(image,4096);
+            const before = file.slice();
+            let opened = 0, closed = 0;
+            const opaque = {kind:'directory', async *entries(){yield ['opaque-file',{
+                kind:'file', createSyncAccessHandle:async options => {
+                    if(options.mode !== 'read-only') throw Error('write handle');
+                    opened++;
+                    return { getSize:()=>file.length, close:()=>closed++,
+                        read:(out,options)=>{const bytes=file.subarray(options.at,options.at+out.length);out.set(bytes);return bytes.length;},
+                        write:()=>{throw Error('write');},truncate:()=>{throw Error('truncate');} };
+                }
+            }];}};
+            const store = {getDirectoryHandle:async(name,options)=>{
+                if(name!=='.opaque'||options.create!==false)throw Error('create or other directory');return opaque;
+            }};
+            const root = {getDirectoryHandle:async(name,options)=>{
+                if(name!=='owned'||options.create!==false)throw Error('create or other vault');return store;
+            },removeEntry:()=>{throw Error('delete');}};
+            globalThis.self=globalThis;
+            Object.defineProperty(globalThis,'navigator',{configurable:true,value:{storage:{getDirectory:async()=>root}}});
+            const pending = new Map();
+            globalThis.postMessage=response=>pending.get(response.id)(response);
+            const runtime=import.meta.resolve('@sqlite.org/sqlite-wasm');
+            const compiled=await build({entryPoints:['src/vss/sqlite-worker.ts'],bundle:true,write:false,
+                format:'esm',platform:'node',target:'node22',plugins:[{name:'sqlite-runtime',setup(builder){
+                    builder.onResolve({filter:new RegExp('^@sqlite[.]org/sqlite-wasm$')},()=>({path:runtime,external:true}));
+                }}]});
+            await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].contents).toString('base64'));
+            const inspect=id=>new Promise(resolve=>{pending.set(id,resolve);globalThis.onmessage({data:{id,type:'inspectStorage',
+                payload:{databaseName:'memory.sqlite3',opfsDirectory:'/owned'}}});});
+            const known=await inspect(1);
+            const unchanged=Buffer.from(file).equals(Buffer.from(before));
+            file[4096]=0;
+            const damaged=await inspect(2);
+            stop();
+            process.stdout.write(JSON.stringify({known,damaged,unchanged,opened,closed}));
+        `], { encoding: 'utf8' });
+        const actual = JSON.parse(stdout);
+        expect(actual.known).toMatchObject({ ok: true, result: { state: 'known', profileSignature: 'original-profile' } });
+        expect(actual.damaged).toMatchObject({ ok: true, result: { state: 'unknown' } });
+        expect(actual).toMatchObject({ unchanged: true, opened: 2, closed: 2 });
+    });
+
     it('pauses the OPFS SAH pool after closing the database on dispose', async () => {
         const close = jest.fn();
         const pauseVfs = jest.fn();
@@ -573,6 +757,89 @@ async function send(scope: MockWorkerScope, request: SqliteWorkerRequest): Promi
     dispatch(scope, request);
     await new Promise((resolve) => setTimeout(resolve, 0));
     return scope.postMessage.mock.calls.at(-1)?.[0] as SqliteWorkerResponse;
+}
+
+function notFoundError(): Error {
+    const error = new Error('not found');
+    error.name = 'NotFoundError';
+    return error;
+}
+
+function opaqueFile(path: string, data = new Uint8Array([1, 2, 3]), v2 = false): Uint8Array {
+    const bytes = new Uint8Array(4096 + data.length);
+    bytes.set(new TextEncoder().encode(path));
+    new DataView(bytes.buffer).setUint32(512, path ? (v2 ? 0x180 : 0x100) : 0);
+    if (v2) {
+        // Canonical 3.53.0 SAH digest for /memory.sqlite3 with flags 0x180.
+        // Keep a fixed physical fixture instead of copying the production hash function.
+        if (path !== '/memory.sqlite3') throw new Error('V2 fixture has a fixed path');
+        bytes.set([219, 230, 50, 104, 27, 215, 249, 217], 516);
+    }
+    bytes.set(data, 4096);
+    return bytes;
+}
+
+async function setupStorageInspectionWorker(contents: Uint8Array[], signature: string | null = 'old-profile') {
+    const handles = contents.map(bytes => ({
+        getSize: () => bytes.length,
+        read: jest.fn((buffer: Uint8Array, { at }: { at: number }) => {
+            const source = bytes.subarray(at, at + buffer.length);
+            buffer.set(source);
+            return source.length;
+        }),
+        close: jest.fn(),
+        write: jest.fn(() => { throw new Error('probe attempted a write'); }),
+        truncate: jest.fn(() => { throw new Error('probe attempted a truncate'); }),
+    }));
+    const files = handles.map(handle => ({
+        kind: 'file',
+        createSyncAccessHandle: jest.fn(async (_options: { mode: string }) => handle),
+    }));
+    const opaque = {
+        kind: 'directory',
+        async *entries() { for (const [index, file] of files.entries()) yield [`slot-${index}`, file]; },
+    };
+    const store = { getDirectoryHandle: jest.fn(async (name: string, options?: { create?: boolean }) => {
+        if (options?.create || name !== '.opaque') throw new Error('unexpected storage creation');
+        return opaque;
+    }) };
+    const root = {
+        getDirectoryHandle: jest.fn(async (name: string, options?: { create?: boolean }) => {
+            if (options?.create || name !== 'owned') throw new Error('unexpected directory access');
+            return store;
+        }),
+        removeEntry: jest.fn(async (_name: string, _options?: { recursive?: boolean }) => undefined),
+    };
+    let memory = new Uint8Array(64);
+    const alloc = jest.fn((size: number) => { memory = new Uint8Array(size + 32); return 32; });
+    const dealloc = jest.fn((_pointer: number) => undefined);
+    const deserialize = jest.fn((_database: number, _schema: string, _pointer: number,
+        _databaseSize: number, _bufferSize: number, _flags: number) => 0);
+    const database = {
+        pointer: 16,
+        close: jest.fn(),
+        exec: jest.fn((request: unknown) => {
+            const query = request as { resultRows?: unknown[] };
+            if (signature !== null) query.resultRows?.push({ value: signature });
+        }),
+    };
+    class MemoryDb { constructor(_filename: string) { return database; } }
+    const installPool = jest.fn<() => Promise<unknown>>(async () => { throw new Error('probe must not install a pool'); });
+    const init = jest.fn(async () => ({
+        oo1: { DB: MemoryDb },
+        capi: { SQLITE_DESERIALIZE_READONLY: 4, sqlite3_deserialize: deserialize },
+        wasm: { alloc, dealloc, heap8u: () => memory },
+        installOpfsSAHPoolVfs: installPool,
+    }));
+    const scope: MockWorkerScope & { navigator: unknown } = {
+        crypto: globalThis.crypto,
+        postMessage: jest.fn(),
+        navigator: { storage: { getDirectory: async () => root } },
+    };
+    Object.defineProperty(globalThis, 'self', { configurable: true, value: scope });
+    jest.doMock('@sqlite.org/sqlite-wasm', () => ({ __esModule: true, default: init }));
+    await import('../src/vss/sqlite-worker');
+    return { scope, root, files, handles, database, alloc, dealloc, deserialize, installPool, init };
 }
 
 function dispatch(scope: MockWorkerScope, request: SqliteWorkerMessage): void {

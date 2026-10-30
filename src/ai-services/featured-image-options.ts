@@ -1,12 +1,29 @@
 import type { AIUtilsHost } from './ai-utils';
 import { getDashScopeImageGenerationEndpoint } from './ai-utils';
 import { resolveWanSynchronousEndpoint } from './image-generation-connection';
-import type { FeaturedImageModel } from '../settings';
+import type { ImageGenerationConnection } from './image-generation-connection';
 
 export interface FeaturedImageDefaults {
-    readonly featuredImageModel: FeaturedImageModel;
+    readonly featuredImageModel: string;
     readonly numFeaturedImages: number;
     readonly featuredImagePath: string;
+}
+
+/** Choices for the existing controls; actual request admission remains in the image service. */
+export function imageModelChoices(connection?: Readonly<ImageGenerationConnection> | null): string[] {
+    return connection?.adapter === 'openai-image'
+        ? [...new Set([connection.model, connection.sourceImageModel].filter((model): model is string => Boolean(model)))]
+        : ['wan2.7-image', 'wan2.7-image-pro'];
+}
+
+export function imageCountLimit(connection?: Readonly<ImageGenerationConnection> | null): number {
+    return connection?.adapter === 'openai-image' ? 10 : 4;
+}
+
+export function isImageModelSupported(model: string, connection?: Readonly<ImageGenerationConnection> | null): boolean {
+    return connection?.adapter === 'openai-image'
+        ? model.startsWith('gpt-image-') && model.length <= 128
+        : model === 'wan2.7-image' || model === 'wan2.7-image-pro';
 }
 
 /** The Plugin owns connection revisions and the original Markdown target. */

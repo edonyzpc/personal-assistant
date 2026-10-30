@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-10-29
+Updated: 2026-10-30
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-10-30 | `docs/development/active/multi-provider-connections/**` | deleted-after-absorption | [DEC-077](../product/decisions/dec-077-multi-provider-connections.md), [Product Spec](../product/specs/pa-multi-provider-connections-product-spec.md), [Settings](../architecture/settings-status.md), [Memory](../architecture/vss-sqlite-wasm-architecture.md), [图片](../architecture/chat-image-generation-architecture.md), [B-192 validation](./2026/b192-multi-provider-validation.md) | Owner明确授权收尾、master提交与远程推送。15项需求与全部审查修复已验收，边界如实保留；稳定行为和工程接缝由当前契约及focused tests承接，独有验证紧凑保留。删除未提交的Home/SDD/Tracker，原文留本机临时副本，不声称旧Git已保存完整过程包；无本范围未完成项转Backlog，不包含版本发布。 |
 | 2026-10-29 | `docs/development/active/settings-ux-simplification/**` | deleted-after-absorption | [DEC-076](../product/decisions/dec-076-settings-ux-and-adaptive-graph.md), [Spec](../product/specs/pa-settings-ux-product-spec.md), [Settings architecture](../architecture/settings-status.md), [B-191 validation](./2026/b191-settings-ux-validation.md), [Approved preview](./2026/b191-settings-ux-preview.html) | Owner 授权收尾、提交master与推送。REQ/AC-01–08及F-01–21已完成；会话导航、字段patch、来源显式保存、图谱尺寸退役与回滚规则已吸收。只保留最终验收边界和已确认预览；删除Home/Plan/SDD/Tracker，终态副本留本机。无未完成实现项，不含版本发布。 |
 | 2026-10-28 | `docs/development/active/ghost-publishing-reliability/**` | deleted-after-absorption | [DEC-053](../product/decisions/dec-053-lean-ghost-publishing.md), [Spec](../product/specs/pa-ghost-blog-publishing-product-spec.md), [Design](../development/ghost-blog-publishing-design.md), [B-190 validation](./2026/b190-ghost-publishing-reliability-validation.md) | Owner 授权文档收尾及本地 master 提交。稳定图片限额／失败事实／草稿重试／原生横线契约与回滚已吸收；保留原完整命令失败、后续定向通过、R11 应用观察及 R12/R13 未部署的边界。删除 Home/Plan/SDD/Tracker，终态快照留本机；无待修实现 blocker，不包含推送或发布。 |
 | 2026-10-25 | `docs/development/active/obsidian-code-interface-consistency/**` | deleted-after-absorption | [SDK Architecture](../architecture/obsidian-resource-sdk.md), [Agent Architecture](../architecture/pa-agent-architecture-plan.md#b-140-note-memory-and-insight-capabilities), [接口验证](./2026/b174-interface-consistency-validation.md) | Owner 授权收尾及本地 master 提交。F-01 至 F-07 已按批准范围验收；根入口与局部合同已吸收，保留无效构建样本、定向复验和模型证据限制。删除 Home/SDD/Tracker，终态快照留本机；行号表述残余并入 B-148，不追加实现、推送或发布。 |

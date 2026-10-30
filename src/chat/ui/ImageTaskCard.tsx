@@ -20,6 +20,7 @@ export interface ImageTaskCardActions {
     stop(this: void): void;
     approveWhiteBackground(this: void): void;
     resume(this: void): void;
+    openSettings?(this: void): void;
     preview(this: void, output: ImageGenerationOutput): void;
     edit(this: void, output: ImageGenerationOutput): void;
     download(this: void, output: ImageGenerationOutput, ownerDocument: Document | null): void;
@@ -56,8 +57,13 @@ const recoveryLabels: Record<string, string> = {
     stopped_before_submit: 'stoppedBeforeSubmit',
     message_removed: 'messageRemoved',
     provider_rejected: 'providerRejected',
+    provider_authentication_failed: 'providerAuthenticationFailed',
+    provider_permission_denied: 'providerPermissionDenied',
+    provider_rate_limited: 'providerRateLimited',
     provider_failed: 'providerFailed',
     save_failed: 'saveFailed',
+    local_result_unavailable: 'localResultUnavailable',
+    provider_result_incomplete: 'providerResultIncomplete',
     transparent_input_needs_confirmation: 'transparentInputNeedsConfirmation',
 };
 
@@ -420,7 +426,11 @@ function ImageTaskCard(props: ImageTaskCardProps): ReactNode {
     const needsWhiteBackgroundAction = task.recoveryReason === 'transparent_input_needs_confirmation'
         && ['prepared', 'not_submitted'].includes(task.state);
     const needsResumeAction = ['not_submitted', 'partial', 'running', 'saving'].includes(task.state)
-        && task.recoveryReason !== 'transparent_input_needs_confirmation';
+        && !['transparent_input_needs_confirmation', 'local_result_unavailable', 'provider_result_incomplete']
+            .includes(task.recoveryReason ?? '');
+    const openSettings = task.state === 'failed'
+        && ['provider_authentication_failed', 'provider_permission_denied'].includes(task.recoveryReason ?? '')
+        ? actions.openSettings : undefined;
 
     return (
         <article
@@ -471,7 +481,7 @@ function ImageTaskCard(props: ImageTaskCardProps): ReactNode {
                     />
                 ))}
             </div>
-            {needsStopAction || needsWhiteBackgroundAction || needsResumeAction ? (
+            {needsStopAction || needsWhiteBackgroundAction || needsResumeAction || openSettings ? (
                 <div className="pa-chat-image-task-card__actions">
                     {needsStopAction ? (
                         <ActionButton
@@ -500,6 +510,15 @@ function ImageTaskCard(props: ImageTaskCardProps): ReactNode {
                                 : 'plugin.chat.createImage.recover')}
                             showLabel
                             onClick={actions.resume}
+                        />
+                    ) : null}
+                    {openSettings ? (
+                        <ActionButton
+                            className="pa-chat-image-task-card__action"
+                            icon="settings"
+                            label={imageTaskText('plugin.chat.createImage.openConnectionSettings')}
+                            showLabel
+                            onClick={openSettings}
                         />
                     ) : null}
                 </div>

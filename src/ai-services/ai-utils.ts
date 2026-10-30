@@ -19,6 +19,8 @@ import { prepareProviderAdmission, runProviderAdmission } from './provider-admis
 import { onProviderFailedAttempt } from './provider-retry-policy';
 import type { AgentDebugCallScope } from './agent-debug-port';
 import type { PaAgentModelBudgetFacts } from './context/PaAgentContextBudget';
+import { resolveAIConnection } from './ai-connection-resolver';
+import type { AIPurpose, AIConnectionsSettings, AIConnectionResolution } from './ai-connection-types';
 
 export type ChatTransport = 'obsidian' | 'native';
 
@@ -230,7 +232,8 @@ const DASH_SCOPE_NATIVE_TOOL_CALLING_UNSUPPORTED_MODEL_SIGNALS = [
 ];
 
 export const DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] =
-    buildDashScopeNativeToolCallingValidations(DASHSCOPE_NATIVE_TOOL_CALLING_MODELS);
+    [...buildDashScopeNativeToolCallingValidations(DASHSCOPE_NATIVE_TOOL_CALLING_MODELS),
+        { provider: 'openai', model: 'gpt-4o-mini', baseURL: 'https://api.openai.com/v1' }];
 export interface ProviderRequestOptions {
     agentDebugCall?: AgentDebugCallScope;
     providerRequestScope?: ProviderRequestScope;
@@ -275,8 +278,11 @@ export interface AIUtilsHost {
         embeddingModelName: string;
         baseURL: string;
         debug?: boolean;
+        aiConnections?: AIConnectionsSettings;
     };
     getAPIToken(): Promise<string>;
+    getAIConnectionToken?(connectionId: string): Promise<string>;
+    getAIConnectionCredentialRevision?(connectionId: string): number;
     log(message: string, ...args: unknown[]): void;
 }
 
@@ -313,6 +319,66 @@ export class AIUtils {
 
     constructor(host: AIUtilsHost) {
         this.host = host;
+    }
+
+    getConnectionConfiguration(purpose: AIPurpose): AIConnectionResolution | undefined {
+        if (this.host.settings.aiConnections === undefined) return undefined;
+        return resolveAIConnection(this.host.settings.aiConnections, purpose);
+    }
+
+    /** Non-secret request identity; display names never invalidate a model or Memory data. */
+    getConnectionRequestIdentity(purpose: AIPurpose): string {
+        const resolution = this.getConnectionConfiguration(purpose);
+        if (!resolution) return JSON.stringify([purpose, this.host.settings.aiProvider,
+            this.host.settings.baseURL, purpose === 'embedding'
+                ? this.host.settings.embeddingModelName : this.host.settings.chatModelName]);
+        if (!resolution.ok) return JSON.stringify([purpose, resolution.issue, resolution.connectionId]);
+        const connection = resolution.connection;
+        const requestOptions = purpose === 'chat' ? connection.options.chat
+            : purpose === 'embedding' ? connection.options.embeddingDimensions : undefined;
+        return JSON.stringify([purpose, connection.connectionId, connection.providerId, connection.endpoint,
+            connection.model, connection.policyModel, requestOptions, connection.secretRef,
+            this.host.getAIConnectionCredentialRevision?.(connection.connectionId) ?? 0]);
+    }
+
+    /** Compatibility projection for existing consumers; never written to legacy settings. */
+    getEffectiveAISettings(purpose: AIPurpose = 'chat') {
+        const resolution = this.getConnectionConfiguration(purpose);
+        if (!resolution) return this.host.settings;
+        if (!resolution.ok) return { ...this.host.settings, aiProvider: '', baseURL: '',
+            chatModelName: '', embeddingModelName: '' };
+        const connection = resolution.connection;
+        return { ...this.host.settings,
+            aiProvider: connection.providerId.startsWith('dashscope-') ? 'qwen' : 'openai',
+            baseURL: connection.endpoint,
+            chatModelName: purpose === 'chat' ? connection.model : this.host.settings.chatModelName,
+            embeddingModelName: purpose === 'embedding' ? connection.model : this.host.settings.embeddingModelName,
+            ...(purpose === 'chat' ? { policyModelName: connection.policyModel ?? '',
+                qwenThinkingEnabled: connection.options.chat?.enableThinking === true,
+                webSearchEnabled: connection.options.chat?.webSearchEnabled === true } : {}),
+        };
+    }
+
+    private async getPurposeToken(purpose: AIPurpose, identity: string): Promise<string> {
+        const resolution = this.getConnectionConfiguration(purpose);
+        if (!resolution) return this.getAPIToken();
+        if (!resolution.ok) throw new Error(`AI connection unavailable: ${resolution.issue}`);
+        if (!this.host.getAIConnectionToken) throw new Error('AI connection credentials are unavailable');
+        const token = await this.host.getAIConnectionToken(resolution.connection.connectionId);
+        if (identity !== this.getConnectionRequestIdentity(purpose)) {
+            throw new Error('AI connection changed before the request was prepared');
+        }
+        return token;
+    }
+
+    private bindConnectionRequest(purpose: AIPurpose, identity: string,
+        options: ProviderRequestOptions): ProviderRequestOptions {
+        return { ...options, onProviderRequestStart: () => {
+            if (identity !== this.getConnectionRequestIdentity(purpose)) {
+                throw new Error('AI connection changed before provider dispatch');
+            }
+            options.onProviderRequestStart?.();
+        } };
     }
 
     private t(key: string): string {
@@ -461,10 +527,12 @@ export class AIUtils {
         temperature: number = 0.8,
         options: CreateChatModelOptions = {},
     ): Promise<ChatOpenAI<ChatOpenAICallOptions>> {
+        const settings = this.getEffectiveAISettings('chat');
+        const identity = this.getConnectionRequestIdentity('chat');
         const readiness = assessAIReadiness({
-            ...this.host.settings,
+            ...settings,
             chatModelName: options.modelName === undefined
-                ? this.host.settings.chatModelName
+                ? settings.chatModelName
                 : options.modelName,
         }, "present", "chat");
         if (!readiness.ready) throwForReadiness(readiness);
@@ -478,10 +546,11 @@ export class AIUtils {
             || baseURL !== options.expectedModelIdentity.baseURL
         )) throw new Error('PA Agent model configuration changed during this run');
         const transport = options.transport ?? 'obsidian';
-        const token = (await this.getAPIToken()).trim();
+        const token = (await this.getPurposeToken('chat', identity)).trim();
         if (!token) {
-            throwForReadiness(assessAIReadiness(this.host.settings, "missing", "chat"));
+            throwForReadiness(assessAIReadiness(settings, "missing", "chat"));
         }
+        const requestOptions = this.bindConnectionRequest('chat', identity, options);
 
         switch (provider) {
             case 'qwen': {
@@ -490,7 +559,7 @@ export class AIUtils {
                     onFailedAttempt: onProviderFailedAttempt,
                     model: modelName,
                     apiKey: token,
-                    configuration: this.createOpenAIClientOptions(baseURL, transport, options),
+                    configuration: this.createOpenAIClientOptions(baseURL, transport, requestOptions),
                     temperature: temperature,
                     ...(typeof options.maxTokens === "number" ? { maxTokens: options.maxTokens } : {}),
                     ...(modelKwargs ? { modelKwargs } : {}),
@@ -502,7 +571,7 @@ export class AIUtils {
                     onFailedAttempt: onProviderFailedAttempt,
                     model: modelName,
                     apiKey: token,
-                    configuration: this.createOpenAIClientOptions(baseURL, transport, options),
+                    configuration: this.createOpenAIClientOptions(baseURL, transport, requestOptions),
                     temperature: temperature,
                     ...(typeof options.maxTokens === "number" ? { maxTokens: options.maxTokens } : {}),
                 });
@@ -516,9 +585,10 @@ export class AIUtils {
     getNativeToolCallingCapability(
         options: NativeToolCallingCapabilityOptions = {},
     ): NativeToolCallingCapability {
-        const provider = normalizeCapabilityValue(this.host.settings.aiProvider);
-        const model = normalizeCapabilityValue(this.host.settings.chatModelName);
-        const baseURL = normalizeBaseURL(this.host.settings.baseURL);
+        const settings = this.getEffectiveAISettings('chat');
+        const provider = normalizeCapabilityValue(settings.aiProvider);
+        const model = normalizeCapabilityValue(settings.chatModelName);
+        const baseURL = normalizeBaseURL(settings.baseURL);
 
         if (!options.internalGate) {
             return {
@@ -585,16 +655,25 @@ export class AIUtils {
      * 创建嵌入模型实例
      */
     async createEmbeddings(dimensions?: number, options: CreateEmbeddingsOptions = {}): Promise<OpenAIEmbeddings> {
-        const readiness = assessAIReadiness(this.host.settings, "present", "memory");
+        const settings = this.getEffectiveAISettings('embedding');
+        const identity = this.getConnectionRequestIdentity('embedding');
+        // Independent retrieval requires its own model, not a chat model on that connection.
+        const readiness = assessAIReadiness({ ...settings,
+            chatModelName: this.host.settings.aiConnections ? settings.embeddingModelName : settings.chatModelName,
+        }, "present", "memory");
         if (!readiness.ready) throwForReadiness(readiness);
 
         const provider = readiness.aiProvider;
         const modelName = readiness.embeddingModelName;
         const baseURL = readiness.baseURL;
-        const token = (await this.getAPIToken()).trim();
+        const token = (await this.getPurposeToken('embedding', identity)).trim();
         if (!token) {
-            throwForReadiness(assessAIReadiness(this.host.settings, "missing", "memory"));
+            throwForReadiness(assessAIReadiness(settings, "missing", "memory"));
         }
+        const requestOptions = this.bindConnectionRequest('embedding', identity, options);
+        const resolved = this.getConnectionConfiguration('embedding');
+        const selectedDimensions = dimensions ?? (resolved?.ok
+            ? resolved.connection.options.embeddingDimensions : undefined);
 
         switch (provider) {
             case 'qwen':
@@ -602,9 +681,9 @@ export class AIUtils {
                 return new OpenAIEmbeddings({
                     onFailedAttempt: onProviderFailedAttempt,
                     model: modelName,
-                    dimensions: dimensions,
+                    dimensions: selectedDimensions,
                     apiKey: token,
-                    configuration: this.createOpenAIClientOptions(baseURL, 'obsidian', options),
+                    configuration: this.createOpenAIClientOptions(baseURL, 'obsidian', requestOptions),
                     batchSize: options.batchSize,
                     maxConcurrency: options.maxConcurrency,
                     maxRetries: options.maxRetries,

@@ -55,7 +55,7 @@ export interface PrepareGhostMetadataInput {
 
 export type GhostMetadataHost = {
     getSettings(): AIUtilsHost["settings"];
-} & Pick<AIUtilsHost, "getAPIToken" | "log">;
+} & Pick<AIUtilsHost, "getAPIToken" | "getAIConnectionToken" | "getAIConnectionCredentialRevision" | "log">;
 
 function invalidResult(reason: GhostMetadataValidationReason, field?: GhostMetadataField): never {
     throw new GhostMetadataPreparationError("invalid_result", reason, field);
@@ -169,7 +169,25 @@ export async function prepareGhostMetadata(
     host: GhostMetadataHost,
     input: PrepareGhostMetadataInput,
 ): Promise<{ customExcerpt?: string; metaDescription?: string; slug?: string; tags?: string[] }> {
-    const initialSettings = host.getSettings();
+    const aiUtils = new AIUtils({
+        get settings() { return host.getSettings(); },
+        getAPIToken: async () => {
+            assertCurrent();
+            const token = await host.getAPIToken();
+            assertCurrent();
+            return token;
+        },
+        getAIConnectionToken: host.getAIConnectionToken ? async id => {
+            assertCurrent();
+            const token = await host.getAIConnectionToken!(id);
+            assertCurrent();
+            return token;
+        } : undefined,
+        getAIConnectionCredentialRevision: host.getAIConnectionCredentialRevision?.bind(host),
+        log: host.log,
+    });
+    const initialSettings = aiUtils.getEffectiveAISettings('chat');
+    const requestIdentity = aiUtils.getConnectionRequestIdentity('chat');
     const connection = {
         aiProvider: initialSettings.aiProvider,
         baseURL: initialSettings.baseURL,
@@ -179,10 +197,7 @@ export async function prepareGhostMetadata(
         if (input.signal.aborted) throw new GhostMetadataPreparationError("cancelled");
         if (!input.isSourceCurrent()) throw new GhostMetadataPreparationError("source_changed");
         if (input.isConnectionCurrent?.() === false) throw new GhostMetadataPreparationError("connection_changed");
-        const settings = host.getSettings();
-        if (settings.aiProvider !== connection.aiProvider
-            || settings.baseURL !== connection.baseURL
-            || settings.chatModelName !== connection.chatModelName) {
+        if (aiUtils.getConnectionRequestIdentity('chat') !== requestIdentity) {
             throw new GhostMetadataPreparationError("connection_changed");
         }
     };
@@ -240,16 +255,6 @@ export async function prepareGhostMetadata(
         : Array.from(envelope).length > UNKNOWN_MODEL_PROMPT_CHAR_FALLBACK) {
         throw new GhostMetadataPreparationError("input_too_large");
     }
-    const aiUtils = new AIUtils({
-        settings: { ...initialSettings, ...connection },
-        getAPIToken: async () => {
-            assertCurrent();
-            const token = await host.getAPIToken();
-            assertCurrent();
-            return token;
-        },
-        log: host.log,
-    });
     let debugCall: AgentDebugCallScope | undefined;
     observeDebug(() => {
         if (input.debug) debugCall = createAgentDebugCall(input.debug.recorder, {

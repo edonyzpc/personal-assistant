@@ -2,6 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
 import { ImageGenerationService } from '../src/chat/image-generation-service';
 import { WanImageProvider, WanImageProviderError } from '../src/ai-services/wan-image-provider';
+import { OpenAIImageProviderError } from '../src/ai-services/openai-image-provider';
 import type { ImageAssetService } from '../src/chat/image-assets';
 import { ImagePreacceptError, type ImageGenerationTask } from '../src/chat/image-generation-types';
 import { imageSourceHash } from '../src/chat/image-policy';
@@ -41,6 +42,233 @@ const input = { conversationId: 'conversation_one', stableMessageId: 'message_on
 const png = Uint8Array.from(Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/Dq0AAAAASUVORK5CYII=',
     'base64')).buffer;
+
+describe('B-192 synchronous image provider', () => {
+    const openaiConnection = { ...connection, mode: 'inherit-chat' as const,
+        baseURL: 'https://api.openai.com/v1', connectionId: 'openai_saved', providerId: 'openai',
+        adapter: 'openai-image' as const, model: 'gpt-image-2.5-flare', credentialRevision: 1 };
+
+    it.each([
+        [401, 'provider_authentication_failed'],
+        [403, 'provider_permission_denied'],
+        [429, 'provider_rate_limited'],
+        [400, 'provider_rejected'],
+    ] as const)('retains a safe, actionable reason for rejected HTTP %s submissions', async (status, reason) => {
+        const store = await readyStore();
+        const provider = { submit: jest.fn(async () => { throw new OpenAIImageProviderError('rejected', status); }) };
+        const options = { store, assets: {} as ImageAssetService,
+            resolveConnection: () => openaiConnection, getToken: async () => 'key',
+            providerFactory: () => provider as unknown as WanImageProvider };
+        const service = new ImageGenerationService(options);
+        let taskId: string;
+        try {
+            ({ taskId } = await service.submit(input));
+            await settle(async () => (await service.get(taskId))?.state === 'failed');
+        } finally { service.dispose(); }
+        const restarted = new ImageGenerationService(options);
+        try {
+            await restarted.recover();
+            expect(await restarted.get(taskId!)).toEqual(expect.objectContaining({ state: 'failed', recoveryReason: reason }));
+            expect(provider.submit).toHaveBeenCalledTimes(1);
+        } finally { restarted.dispose(); }
+    });
+
+    it('uses the same safe authentication reason for a rejected Wan submission', async () => {
+        const store = await readyStore();
+        const provider = { submit: jest.fn(async () => { throw new WanImageProviderError('rejected', 401); }),
+            query: jest.fn<WanImageProvider['query']>(), cancel: jest.fn<WanImageProvider['cancel']>() };
+        const service = makeService(store, provider);
+        try {
+            const { taskId } = await service.submit(input);
+            await settle(async () => (await service.get(taskId))?.state === 'failed');
+            expect((await service.get(taskId))?.recoveryReason).toBe('provider_authentication_failed');
+        } finally { service.dispose(); }
+    });
+
+    it('saves completed OpenAI bytes into existing assets and versions without a fake remote task or raw task payload', async () => {
+        const store = await readyStore();
+        const ref = { assetId: 'openai_output', contentHash: await imageSourceHash(png) };
+        const provider = { submit: jest.fn(async () => ({ kind: 'completed', outputs: Array<ArrayBuffer>(5).fill(png) })), query: jest.fn(), cancel: jest.fn() };
+        const service = new ImageGenerationService({ store,
+            assets: { importFile: jest.fn(async () => ({ ref })), readOriginal: jest.fn(async () => ({ bytes: png })) } as unknown as ImageAssetService,
+            resolveConnection: () => openaiConnection, getToken: async () => 'openai-key',
+            providerFactory: () => provider as unknown as WanImageProvider,
+        });
+        try {
+            const { taskId } = await service.submit({ ...input, count: 5, totalCount: 5 });
+            await settle(async () => (await service.get(taskId))?.state === 'completed');
+            const task = (await service.get(taskId))!;
+            expect(task.providerTaskId).toBeUndefined();
+            expect(task.request.model).toBe('gpt-image-2.5-flare');
+            expect(task.request.count).toBe(5);
+            expect(task.outputs).toHaveLength(5);
+            expect(task.connection).toMatchObject({ connectionId: 'openai_saved', adapter: 'openai-image' });
+            expect(provider.query).not.toHaveBeenCalled();
+            expect(await service.getVersionForOutput(taskId, 'output_0')).toMatchObject({ assetRef: ref });
+            expect(JSON.stringify(task)).not.toContain('iVBOR');
+            expect(JSON.stringify(task)).not.toContain('openai-key');
+        } finally { service.dispose(); }
+    });
+
+    it('retries only local saving after a completed OpenAI response', async () => {
+        const store = await readyStore();
+        const ref = { assetId: 'openai_retry', contentHash: await imageSourceHash(png) };
+        const importFile = jest.fn(async () => ({ ref }));
+        importFile.mockRejectedValueOnce(new Error('disk unavailable'));
+        const provider = { submit: jest.fn(async () => ({ kind: 'completed', outputs: [png] })), query: jest.fn(), cancel: jest.fn() };
+        const service = new ImageGenerationService({ store,
+            assets: { importFile, readOriginal: jest.fn(async () => ({ bytes: png })) } as unknown as ImageAssetService,
+            resolveConnection: () => openaiConnection, getToken: async () => 'openai-key',
+            providerFactory: () => provider as unknown as WanImageProvider,
+        });
+        try {
+            const { taskId } = await service.submit(input);
+            await settle(async () => (await service.get(taskId))?.state === 'partial');
+            await service.resume(taskId);
+            await settle(async () => (await service.get(taskId))?.state === 'completed');
+            expect(provider.submit).toHaveBeenCalledTimes(1);
+            expect(provider.query).not.toHaveBeenCalled();
+            expect(importFile).toHaveBeenCalledTimes(2);
+        } finally { service.dispose(); }
+    });
+
+    it('retains completed bytes when the first saving-state write fails without repeating generation', async () => {
+        const store = await readyStore();
+        const putTask = store.putImageGenerationTask.bind(store);
+        let failedSavingWrite = false;
+        jest.spyOn(store, 'putImageGenerationTask').mockImplementation(async (task, expectedRevision) => {
+            if (task.state === 'saving' && !failedSavingWrite) {
+                failedSavingWrite = true;
+                throw new Error('task storage temporarily unavailable');
+            }
+            return putTask(task, expectedRevision);
+        });
+        const ref = { assetId: 'openai_state_retry', contentHash: await imageSourceHash(png) };
+        const importFile = jest.fn(async () => ({ ref }));
+        const provider = { submit: jest.fn(async () => ({ kind: 'completed', outputs: [png] })) };
+        const service = new ImageGenerationService({ store,
+            assets: { importFile, readOriginal: jest.fn(async () => ({ bytes: png })) } as unknown as ImageAssetService,
+            resolveConnection: () => openaiConnection, getToken: async () => 'openai-key',
+            providerFactory: () => provider as unknown as WanImageProvider,
+        });
+        try {
+            const { taskId } = await service.submit(input);
+            await settle(async () => (await service.get(taskId))?.state === 'completed');
+            expect(failedSavingWrite).toBe(true);
+            expect(provider.submit).toHaveBeenCalledTimes(1);
+            expect(importFile).toHaveBeenCalledTimes(1);
+        } finally { service.dispose(); }
+    });
+
+    it.each(['reference', 'edit'] as const)('uses alpha-preserving OpenAI preparation for %s without Wan conversion', async operation => {
+        const store = await readyStore();
+        const ref = { assetId: 'openai_reference', contentHash: await imageSourceHash(png) };
+        const dataUrl = 'data:image/png;base64,aW1hZ2U=';
+        const prepare = jest.spyOn(imageInput, 'prepareOpenAIImageInput').mockResolvedValue({ dataUrl, whiteBackgroundApplied: false });
+        const wan = jest.spyOn(imageInput, 'prepareWanImageInput');
+        const provider = { submit: jest.fn(async (_request: unknown) => ({ kind: 'completed', outputs: [png] })) };
+        const service = new ImageGenerationService({ store,
+            assets: { verify: jest.fn(async () => ({ isCurrent: () => true })), importFile: jest.fn(async () => ({ ref })),
+                readOriginal: jest.fn(async () => ({ bytes: png })) } as unknown as ImageAssetService,
+            resolveConnection: () => openaiConnection, getToken: async () => 'key',
+            providerFactory: () => provider as unknown as WanImageProvider,
+        });
+        try {
+            const { taskId } = await service.submit({ ...input, operation, inputRefs: [ref] });
+            await settle(async () => (await service.get(taskId))?.state === 'completed');
+            expect(provider.submit).toHaveBeenCalledWith(expect.objectContaining({ referenceImages: [dataUrl] }));
+            expect(wan).not.toHaveBeenCalled();
+            expect((await service.get(taskId))?.inputWhiteBackgroundApplied).toBeUndefined();
+        } finally { service.dispose(); prepare.mockRestore(); wan.mockRestore(); }
+    });
+
+    it('does not resend an uncertain OpenAI submission after reload or resume', async () => {
+        const store = await readyStore();
+        const provider = { submit: jest.fn(async () => { throw new Error('response lost after POST'); }) };
+        const options = { store, assets: {} as ImageAssetService,
+            resolveConnection: () => openaiConnection, getToken: async () => 'key',
+            providerFactory: () => provider as unknown as WanImageProvider };
+        const service = new ImageGenerationService(options);
+        const { taskId } = await service.submit(input);
+        await settle(async () => (await service.get(taskId))?.state === 'submission_unknown');
+        service.dispose();
+        const restarted = new ImageGenerationService(options);
+        try {
+            await restarted.recover();
+            await expect(restarted.resume(taskId)).rejects.toThrow('resume_unavailable');
+            expect(provider.submit).toHaveBeenCalledTimes(1);
+        } finally { restarted.dispose(); }
+    });
+
+    it('reports lost unsaved OpenAI bytes after restart without claiming remote recovery or generating again', async () => {
+        const store = await readyStore();
+        const provider = { submit: jest.fn(async () => ({ kind: 'completed', outputs: [png] })) };
+        const options = { store, assets: { importFile: jest.fn(async () => { throw new Error('disk unavailable'); }) } as unknown as ImageAssetService,
+            resolveConnection: () => openaiConnection, getToken: async () => 'key',
+            providerFactory: () => provider as unknown as WanImageProvider };
+        const service = new ImageGenerationService(options);
+        const { taskId } = await service.submit(input);
+        await settle(async () => (await service.get(taskId))?.state === 'partial');
+        service.dispose();
+        const restarted = new ImageGenerationService(options);
+        try {
+            await restarted.recover();
+            await settle(async () => (await restarted.get(taskId))?.recoveryReason === 'local_result_unavailable');
+            await expect(restarted.resume(taskId)).rejects.toThrow('resume_unavailable');
+            expect(provider.submit).toHaveBeenCalledTimes(1);
+        } finally { restarted.dispose(); }
+    });
+
+    it('keeps local stop final when a synchronous provider finishes later', async () => {
+        const store = await readyStore();
+        let finish!: (result: { kind: 'completed'; outputs: ArrayBuffer[] }) => void;
+        const provider = { submit: jest.fn(() => new Promise<{ kind: 'completed'; outputs: ArrayBuffer[] }>(resolve => { finish = resolve; })) };
+        const importFile = jest.fn(async () => { throw new Error('stopped task must not import'); });
+        const service = new ImageGenerationService({ store, assets: { importFile } as unknown as ImageAssetService,
+            resolveConnection: () => openaiConnection, getToken: async () => 'key',
+            providerFactory: () => provider as unknown as WanImageProvider });
+        try {
+            const { taskId } = await service.submit(input);
+            await settle(async () => Boolean(finish));
+            await service.stop(taskId);
+            finish({ kind: 'completed', outputs: [png] });
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect((await service.get(taskId))?.state).toBe('stopped');
+            expect(importFile).not.toHaveBeenCalled();
+        } finally { service.dispose(); }
+    });
+
+    it('restores accepted Wan work using its original saved connection and current Key after the default changes', async () => {
+        const store = await readyStore();
+        const savedWan = { ...connection, connectionId: 'original_wan', providerId: 'dashscope-cn',
+            adapter: 'wan' as const, model: 'wan2.7-image', credentialRevision: 1 };
+        const wan = { submit: jest.fn(async () => ({ taskId: 'remote_one', status: 'PENDING' as const, imageUrls: [] })),
+            query: jest.fn(async () => ({ taskId: 'remote_one', status: 'PENDING' as const, imageUrls: [] })) };
+        const original = new ImageGenerationService({ store, assets: {} as ImageAssetService,
+            resolveConnection: () => savedWan, getToken: async () => 'old-wan-key',
+            providerFactory: () => wan as unknown as WanImageProvider });
+        const { taskId } = await original.submit(input);
+        await settle(async () => wan.query.mock.calls.length === 1);
+        original.dispose();
+        savedWan.credentialRevision += 1;
+        savedWan.credentialSlot = 'replacement-wan-slot';
+        const getToken = jest.fn(async (_mode: string, _id?: string) => 'replacement-wan-key');
+        const providerFactory = jest.fn((_connection: unknown, _token: string) => wan as unknown as WanImageProvider);
+        const restarted = new ImageGenerationService({ store, assets: {} as ImageAssetService,
+            resolveConnection: id => id === savedWan.connectionId ? savedWan : openaiConnection,
+            getToken, providerFactory });
+        try {
+            await restarted.recover();
+            await settle(async () => wan.query.mock.calls.length === 2);
+            expect(getToken).toHaveBeenCalledWith(savedWan.mode, savedWan.connectionId);
+            expect(providerFactory).toHaveBeenCalledWith(savedWan, 'replacement-wan-key');
+            expect(wan.submit).toHaveBeenCalledTimes(1);
+            expect((await restarted.get(taskId))?.connection.connectionId).toBe(savedWan.connectionId);
+            expect(await restarted.getUnfinishedTaskCount(savedWan.connectionId)).toBe(1);
+            expect(await restarted.getUnfinishedTaskCount(openaiConnection.connectionId)).toBe(0);
+        } finally { restarted.dispose(); }
+    });
+});
 
 describe('image generation service admission and recovery', () => {
     it('retains a terminal callback after failed context persistence while UI listeners run first', async () => {

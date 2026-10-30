@@ -3,6 +3,7 @@
 import type { App, EventRef, TFile } from "obsidian";
 
 import type { RetrievalOptimizationFlags } from "../ai-services/AiServiceHost";
+import type { AIConnectionsSettings } from '../ai-services/ai-connection-types';
 
 /**
  * Narrow host interface for the Memory subsystem.
@@ -28,6 +29,7 @@ export interface MemoryHost {
         embeddingModelName: string;
         baseURL: string;
         statisticsVaultId: string;
+        aiConnections?: AIConnectionsSettings;
         retrievalOptimizationFlags?: RetrievalOptimizationFlags;
     };
 
@@ -58,6 +60,8 @@ export interface MemoryHost {
 
     /** Resolve the configured provider API token. */
     getAPIToken(): Promise<string>;
+    getAIConnectionToken?(id: string): Promise<string>;
+    getAIConnectionCredentialRevision?(id: string): number;
 
     /** Effective live B-125 flags after platform support policy is applied. */
     getRetrievalOptimizationFlags?(): Readonly<RetrievalOptimizationFlags>;

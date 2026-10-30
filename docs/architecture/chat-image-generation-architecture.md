@@ -1,8 +1,8 @@
 # Chat Image Generation Architecture
 
 Document status: Current
-Updated: 2026-10-06
-Work item: B-133 / B-152
+Updated: 2026-10-30
+Work item: B-133 / B-152 / B-192
 Authority: 已实现的 Chat 图片生成、版本、统一连接、恢复和导出技术契约；源码是具体参数与类型的事实依据。
 Product contract: [DEC-038](../product/decisions/dec-038-chat-image-generation.md) / [Product Spec](../product/specs/pa-chat-image-generation-product-spec.md)
 Validation evidence: [B-133 验收与迁移证据](../archive/2026/b133-chat-image-generation-validation.md)
@@ -23,8 +23,9 @@ Validation evidence: [B-133 验收与迁移证据](../archive/2026/b133-chat-ima
 | 显式意图、工具绑定与图片卡 | [ChatView](../../src/chat/chat-view.ts)、[ComposerDraft](../../src/chat/composer-draft.ts) | 固定消息/会话/来源身份；视图只展示和调用窄服务入口 |
 | 原生文字回复上下文 | [ConversationPersistence](../../src/chat/ConversationPersistence.ts) 与 ChatView | 同轮新会话持久化保持有效，切换会话和旧父版本仍失效 |
 | 主 Agent 图片工具 | [tool factory](../../src/ai-services/chat-tool-factories.ts)、[runtime](../../src/ai-services/pa-agent-runtime.ts)、[policy](../../src/ai-services/policy-engine.ts) | 单一 `create_image`，固定 `image-generation` 权限，不开放任意 vault 写入 |
-| 图片连接与凭据 | [connection resolver](../../src/ai-services/image-generation-connection.ts)、[plugin](../../src/plugin.ts)、[settings](../../src/settings.ts) | 只解析受支持 Wan 端点；凭据从 SecretStorage 按当前模式取得 |
+| 图片连接与凭据 | [connection resolver](../../src/ai-services/image-generation-connection.ts)、[plugin](../../src/plugin.ts)、[settings](../../src/settings.ts) | 解析受支持 OpenAI/Wan 端点；凭据按已冻结连接从 SecretStorage 取得 |
 | Wan 异步协议 | [WanImageProvider](../../src/ai-services/wan-image-provider.ts) | submit/query/cancel、响应正规化；不读笔记或决定额外付费 |
+| OpenAI 同步协议 | [OpenAIImageProvider](../../src/ai-services/openai-image-provider.ts) | 单次生成/编辑 POST，验证内联图片结果；未知受理不重发 |
 | 持久任务与恢复 | [ImageGenerationService](../../src/chat/image-generation-service.ts) | durable claim、有限查询/保存恢复、停止；不依赖当前可见 Chat |
 | 存储与版本 | [ChatHistoryStore](../../src/chat/chat-history-store.ts)、[generation types](../../src/chat/image-generation-types.ts) | 本设备任务、操作去重及一输出一版本；校验实际记录，不能只增加 TS 字段 |
 | 输入处理、原件与笔记保存 | [input](../../src/chat/image-generation-input.ts)、[ImageAssetService](../../src/chat/image-assets.ts)、[save-to-note](../../src/chat/image-save-to-note.ts) | 原件不改，处理外发副本；用户每次选择笔记后迁移并插入 |
@@ -42,8 +43,11 @@ flowchart TD
   Q --> R
   R --> D[持久任务登记]
   D --> E[输入预检与 durable submission claim]
-  E --> F[Wan 异步任务]
-  F --> G[查询 保存原件 登记版本]
+  E --> F{图片适配}
+  F --> W[Wan 异步提交与查询]
+  F --> O[OpenAI 同步生成或编辑]
+  W --> G[保存原件 登记版本]
+  O --> G
   G --> H[只更新原会话任务卡]
   H --> I[用户另行选择保存目标]
   I --> J[权限和路径校验后保存并插入]
@@ -90,8 +94,9 @@ referenceImageRefs、parentVersionId。conversationId、stableMessageId、operat
 报告实际数量。同主题多候选可使用一次多张请求。相同操作的准备和提交均去重，
 变更 tool-call ID 仍复用已受理操作；主动再生成是新身份。
 
-普通生图采用 `wan2.7-image`、`2K`、默认一张；全文/选区草稿沿用旧 Featured 的模型、
-数量和附件目录默认值。左下方图片按钮旁的设置图标打开模型/数量的合并弹层；
+普通生图采用当前图片连接模型、默认一张；Wan 请求采用 `2K`，旧 schema 默认仍为
+`wan2.7-image`。全文/选区草稿使用连接的来源型图片模型及已保存数量/附件目录默认值。
+左下方图片按钮旁的设置图标打开模型/数量的合并弹层；
 普通描述只检查固定默认值，来源型请求可修改本次选项，修改不重置全局设置。服务实际使用
 任务模型，包括 `wan2.7-image-pro`。主Agent澄清文字要求与真实绑定选项的冲突；Host
 拒绝不合法或超出实际绑定数量约束的结构化计划，不把通用入口的程序默认当用户明确选择。
@@ -108,6 +113,25 @@ referenceImageRefs、parentVersionId。conversationId、stableMessageId、operat
 完成后直接更新原卡，不自动追加模型轮，也不扩大所有 Chat/tool 的超时预算。
 
 ## Connection And Provider Boundary
+
+[DEC-077](../product/decisions/dec-077-multi-provider-connections.md) 的新 schema 由默认服务
+或独立图片绑定解析连接，生成与来源型图片模型均保存在该连接。旧 schema 仍兼容下面
+的 `inherit-chat` / `dedicated-wan`，迁移后不再展示旧连接/Key 控件。
+OpenAI adapter 与 Wan 共用任务、资产、版本、停止和导出入口；OpenAI 生成调用
+`images/generations`，参考/编辑使用带内联 data URL 的 JSON `images/edits`，不创建
+Files API 文件或公开托管。请求数量与原件/透明处理按当前 provider 能力准入，不静默降级。
+
+来源型图片的文字准备使用实际聊天连接及其凭据版本，图片本身使用图片连接。
+提交被明确拒绝时，401、403、429分别显示认证、权限、频率或额度原因；401/403提供设置入口。
+不显示原始服务响应或据429推断余额，也不因此自动重试。
+
+任务冻结原连接身份，恢复只取得原连接凭据。OpenAI 同步完成后直接进入本地保存，
+不制造远端 task ID；提交前持久化 claim，未知受理不自动重发。已返回字节在写入 saving
+状态前保留，本地保存重试不重新调用 provider。切换默认服务不会把恢复请求发到新服务。
+已受理任务保持原端点，可使用原连接当前明确配置的Key，由服务响应判定权限；不因凭据
+修订不同就否定原任务。旧任务仅按原端点和凭据槽可靠映射，不能补成当前默认连接。
+具体协议、账号与 app 验收边界见
+[B-192 最终验证](../archive/2026/b192-multi-provider-validation.md)。
 
 `inherit-chat` 只继承兼容的 qwen/DashScope Chat 连接；不兼容连接清楚提示。
 `dedicated-wan` 使用独立地址和 SecretStorage 槽，切换 Chat 服务商不更改该图片配置。

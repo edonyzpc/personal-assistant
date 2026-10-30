@@ -10,6 +10,7 @@ import type { MemoryManagementReadPort } from "./memory-management-types";
 import type { MemoryActionPort } from "./memory-action-types";
 import type { InsightReadPort } from "../pa/insight-read-port";
 import type { InsightActionPort } from "../pa/insight-action-port";
+import type { AIConnectionsSettings } from './ai-connection-types';
 
 export type { MemoryManagementReadPort };
 import type {
@@ -67,6 +68,7 @@ export interface AiServiceHost {
         retrievalOptimizationFlags?: RetrievalOptimizationFlags;
         operationsProactiveSaveSuggestionsEnabled: boolean;
         statisticsVaultId: string;
+        aiConnections?: AIConnectionsSettings;
     };
 
     /** Structured debug log (no-op when debug is false). */
@@ -107,6 +109,8 @@ export interface AiServiceHost {
 
     /** Resolve the configured provider API token. */
     getAPIToken(): Promise<string>;
+    getAIConnectionToken?(connectionId: string): Promise<string>;
+    getAIConnectionCredentialRevision?(connectionId: string): number;
 
     /** Whether the operations agent is enabled after runtime gates. */
     readonly isOperationsAgentEnabled: boolean;

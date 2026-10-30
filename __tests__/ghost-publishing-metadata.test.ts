@@ -6,8 +6,12 @@ type PreparedModelInvoke = (
 ) => Promise<{ content: unknown }>;
 const createChatModel = jest.fn<(temperature?: unknown, options?: unknown) => Promise<{ invoke: PreparedModelInvoke }>>();
 jest.mock("../src/ai-services/ai-utils", () => {
-    const actual = jest.requireActual("../src/ai-services/ai-utils") as Record<string, unknown>;
-    return { ...actual, AIUtils: jest.fn().mockImplementation(() => ({ createChatModel })) };
+    const actual = jest.requireActual<typeof import("../src/ai-services/ai-utils")>("../src/ai-services/ai-utils");
+    return { ...actual, AIUtils: jest.fn((host: import("../src/ai-services/ai-utils").AIUtilsHost) => {
+        const aiUtils = new actual.AIUtils(host);
+        aiUtils.createChatModel = createChatModel as unknown as typeof aiUtils.createChatModel;
+        return aiUtils;
+    }) };
 });
 
 import { AIUtils } from "../src/ai-services/ai-utils";

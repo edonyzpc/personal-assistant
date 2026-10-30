@@ -179,7 +179,7 @@ describe('native tool calling capability', () => {
             'minimax/minimax-m2.5',
             'minimax/minimax-m2.1',
         ]);
-        expect(DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS).toHaveLength(
+        expect(DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS.filter(entry => entry.provider === 'qwen')).toHaveLength(
             DASHSCOPE_NATIVE_TOOL_CALLING_MODELS.length * DASHSCOPE_COMPATIBLE_BASE_URLS.length,
         );
         expect(DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS).toEqual(expect.arrayContaining([

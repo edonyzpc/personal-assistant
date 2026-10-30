@@ -3,6 +3,7 @@ import type { DirtyTimestamps } from "../vss-helpers";
 import { getVaultConfigDirStorageScope } from "../obsidian-paths";
 import { getPlatformIndexedDB } from "../platform-dom";
 import type { VSSIndexMarker } from "./types";
+import { cloneMemoryProfileCatalog, type MemoryProfileCatalog } from './profile-catalog';
 
 const VSS_LOCAL_STATE_DB_VERSION = 1;
 const STATE_STORE = "state";
@@ -46,6 +47,12 @@ export interface VSSIndexStateStore {
     getMigrationMetadata(): Promise<VSSLocalStateMigrationMetadata | null>;
     setMigrationMetadata(metadata: VSSLocalStateMigrationMetadata): Promise<void>;
     dispose(): Promise<void>;
+    /** Profile support is optional only for legacy injected stores. */
+    forProfile?(profileId: string): VSSIndexStateStore;
+    getProfileCatalog?(): Promise<MemoryProfileCatalog | null>;
+    setProfileCatalog?(catalog: MemoryProfileCatalog): Promise<void>;
+    migrateLegacyProfile?(catalog: MemoryProfileCatalog, profileId: string, state?: VSSRebuildStateTransition): Promise<void>;
+    removeProfileState?(profileId: string, catalog: MemoryProfileCatalog): Promise<void>;
 }
 
 export class MemoryVSSIndexStateStore implements VSSIndexStateStore {
@@ -53,6 +60,44 @@ export class MemoryVSSIndexStateStore implements VSSIndexStateStore {
     private dirtyJournal = new Map<string, DirtyTimestamps>();
     private rebuildGuard: VSSRebuildGuard | null = null;
     private migrationMetadata: VSSLocalStateMigrationMetadata | null = null;
+    private catalog: MemoryProfileCatalog | null = null;
+    private readonly profiles = new Map<string, MemoryVSSIndexStateStore>();
+
+    constructor(private readonly owner?: MemoryVSSIndexStateStore) { }
+
+    forProfile(profileId: string): VSSIndexStateStore {
+        if (this.owner) return this.owner.forProfile(profileId);
+        let profile = this.profiles.get(profileId);
+        if (!profile) {
+            profile = new MemoryVSSIndexStateStore(this);
+            this.profiles.set(profileId, profile);
+        }
+        return profile;
+    }
+
+    async getProfileCatalog(): Promise<MemoryProfileCatalog | null> {
+        if (this.owner) return this.owner.getProfileCatalog();
+        return this.catalog ? cloneMemoryProfileCatalog(this.catalog) : null;
+    }
+
+    async setProfileCatalog(catalog: MemoryProfileCatalog): Promise<void> {
+        if (this.owner) return this.owner.setProfileCatalog(catalog);
+        this.catalog = cloneMemoryProfileCatalog(catalog);
+    }
+
+    async migrateLegacyProfile(catalog: MemoryProfileCatalog, profileId: string, state?: VSSRebuildStateTransition): Promise<void> {
+        if (this.owner) return this.owner.migrateLegacyProfile(catalog, profileId, state);
+        const target = this.forProfile(profileId);
+        await target.replaceRebuildState(state ?? { marker: this.marker, dirtyJournal: this.dirtyJournal, guard: this.rebuildGuard });
+        if (this.migrationMetadata) await target.setMigrationMetadata(this.migrationMetadata);
+        await this.setProfileCatalog(catalog);
+    }
+
+    async removeProfileState(profileId: string, catalog: MemoryProfileCatalog): Promise<void> {
+        if (this.owner) return this.owner.removeProfileState(profileId, catalog);
+        this.profiles.delete(profileId);
+        await this.setProfileCatalog(catalog);
+    }
 
     async initialize(): Promise<void> {
         // Memory store is ready immediately.
@@ -161,9 +206,56 @@ export class IndexedDbVSSIndexStateStore implements VSSIndexStateStore {
     private db: IDBDatabase | null = null;
     private initializing: Promise<void> | null = null;
 
-    constructor(private readonly dbName: string, private readonly indexedDb: IDBFactory) { }
+    constructor(private readonly dbName: string, private readonly indexedDb: IDBFactory,
+        private readonly prefix = '', private readonly owner?: IndexedDbVSSIndexStateStore) { }
+
+    forProfile(profileId: string): VSSIndexStateStore {
+        return new IndexedDbVSSIndexStateStore(this.dbName, this.indexedDb, `profile:${profileId}:`, this.owner ?? this);
+    }
+
+    async getProfileCatalog(): Promise<MemoryProfileCatalog | null> {
+        if (this.owner) return this.owner.getProfileCatalog();
+        const catalog = await this.getEntry<MemoryProfileCatalog>('catalog');
+        return catalog ? cloneMemoryProfileCatalog(catalog) : null;
+    }
+
+    async setProfileCatalog(catalog: MemoryProfileCatalog): Promise<void> {
+        if (this.owner) return this.owner.setProfileCatalog(catalog);
+        await this.setEntry('catalog', cloneMemoryProfileCatalog(catalog));
+    }
+
+    async migrateLegacyProfile(catalog: MemoryProfileCatalog, profileId: string, state?: VSSRebuildStateTransition): Promise<void> {
+        if (this.owner) return this.owner.migrateLegacyProfile(catalog, profileId, state);
+        const [marker, dirty, guard, migration] = await Promise.all([
+            this.getMarker(), this.getDirtyJournal(), this.getRebuildGuard(), this.getMigrationMetadata(),
+        ]);
+        const transaction = this.getTransaction('readwrite');
+        const store = transaction.objectStore(STATE_STORE);
+        const prefix = `profile:${profileId}:`;
+        const snapshot = state ?? { marker, dirtyJournal: dirty, guard };
+        if (snapshot.marker) store.put({ key: prefix + MARKER_KEY, value: snapshot.marker });
+        else store.delete(prefix + MARKER_KEY);
+        store.put({ key: prefix + DIRTY_JOURNAL_KEY, value: dirtyMapToRecord(snapshot.dirtyJournal) });
+        if (snapshot.guard) store.put({ key: prefix + REBUILD_GUARD_KEY, value: snapshot.guard });
+        else store.delete(prefix + REBUILD_GUARD_KEY);
+        if (migration) store.put({ key: prefix + MIGRATION_METADATA_KEY, value: migration });
+        store.put({ key: 'catalog', value: cloneMemoryProfileCatalog(catalog) });
+        await transactionDone(transaction);
+    }
+
+    async removeProfileState(profileId: string, catalog: MemoryProfileCatalog): Promise<void> {
+        if (this.owner) return this.owner.removeProfileState(profileId, catalog);
+        const transaction = this.getTransaction('readwrite');
+        const store = transaction.objectStore(STATE_STORE);
+        for (const key of [MARKER_KEY, DIRTY_JOURNAL_KEY, REBUILD_GUARD_KEY, MIGRATION_METADATA_KEY]) {
+            store.delete(`profile:${profileId}:${key}`);
+        }
+        store.put({ key: 'catalog', value: cloneMemoryProfileCatalog(catalog) });
+        await transactionDone(transaction);
+    }
 
     async initialize(): Promise<void> {
+        if (this.owner) return this.owner.initialize();
         if (this.db) return;
         if (!this.initializing) {
             this.initializing = this.openDatabase()
@@ -213,15 +305,15 @@ export class IndexedDbVSSIndexStateStore implements VSSIndexStateStore {
         const transaction = this.getTransaction("readwrite");
         const store = transaction.objectStore(STATE_STORE);
         if (state.marker) {
-            store.put({ key: MARKER_KEY, value: { ...state.marker } });
+            store.put({ key: this.prefix + MARKER_KEY, value: { ...state.marker } });
         } else {
-            store.delete(MARKER_KEY);
+            store.delete(this.prefix + MARKER_KEY);
         }
-        store.put({ key: DIRTY_JOURNAL_KEY, value: dirtyMapToRecord(state.dirtyJournal) });
+        store.put({ key: this.prefix + DIRTY_JOURNAL_KEY, value: dirtyMapToRecord(state.dirtyJournal) });
         if (state.guard) {
-            store.put({ key: REBUILD_GUARD_KEY, value: { ...state.guard } });
+            store.put({ key: this.prefix + REBUILD_GUARD_KEY, value: { ...state.guard } });
         } else {
-            store.delete(REBUILD_GUARD_KEY);
+            store.delete(this.prefix + REBUILD_GUARD_KEY);
         }
         await transactionDone(transaction);
     }
@@ -236,6 +328,7 @@ export class IndexedDbVSSIndexStateStore implements VSSIndexStateStore {
     }
 
     async dispose(): Promise<void> {
+        if (this.owner) return;
         if (this.db) {
             this.db.close();
             this.db = null;
@@ -270,19 +363,19 @@ export class IndexedDbVSSIndexStateStore implements VSSIndexStateStore {
 
     private async getEntry<T>(key: string): Promise<T | null> {
         const store = this.getStore("readonly");
-        const entry = await requestToPromise<{ key: string; value: T } | undefined>(store.get(key));
+        const entry = await requestToPromise<{ key: string; value: T } | undefined>(store.get(this.prefix + key));
         return entry ? entry.value : null;
     }
 
     private async setEntry<T>(key: string, value: T): Promise<void> {
         const transaction = this.getTransaction("readwrite");
-        transaction.objectStore(STATE_STORE).put({ key, value });
+        transaction.objectStore(STATE_STORE).put({ key: this.prefix + key, value });
         await transactionDone(transaction);
     }
 
     private async removeEntry(key: string): Promise<void> {
         const transaction = this.getTransaction("readwrite");
-        transaction.objectStore(STATE_STORE).delete(key);
+        transaction.objectStore(STATE_STORE).delete(this.prefix + key);
         await transactionDone(transaction);
     }
 
@@ -291,6 +384,7 @@ export class IndexedDbVSSIndexStateStore implements VSSIndexStateStore {
     }
 
     private getTransaction(mode: IDBTransactionMode): IDBTransaction {
+        if (this.owner) return this.owner.getTransaction(mode);
         if (!this.db) {
             throw new Error("Memory local state store is not initialized.");
         }

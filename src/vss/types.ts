@@ -436,6 +436,11 @@ export interface VSSFileRecord {
     updatedAt: number;
 }
 
+export type VSSStorageInspection =
+    | { state: 'absent' }
+    | { state: 'known'; profileSignature: string }
+    | { state: 'unknown'; reason: string };
+
 export interface VectorIndex {
     initialize(profile: EmbeddingProfile): Promise<VectorIndexStatus>;
     upsertFile(fileState: VSSFileState, chunks: VSSChunk[], embeddings: number[][]): Promise<void>;

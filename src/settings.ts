@@ -14,11 +14,16 @@ import type {
     ImageGenerationConnectionPatch,
 } from "./ai-services/plugin-configuration";
 import type { APITokenCacheState } from "./ai-services/ai-utils";
+import type { AIConnectionsSettings } from "./ai-services/ai-connection-types";
+import type { PluginAIConfiguration } from "./ai-services/plugin-configuration";
+import { AIConnectionsSettingsView } from "./components/ai-connections-settings";
+import { getVaultApiTokenId, KEYCHAIN_API_TOKEN_ID } from "./utils";
 import type { ImageGenerationConnection } from "./ai-services/image-generation-connection";
 import { DEFAULT_GHOST_SETTINGS, normalizeGhostSettings, type GhostPublishingConfiguration, type GhostPublishingSettings } from "./ghost-publishing/configuration";
 import { renderGhostPublishingSettings, type GhostSettingsDisposer } from "./ghost-publishing/settings-ui";
 import type { AISetupResult } from "./chat/ChatHost";
 import type { ImageAssetService } from "./chat/image-assets";
+import type { ImageGenerationService } from "./chat/image-generation-service";
 import { mountImageManagementContent } from "./chat/image-management-modal";
 import { getWritingSceneDisplayValues, normalizeWritingScene } from './chat/writing-style-service';
 import type { WritingStyleScene } from './pa/writing-style';
@@ -36,7 +41,7 @@ import {
     type PageletSettingFactory,
 } from "./settings/pagelet";
 import { getPageletUiLanguage } from "./locales/pagelet";
-import { getPluginUiLanguage, pluginT, type PluginMessageKey } from "./locales/plugin";
+import { getPluginUiLanguage, pluginT, type PluginMessageKey, type PluginLookupKey } from "./locales/plugin";
 import { LEGACY_CONFIG_DIR } from "./obsidian-paths";
 import { getPlatformDocument } from "./platform-dom";
 import { MOCK_LICENSE_TIER, type AgentCapabilityTier } from "./ai-services/capability-types";
@@ -201,7 +206,7 @@ export function normalizeFeaturedImageModel(value: unknown): FeaturedImageModel 
         : "wan2.7-image";
 }
 
-export function normalizeFeaturedImageCount(value: unknown): number {
+export function normalizeFeaturedImageCount(value: unknown, maximum = FEATURED_IMAGE_COUNT_MAX): number {
     const numericValue = typeof value === "number"
         ? value
         : typeof value === "string" && value.trim() !== ""
@@ -212,7 +217,7 @@ export function normalizeFeaturedImageCount(value: unknown): number {
         return 1;
     }
 
-    return Math.min(Math.max(Math.floor(numericValue), 1), FEATURED_IMAGE_COUNT_MAX);
+    return Math.min(Math.max(Math.floor(numericValue), 1), maximum);
 }
 
 export interface PluginManagerSettings {
@@ -253,6 +258,8 @@ export interface PluginManagerSettings {
     // AI模型配置
     aiProvider: string; // 'qwen' | 'openai'
     aiProviderPreset?: string;
+    /** Saved connections are opt-in until the explicit legacy migration succeeds. */
+    aiConnections?: AIConnectionsSettings;
     baseURL: string;
     chatModelName: string;
     policyModelName: string;
@@ -583,7 +590,8 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
         ? loadedObject.memoryAutoAcceptPaused
         : DEFAULT_SETTINGS.memoryAutoAcceptPaused;
     merged.featuredImageModel = normalizeFeaturedImageModel(loadedObject.featuredImageModel);
-    merged.numFeaturedImages = normalizeFeaturedImageCount(loadedObject.numFeaturedImages);
+    merged.numFeaturedImages = normalizeFeaturedImageCount(loadedObject.numFeaturedImages,
+        loadedObject.aiConnections !== undefined ? Number.MAX_SAFE_INTEGER : FEATURED_IMAGE_COUNT_MAX);
     merged.imageGenerationConnectionMode = loadedObject.imageGenerationConnectionMode === "dedicated-wan"
         ? "dedicated-wan" : "inherit-chat";
     merged.imageGenerationBaseURL = typeof loadedObject.imageGenerationBaseURL === "string"
@@ -947,6 +955,7 @@ interface SettingsPageletHost {
 }
 
 interface SettingsAIConfigurationHost {
+    getAIConnectionsController?(): PluginAIConfiguration;
     beginAIProviderConfigurationMutation(): number;
     updateAIProviderConfiguration(patch: AIProviderConfigurationPatch, invocationEpoch: number): Promise<AISetupResult>;
     getAPITokenSecretId(): string;
@@ -965,6 +974,7 @@ interface SettingsAIConfigurationHost {
 }
 
 interface SettingsFeatureHost {
+    readonly imageGenerationService?: ImageGenerationService;
     readonly ghostPublishingConfiguration?: GhostPublishingConfiguration;
     readonly imageAssetService: ImageAssetService | undefined;
     openFeaturedImageOptions(): Modal | null;
@@ -1070,6 +1080,8 @@ export class SettingTab extends PluginSettingTab {
     private readonly settingsDetailTriggers = new Map<SettingsDetailId, HTMLElement>();
     private aiProviderPresetDropdown: { setValue(value: string): unknown } | null = null;
     private aiConnectionSummarySetting: { setDesc(value: string): unknown } | null = null;
+    private aiConnectionsView: AIConnectionsSettingsView | null = null;
+    private featuredImageDefaultsSetting: { setDesc(value: string): unknown } | null = null;
     private disposeGhostSettings: GhostSettingsDisposer | null = null;
 
     // Set by rebuildQwenOptions(); invoked by Base URL onChange.
@@ -1365,13 +1377,20 @@ export class SettingTab extends PluginSettingTab {
         const fields = id === "image-defaults"
             ? (["featuredImageModel", "numFeaturedImages"] as const)
             : (["featuredImagePath"] as const);
+        const connection = plugin.getImageGenerationConnection();
         return mountFeaturedImageOptionsEditor(editor, {
             mode: "edit",
+            connection,
             defaults: {
-                featuredImageModel: plugin.settings.featuredImageModel,
+                featuredImageModel: connection?.connectionId
+                    ? connection.sourceImageModel || connection.model || plugin.settings.featuredImageModel
+                    : plugin.settings.featuredImageModel,
                 numFeaturedImages: plugin.settings.numFeaturedImages,
                 featuredImagePath: plugin.settings.featuredImagePath,
             },
+            ...(connection?.connectionId ? { saveSourceImageModel: async (model: string) => {
+                await plugin.getAIConnectionsController!().updateAIConnection(connection.connectionId!, { models: { sourceImage: model } });
+            } } : {}),
             saveDefaults: (options) => plugin.saveFeaturedImageDefaults(options),
         }, callbacks, fields);
     }
@@ -1436,7 +1455,7 @@ export class SettingTab extends PluginSettingTab {
         (focus as HTMLElement | null)?.scrollIntoView?.({ behavior: this.settingsScrollBehavior(), block: "center" });
     }
 
-    private t(key: PluginMessageKey, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
+    private t(key: PluginLookupKey, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
         return pluginT(key, getPluginUiLanguage(), params, fallback);
     }
 
@@ -1478,6 +1497,8 @@ export class SettingTab extends PluginSettingTab {
         this.memorySubContainer = null;
         this.memoryAdvancedContainer = null;
         this.featuredImageContainer = null;
+        this.aiConnectionsView = null;
+        this.featuredImageDefaultsSetting = null;
         this.memoryModelTextControl = null;
         this.aiProviderPresetDropdown = null;
         this.refreshQwenResponseOptionAvailability = null;
@@ -2015,11 +2036,23 @@ export class SettingTab extends PluginSettingTab {
     private settingsGroupSummary(groupId: string): string {
         const plugin = this.plugin;
         if (groupId === "ai-provider") {
-            const configuration = this.committedAIProviderConfiguration();
-            const provider = configuration.aiProvider
-                ? deriveDisplayPreset(configuration)
-                : this.t("plugin.settings.summary.provider.unconfigured");
-            const tokenState = plugin.getAPITokenCacheState();
+            let provider: string;
+            let tokenState: APITokenCacheState;
+            if (plugin.settings.aiConnections !== undefined) {
+                const saved = plugin.settings.aiConnections;
+                const connection = Array.isArray(saved?.connections)
+                    ? saved.connections.find(item => item?.id === saved.defaultConnectionId) : undefined;
+                provider = connection?.name || this.t("plugin.settings.summary.provider.unconfigured");
+                tokenState = connection
+                    ? plugin.getAIConnectionsController?.().getAIConnectionTokenState(connection.id) ?? 'unknown'
+                    : 'missing';
+            } else {
+                const configuration = this.committedAIProviderConfiguration();
+                provider = configuration.aiProvider
+                    ? deriveDisplayPreset(configuration)
+                    : this.t("plugin.settings.summary.provider.unconfigured");
+                tokenState = plugin.getAPITokenCacheState();
+            }
             const token = tokenState === "present"
                 ? this.t("plugin.settings.summary.token.present")
                 : tokenState === "missing"
@@ -2322,6 +2355,7 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private openApiTokenSecretEditor(kind: 'chat' | 'image' = 'chat'): void {
+        if (this.plugin.settings.aiConnections !== undefined) return;
         if (this.apiTokenSecretModal) {
             return;
         }
@@ -2417,6 +2451,10 @@ export class SettingTab extends PluginSettingTab {
                                 if (saving || completed) {
                                     return;
                                 }
+                                if (plugin.settings.aiConnections !== undefined) {
+                                    this.closeSafely();
+                                    return;
+                                }
                                 saving = true;
                                 button.setDisabled(true);
                                 try {
@@ -2444,6 +2482,10 @@ export class SettingTab extends PluginSettingTab {
                                         }
                                     }
 
+                                    if (plugin.settings.aiConnections !== undefined) {
+                                        this.closeSafely();
+                                        return;
+                                    }
                                     try {
                                         if (kind === 'image') await plugin.setImageAPITokenSecret(value);
                                         else plugin.setAPITokenSecret(value);
@@ -2821,6 +2863,51 @@ export class SettingTab extends PluginSettingTab {
             text: this.t("plugin.settings.ai.desc"),
             cls: "pa-settings-section-desc",
         });
+
+        const configuration = plugin.getAIConnectionsController?.();
+        if (configuration) {
+            const root = parentEl.createDiv({ cls: 'pa-ai-connections' });
+            this.aiConnectionsView = new AIConnectionsSettingsView(root, {
+                app: this.app,
+                configuration,
+                translate: this.t.bind(this),
+                isInitialSetup: !plugin.settings.aiProvider && plugin.settings.aiConnections === undefined,
+                legacyCredentials: () => {
+                    const names = new Set(this.app.secretStorage.listSecrets());
+                    const candidates = [
+                        [plugin.getAPITokenSecretId(), 'legacyVault'],
+                        [getVaultApiTokenId('default-vault'), 'legacyDefault'],
+                        [KEYCHAIN_API_TOKEN_ID, 'legacyShared'],
+                    ];
+                    return candidates.filter(([id], index) => names.has(id)
+                        && candidates.findIndex(item => item[0] === id) === index)
+                        .map(([id, label]) => ({ id, label: this.t(`plugin.settings.connections.${label}`) }));
+                },
+                getMemoryPlan: plugin.memoryManager
+                    ? () => plugin.memoryManager!.getMaintenancePlan() : undefined,
+                isMemoryEnabled: () => plugin.settings.memoryEnabled,
+                previewMemory: (connection) => plugin.vss?.previewEmbeddingConnection(connection) ?? Promise.resolve('unknown'),
+                getConnectionTaskCount: (id) => plugin.imageGenerationService?.getUnfinishedTaskCount(id) ?? Promise.resolve(undefined),
+                onCommitted: () => {
+                    this.refreshSettingsGroupSummaries();
+                    this.featuredImageDefaultsSetting?.setDesc(this.featuredImageDefaultsDescription());
+                },
+                isMemoryActive: () => Boolean(plugin.memoryManager?.getActivePreparationStatus()),
+                memoryAction: async (action) => {
+                    if (action === 'details') {
+                        await plugin.showTechnicalMemoryStatus();
+                        return;
+                    }
+                    await plugin.runManualMemoryAction(async () => {
+                        if (action === 'prepare') await plugin.memoryManager?.prepareFromCommand();
+                        else await plugin.memoryManager?.updateFromCommand();
+                    });
+                    await plugin.updateMemoryStatusBar();
+                },
+            });
+            this.aiConnectionsView.render();
+            return;
+        }
 
         const providerSetting = new Setting(parentEl).setName(this.t("plugin.settings.ai.provider.name"))
             .setDesc(this.t("plugin.settings.ai.provider.desc"))
@@ -3218,7 +3305,10 @@ export class SettingTab extends PluginSettingTab {
                 async (value) => {
                     if (!value) plugin.cancelActiveMemoryPreparation();
                     await plugin.saveSettingsPermissions({ memoryEnabled: value });
-                }, undefined, () => this.rebuildMemorySubSettings()));
+                }, undefined, () => {
+                    this.rebuildMemorySubSettings();
+                    this.aiConnectionsView?.refreshOverview();
+                }));
 
         this.renderSettingsDetailEntry(
             parentEl,
@@ -4305,6 +4395,7 @@ export class SettingTab extends PluginSettingTab {
 
     private renderMemoryModelField(container: HTMLElement): void {
         const plugin = this.plugin;
+        if (plugin.settings.aiConnections !== undefined) return;
         const providerConfiguration = this.getEffectiveAIProviderConfiguration();
         new Setting(container)
             .setName(this.t("plugin.settings.memory.model.name"))
@@ -4561,15 +4652,20 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private renderFeaturedImageDefaultsEntry(parentEl: HTMLElement): void {
-        new Setting(parentEl)
+        this.featuredImageDefaultsSetting = new Setting(parentEl)
             .setName(this.t("plugin.settings.featuredImage.options.title"))
-            .setDesc(this.t("plugin.settings.featuredImage.model.desc"))
+            .setDesc(this.featuredImageDefaultsDescription())
             .addButton((button) => {
                 const control = button
                     .setButtonText(this.t("plugin.settings.legal.open"))
                     .onClick(() => this.openSettingsDetail("image-defaults", control.buttonEl));
                 return control;
             });
+    }
+
+    private featuredImageDefaultsDescription(): string {
+        return this.t(this.plugin.getImageGenerationConnection()?.adapter === 'openai-image'
+            ? "plugin.settings.featuredImage.model.connectionDesc" : "plugin.settings.featuredImage.model.desc");
     }
 
     private renderFeaturedImagePathEntry(parentEl: HTMLElement): void {
@@ -4594,6 +4690,7 @@ export class SettingTab extends PluginSettingTab {
         if (!container) return;
         container.empty();
         const plugin = this.plugin;
+        if (plugin.settings.aiConnections !== undefined) return;
         new Setting(container)
             .setName(this.t('plugin.settings.imageGeneration.connection.name'))
             .setDesc(this.t('plugin.settings.imageGeneration.connection.desc'))

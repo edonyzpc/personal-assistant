@@ -2167,7 +2167,7 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
             "When distinct notes match the requested title and the current request does not distinguish them, ask which source the user means before create_image. A shared title or recent search position does not select a note; do not silently choose the first match or merge alternative sources to resolve that ambiguity.",
             "Choose generate for text-only creation, reference for inspiration from authorized images, or edit for changing a specific image. Preserve the user's requested subject and constraints.",
             "Use only exact registered image ref tokens and version IDs visible in this conversation. The host rechecks access and costs; never invent a path, URL, credential or provider endpoint.",
-            "Default to one image. Interpret the requested total from the user; do not silently retry or choose the best paid result. The Host freezes a structured plan of at most four images.",
+            "Default to one image. Interpret the requested total from the user; do not silently retry or choose the best paid result. The Host freezes the structured plan and checks the selected service limit (Wan: four; OpenAI: ten). Never split an unsupported count into extra paid requests.",
             "Use count for images sharing one description. For separately described images use count 1 per one-based subrequestIndex and the same totalCount; the Host enforces that shared plan.",
         ],
         inputSchema: {
@@ -2175,9 +2175,9 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
             properties: {
                 prompt: { type: "string", description: "Description of the requested image or change, retaining the user's constraints.", minLength: 1, maxLength: 10000 },
                 operation: { type: "string", enum: ["generate", "reference", "edit"], description: "Agent-selected creation from text, reference-based creation, or modification." },
-                count: { type: "integer", minimum: 1, maximum: 4, description: "Images sharing this exact description; omit for one." },
-                totalCount: { type: "integer", minimum: 1, maximum: 4, description: "Total images in the current user request plan; omit to inherit the Host plan or request count." },
-                subrequestIndex: { type: "integer", minimum: 1, maximum: 4, description: "Distinct requested image part for separate descriptions; omit for one request." },
+                count: { type: "integer", minimum: 1, maximum: 10, description: "Images sharing this exact description; omit for one. The selected service may have a lower limit." },
+                totalCount: { type: "integer", minimum: 1, maximum: 10, description: "Total images in the current user request plan; omit to inherit the Host plan or request count." },
+                subrequestIndex: { type: "integer", minimum: 1, maximum: 10, description: "Distinct requested image part for separate descriptions; omit for one request." },
                 referenceImageRefs: { type: "array", description: "Exact opaque refs for authorized chat images; no paths or URLs.", items: { type: "string", maxLength: 256 } },
                 parentVersionId: { type: "string", description: "Exact generated version ID when editing a previous result.", maxLength: 256 },
                 sourceNotePath: { type: "string", minLength: 1, description: "Exact vault-relative Markdown note path located for this request. The host reads the source; do not supply note content." },
@@ -2205,16 +2205,16 @@ export function createCreateImageTool(binding: CreateImageHostBinding): ChatTool
                 throw new Error("create_image requires a valid operation.");
             }
             const count = value.count === undefined ? 1 : value.count;
-            if (!Number.isInteger(count) || (count as number) < 1 || (count as number) > 4) {
+            if (!Number.isInteger(count) || (count as number) < 1 || (count as number) > 10) {
                 throw new Error("create_image count is out of range.");
             }
             const totalCount = value.totalCount;
-            if (totalCount !== undefined && (!Number.isInteger(totalCount) || (totalCount as number) < 1 || (totalCount as number) > 4)) {
+            if (totalCount !== undefined && (!Number.isInteger(totalCount) || (totalCount as number) < 1 || (totalCount as number) > 10)) {
                 throw new Error("create_image total count is out of range.");
             }
             const subrequestIndex = value.subrequestIndex;
             if (subrequestIndex !== undefined && (!Number.isInteger(subrequestIndex)
-                || (subrequestIndex as number) < 1 || (subrequestIndex as number) > 4)) {
+                || (subrequestIndex as number) < 1 || (subrequestIndex as number) > 10)) {
                 throw new Error("create_image subrequest index is out of range.");
             }
             const refs = value.referenceImageRefs === undefined ? [] : value.referenceImageRefs;

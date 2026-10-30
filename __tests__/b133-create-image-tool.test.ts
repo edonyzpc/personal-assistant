@@ -65,8 +65,8 @@ describe("B-133 create_image host binding", () => {
         expect(registry.listDefinitions().map(definition => definition.name)).toContain("create_image");
         expect(registry.exportProviderSchemas()[0].function.parameters.properties).toEqual(tool.inputSchema.properties);
         expect(tool.inputSchema.required).toEqual(["prompt", "operation"]);
-        expect(tool.inputSchema.properties.count).toMatchObject({ minimum: 1, maximum: 4 });
-        expect(tool.inputSchema.properties.totalCount).toMatchObject({ type: "integer", minimum: 1, maximum: 4 });
+        expect(tool.inputSchema.properties.count).toMatchObject({ minimum: 1, maximum: 10 });
+        expect(tool.inputSchema.properties.totalCount).toMatchObject({ type: "integer", minimum: 1, maximum: 10 });
         for (const secretOrHostKey of ["conversationId", "stableMessageId", "operationId", "endpoint", "credential", "path", "body", "lineage", "permission", "runId", "sourceText", "confirmed", "countExplicitlyAuthorized"]) {
             expect(tool.inputSchema.properties).not.toHaveProperty(secretOrHostKey);
         }
@@ -222,13 +222,14 @@ describe("B-133 create_image host binding", () => {
         expect(() => tool.validateInput({ ...request, operationId: "second-paid-request" })).toThrow();
         expect(() => tool.validateInput({ ...request, referenceImageRefs: ["https://example.com/private.png"] })).toThrow();
         expect(() => tool.validateInput({ ...request, count: 0 })).toThrow();
-        expect(() => tool.validateInput({ ...request, count: 5 })).toThrow();
+        expect(() => tool.validateInput({ ...request, count: 11 })).toThrow();
         expect(() => tool.validateInput({ ...request, operation: undefined })).toThrow();
         expect(() => tool.validateInput({ ...request, confirmed: true })).toThrow();
         expect(() => tool.validateInput({ ...request, totalCount: 0 })).toThrow();
-        expect(() => tool.validateInput({ ...request, totalCount: 5 })).toThrow();
+        expect(() => tool.validateInput({ ...request, totalCount: 11 })).toThrow();
         expect(() => tool.validateInput({ ...request, totalCount: 1.5 })).toThrow();
         expect(tool.validateInput({ ...request, totalCount: 2 })).toEqual({ ...request, totalCount: 2 });
+        expect(tool.validateInput({ ...request, count: 10, totalCount: 10 })).toMatchObject({ count: 10, totalCount: 10 });
         expect(() => tool.validateInput({ ...request, prompt: " " })).toThrow();
         expect(submit).not.toHaveBeenCalled();
     });
@@ -271,7 +272,7 @@ describe("B-133 create_image host binding", () => {
         const tool = createCreateImageTool({ conversationId: "conversation-1", stableMessageId: "message-1",
             operationId: "operation-1", submit: async () => { throw new ImagePreacceptError("connection_unavailable", "needs_user"); } });
         const result = await tool.execute(tool.validateInput(request), {} as ChatToolContext);
-        expect(result.error).toMatch(/compatible Wan connection/);
+        expect(result.error).toMatch(/available image service/);
         expect(result.error).not.toMatch(/Check its card/);
         expect(result).toMatchObject({ executionState: "not_started",
             recovery: { code: "image_connection_unavailable", allowedActions: ["needs_user"] } });
@@ -294,7 +295,8 @@ describe("B-133 create_image host binding", () => {
         const tool = createCreateImageTool({ conversationId: "conversation-1", stableMessageId: "message-1",
             operationId: "operation-1", submit: async () => { throw new ImagePreacceptError("count_exceeds_provider_limit"); } });
         const result = await tool.execute(tool.validateInput(request), {} as ChatToolContext);
-        expect(result.error).toMatch(/choose 1–4 images/);
+        expect(result.error).toMatch(/selected image service limit/);
+        expect(result.error).toMatch(/do not split/);
         expect(result.executionState).toBe("not_started");
     });
 

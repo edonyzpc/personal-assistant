@@ -138,6 +138,8 @@ import { mergeChatImageMaterials } from '../ai-services/chat-image-identity';
 import { WritingRecoveryModal, WritingVersionModal, WritingSaveRecoveryListModal, newWritingActionId, type WritingModalHost } from './writing-modal';
 import { mergeWritingImages, type WritingVersion } from './writing-types';
 import { ChatImageRequestError } from '../ai-services/image-capability';
+import { imageGenerationConnectionIdentity } from '../ai-services/image-generation-connection';
+import { imageCountLimit, imageModelChoices, isImageModelSupported } from '../ai-services/featured-image-options';
 import {
     cloneGenerationInputSnapshot,
     generationInputNeedsRecoveryConfirmation,
@@ -474,11 +476,19 @@ export class LLMView extends ItemView {
         this.composerDraft.setImageIntent({
             referenceImageRefs: [],
             ...(source ? { textSource: source } : {}),
-            ...(this.host.getImageGenerationOptions ? { generationOptions: this.host.getImageGenerationOptions() } : {}),
+            ...(this.host.getImageGenerationOptions ? { generationOptions: source
+                ? this.sourceImageGenerationOptions()! : this.host.getImageGenerationOptions() } : {}),
         });
         this.syncComposerControlsForExternalPrefill();
         this.composerTextArea.focus();
         return true;
+    }
+
+    private sourceImageGenerationOptions(): ComposerImageGenerationOptions | undefined {
+        const options = this.host.getImageGenerationOptions?.();
+        if (!options) return undefined;
+        const connection = this.host.captureImageGenerationConnection?.();
+        return { ...options, model: connection?.sourceImageModel ?? options.model };
     }
 
     async preparePageletHandoff(
@@ -1012,9 +1022,6 @@ export class LLMView extends ItemView {
         const imageModelSelect = imageModelLabel.createEl('select', {
             cls: 'pa-chat-create-image-model-select',
         });
-        for (const value of ['wan2.7-image', 'wan2.7-image-pro'] as const) {
-            imageModelSelect.createEl('option', { text: value, attr: { value } });
-        }
         const imageCountLabel = imageOptionsRow.createEl('label', {
             cls: 'pa-chat-create-image-count-label',
             text: t('plugin.chat.createImage.count'),
@@ -1022,12 +1029,8 @@ export class LLMView extends ItemView {
         const imageCountSelect = imageCountLabel.createEl('select', {
             cls: 'pa-chat-create-image-count-select',
         });
-        for (const value of [1, 2, 3, 4] as const) {
-            imageCountSelect.createEl('option', { text: String(value), attr: { value: String(value) } });
-        }
         const imagePlainOptionsNote = imageOptionsMenu.createDiv({
             cls: 'pa-chat-create-image-plain-options',
-            text: t('plugin.chat.createImage.plainDefaults', { model: 'wan2.7-image', count: 1 }),
         });
         const sourceScopeControl = buttonDiv.createSpan({ cls: 'pa-chat-source-scope-control' });
         const sourceScopeButton = sourceScopeControl.createEl('button', {
@@ -1189,6 +1192,16 @@ export class LLMView extends ItemView {
             text: t("plugin.chat.action.openSettings"),
             icon: 'settings',
         });
+        const openPluginSettings = () => {
+            const appWithSettings = this.app as typeof this.app & {
+                setting?: {
+                    open: () => void;
+                    openTabById: (id: string) => void;
+                };
+            };
+            appWithSettings.setting?.open();
+            appWithSettings.setting?.openTabById('personal-assistant');
+        };
         createChatMenuDivider(composerMenu);
         const clearButton = createChatMenuItem(composerMenu, {
             text: t("plugin.chat.action.clearChat"),
@@ -1544,7 +1557,8 @@ export class LLMView extends ItemView {
                             referenceImageRefs: [],
                             ...(selectedSource ? { textSource: selectedSource } : {}),
                             ...(this.host.getImageGenerationOptions ? {
-                                generationOptions: this.host.getImageGenerationOptions(),
+                                generationOptions: selectedSource
+                                    ? this.sourceImageGenerationOptions()! : this.host.getImageGenerationOptions(),
                             } : {}),
                         });
                         clearSelectedWritingParent();
@@ -1862,31 +1876,41 @@ export class LLMView extends ItemView {
             syncComposerControls();
             return true;
         };
-        const isSourceBasedImageRequest = () => {
+        const canEditImageGenerationOptions = () => {
             const intent = composerDraft.snapshot(textArea.value).imageIntent;
-            return Boolean(intent?.textSource || intent?.promptOrigin);
+            return Boolean(intent?.textSource || intent?.promptOrigin || intent?.reusePreparedPrompt);
         };
         const syncImageOptionsMenu = () => {
             const intent = composerDraft.snapshot(textArea.value).imageIntent;
-            const sourceBasedRequest = isSourceBasedImageRequest();
-            const currentOptions = sourceBasedRequest
-                ? intent?.generationOptions ?? this.host.getImageGenerationOptions?.()
-                : { model: 'wan2.7-image', count: 1 };
-            const model = currentOptions?.model ?? 'wan2.7-image';
+            const editableOptions = canEditImageGenerationOptions();
+            const connection = this.host.captureImageGenerationConnection?.() ?? null;
+            const currentOptions = editableOptions
+                ? intent?.generationOptions ?? this.sourceImageGenerationOptions()
+                : { model: connection?.model ?? this.host.getImageGenerationOptions?.().model ?? 'wan2.7-image', count: 1 };
+            const model = currentOptions?.model ?? '';
             const count = currentOptions?.count ?? 1;
+            imageModelSelect.empty();
+            for (const value of new Set([...imageModelChoices(connection), model])) {
+                imageModelSelect.createEl('option', { text: value, attr: { value } });
+            }
+            imageCountSelect.empty();
+            for (const value of new Set([...Array.from({ length: imageCountLimit(connection) }, (_, index) => index + 1), count])) {
+                imageCountSelect.createEl('option', { text: String(value), attr: { value: String(value) } });
+            }
             imageModelSelect.value = model;
             imageCountSelect.value = String(count);
-            imageModelSelect.disabled = !sourceBasedRequest;
-            imageCountSelect.disabled = !sourceBasedRequest;
-            imagePlainOptionsNote.hidden = sourceBasedRequest;
-            imageOptionsMenu.setAttribute('data-editable', String(sourceBasedRequest));
+            imageModelSelect.disabled = !editableOptions;
+            imageCountSelect.disabled = !editableOptions;
+            imagePlainOptionsNote.hidden = editableOptions;
+            imagePlainOptionsNote.setText(t('plugin.chat.createImage.plainDefaults', { model, count: 1 }));
+            imageOptionsMenu.setAttribute('data-editable', String(editableOptions));
         };
         const changeImageGenerationOptions = (
             update: (base: ComposerImageGenerationOptions) => ComposerImageGenerationOptions,
         ): boolean => {
             const intent = composerDraft.snapshot(textArea.value).imageIntent;
-            if (!intent || (!intent.textSource && !intent.promptOrigin)) return false;
-            const base = intent.generationOptions ?? this.host.getImageGenerationOptions?.();
+            if (!intent || !canEditImageGenerationOptions()) return false;
+            const base = intent.generationOptions ?? this.sourceImageGenerationOptions();
             if (!base) return false;
             composerDraft.setImageGenerationOptions(update(base));
             renderImageDraft();
@@ -2423,6 +2447,7 @@ export class LLMView extends ItemView {
             };
             const actions: ImageTaskCardActions = {
                 regenerate: regenerateImageTask,
+                openSettings: openPluginSettings,
                 stop: () => {
                     void imageGeneration.stop(task.taskId).catch(error => {
                         this.host.log('Could not stop image task', error);
@@ -6958,15 +6983,15 @@ export class LLMView extends ItemView {
             const imageOptionsBeforeTake = currentDraft.imageIntent?.generationOptions;
             const sourceBasedBeforeTake = Boolean(sourceBeforeTake
                 || currentDraft.imageIntent?.promptOrigin || promptLineageBeforeTake);
-            if (sourceBasedBeforeTake && imageOptionsBeforeTake) {
-                if (imageOptionsBeforeTake.model !== 'wan2.7-image'
-                    && imageOptionsBeforeTake.model !== 'wan2.7-image-pro') {
+            if ((sourceBasedBeforeTake || currentDraft.imageIntent?.reusePreparedPrompt) && imageOptionsBeforeTake) {
+                const connection = this.host.captureImageGenerationConnection?.() ?? null;
+                if (!isImageModelSupported(imageOptionsBeforeTake.model, connection)) {
                     showComposerHint(t('plugin.chat.createImage.invalidModel'));
                     return;
                 }
                 if (!Number.isSafeInteger(imageOptionsBeforeTake.count)
-                    || imageOptionsBeforeTake.count < 1 || imageOptionsBeforeTake.count > 4) {
-                    showComposerHint(t('plugin.chat.createImage.invalidCount'));
+                    || imageOptionsBeforeTake.count < 1 || imageOptionsBeforeTake.count > imageCountLimit(connection)) {
+                    showComposerHint(t('plugin.chat.createImage.invalidCount', { maximum: imageCountLimit(connection) }));
                     return;
                 }
             }
@@ -7486,12 +7511,15 @@ export class LLMView extends ItemView {
                             throw new ImagePreacceptError('operation_unresolved', 'needs_user');
                         }
                         if (!isLiveTurn() || !imageGeneration) throw new ImagePreacceptError('source_changed', 'stale');
+                        const frozenImageConnection = this.host.captureImageGenerationConnection?.() ?? null;
+                        const frozenImageIdentity = frozenImageConnection ? imageGenerationConnectionIdentity(frozenImageConnection) : null;
+                        const maximumCount = imageCountLimit(frozenImageConnection);
                         const count = input.count;
                         const total = input.totalCount ?? imageOperationRecord.plan?.total ?? configuredImageTotal ?? count;
-                        if (!Number.isSafeInteger(count) || count < 1 || count > 4) {
-                            throw new ImagePreacceptError(count > 4 ? 'count_exceeds_provider_limit' : 'invalid_request');
+                        if (!Number.isSafeInteger(count) || count < 1 || count > maximumCount) {
+                            throw new ImagePreacceptError(count > maximumCount ? 'count_exceeds_provider_limit' : 'invalid_request');
                         }
-                        if (!Number.isSafeInteger(total) || total < 1 || total > 4 || index > total
+                        if (!Number.isSafeInteger(total) || total < 1 || total > maximumCount || index > total
                             || (configuredImageTotal !== undefined && total !== configuredImageTotal)) {
                             throw new ImagePreacceptError('plan_conflict');
                         }
@@ -7519,29 +7547,21 @@ export class LLMView extends ItemView {
                         reservedImageRequests.set(requestOperationId, count);
                         let enteredService = false;
                         try {
-                            const frozenImageConnection = this.host.captureImageGenerationConnection?.() ?? null;
                             const imageConnectionIsCurrent = () => {
                                 const current = this.host.captureImageGenerationConnection?.() ?? null;
-                                return current === frozenImageConnection
-                                    || (current !== null && frozenImageConnection !== null
-                                        && current.mode === frozenImageConnection.mode
-                                        && current.baseURL === frozenImageConnection.baseURL
-                                        && current.credentialSlot === frozenImageConnection.credentialSlot
-                                        && current.revision === frozenImageConnection.revision);
+                                return current ? imageGenerationConnectionIdentity(current) === frozenImageIdentity
+                                    : frozenImageIdentity === null;
                             };
                             const textSource = source?.textSource ?? explicitImageIntent?.textSource;
                             const promptOrigin = explicitImageIntent?.promptOrigin;
-                            const options = explicitImageIntent?.generationOptions ?? (
-                                textSource || promptOrigin || explicitImageIntent?.promptLineage
-                                    ? this.host.getImageGenerationOptions?.() : undefined
-                            );
-                            const model = options?.model ?? 'wan2.7-image';
-                            if (model !== 'wan2.7-image' && model !== 'wan2.7-image-pro') {
+                            const sourceBased = textSource || promptOrigin || explicitImageIntent?.promptLineage
+                                || explicitImageIntent?.reusePreparedPrompt;
+                            const options = sourceBased
+                                ? explicitImageIntent?.generationOptions ?? this.sourceImageGenerationOptions() : undefined;
+                            const model = options?.model ?? frozenImageConnection?.model
+                                ?? this.host.getImageGenerationOptions?.().model ?? 'wan2.7-image';
+                            if (!isImageModelSupported(model, frozenImageConnection)) {
                                 throw new Error('image_generation:invalid_model');
-                            }
-                            if (!Number.isSafeInteger(count) || count < 1 || count > 4) {
-                                throw new Error(count > 4
-                                    ? 'image_generation:count_exceeds_provider_limit' : 'image_generation:invalid_request');
                             }
                             const requestLineage = agentRequestLineage ?? (
                                 textSource || promptOrigin || explicitImageIntent?.promptLineage
@@ -8313,14 +8333,15 @@ export class LLMView extends ItemView {
         imageModelSelect.onchange = () => {
             const changed = changeImageGenerationOptions(base => ({
                 ...base,
-                model: imageModelSelect.value === 'wan2.7-image-pro' ? 'wan2.7-image-pro' : 'wan2.7-image',
+                model: imageModelSelect.value,
             }));
             closeImageOptionsMenu(changed ? false : true);
             if (changed) imageOptionsButton.focus();
         };
         imageCountSelect.onchange = () => {
             const value = Number(imageCountSelect.value);
-            const changed = value === 1 || value === 2 || value === 3 || value === 4
+            const changed = Number.isSafeInteger(value) && value >= 1
+                && value <= imageCountLimit(this.host.captureImageGenerationConnection?.())
                 ? changeImageGenerationOptions(base => ({ ...base, count: value }))
                 : false;
             closeImageOptionsMenu(changed ? false : true);
@@ -9018,16 +9039,7 @@ export class LLMView extends ItemView {
         technicalMemoryButton.onclick = () => {
             this.host.memoryStatus.showTechnicalStatus();
         };
-        settingsButton.onclick = () => {
-            const appWithSettings = this.app as typeof this.app & {
-                setting?: {
-                    open: () => void;
-                    openTabById: (id: string) => void;
-                };
-            };
-            appWithSettings.setting?.open();
-            appWithSettings.setting?.openTabById('personal-assistant');
-        };
+        settingsButton.onclick = openPluginSettings;
 
         const toggleMemoryMenu = (anchor: HTMLElement, trigger: HTMLButtonElement) => {
             const willOpen = memoryMenu.hidden;

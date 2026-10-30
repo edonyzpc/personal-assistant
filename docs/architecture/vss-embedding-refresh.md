@@ -9,6 +9,17 @@
 
 ## 当前关键机制
 
+- **多配置保留与激活**：[DEC-077](../product/decisions/dec-077-multi-provider-connections.md)
+  将数据库、marker、dirty journal 和 rebuild guard 同时按完整 embedding profile 分区。
+  切换只激活目标，不清理另一份、不自动付费准备；非当前配置不付费维护。
+  改名/换 Key 不创建新索引，但换连接/Key 会撤销旧请求身份，迟到查询不能写入缓存或返回。
+  切回复用数据前核验当前文件、排除与内容有效性，必要变化按既有更新授权处理。
+  first-use 资格属于 vault 的已知事实，不属于每个新 profile；保存选择原因与消费资格后
+  均再次检查生命周期，避免切换期间把旧计划应用到新连接。手动准备确认显示实际Memory
+  连接名称及既有数据/费用说明，确认返回后再次核对生命周期和配置身份；确认期间换连接
+  不能把旧授权用于新配置。运行验收见
+  [B-192 最终验证](../archive/2026/b192-multi-provider-validation.md)。
+
 - **Marker 异常先复用**：[DEC-054](../product/decisions/dec-054-memory-marker-recovery.md) 使同 scope marker 不再因统计 device ID 单项变化失效。正常 readiness 在首次准备判断前与手动 stats 共用 SQLite 打开协调，恢复已有兼容非空 index 的 marker；dirty 保留，由现有 Update/hash 去重处理。恢复不 reset、不生成文档 embeddings、不升级维护 policy；读取/打开/保存失败或恢复失效保持不可用，后续入口可重试；恢复 marker 持久成功且 generation/profile/guard/lifecycle 仍有效后才发布 ready。启动 initialize 与普通前台 stats 仍不主动恢复缺 marker。
 
 - **事件改造**：`vault.create` / `vault.modify` 先观察本地索引 metadata：启动期旧 mtime replay 仍会经过轻量 observation，只有 metadata 已匹配的 replay 被忽略；普通 `vault.modify` 即使 metadata 匹配也会进入 verify queue，metadata drift 进入 verify queue，缺失 indexed record 才标记 dirty；`vault.rename` 删除旧 path 并标记新 path，`vault.delete` 删除本地索引记录；事件本身不直接计算 embedding。

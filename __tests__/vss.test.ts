@@ -8,6 +8,8 @@ import { fuseRRF, RRF_K } from '../src/vss/rrf';
 import { MemoryVSSIndexStateStore, type VSSRebuildStateTransition } from '../src/vss/local-state-store';
 import { getVSSDeviceId } from '../src/vss/state';
 import { RETRIEVAL_CALIBRATION_PROFILE } from '../src/vss/retrieval-calibration';
+import { createMemoryProfileEntry, type MemoryProfileCatalog } from '../src/vss/profile-catalog';
+import { getEmbeddingProfileSignature, type VSSStorageInspection } from '../src/vss/types';
 
 const mockNoticeMessages: string[] = [];
 
@@ -67,10 +69,10 @@ jest.mock('../src/ai-services/ai-utils', () => {
 });
 
 jest.mock('../src/vss/sqlite-vector-index', () => ({
-    SqliteVectorIndex: jest.fn().mockImplementation(() => {
-        const factory = (globalThis as { __mockSqliteVectorIndexFactory?: () => unknown }).__mockSqliteVectorIndexFactory;
+    SqliteVectorIndex: jest.fn<(options: { databaseName?: string; opfsDirectory?: string }) => unknown>().mockImplementation((options) => {
+        const factory = (globalThis as { __mockSqliteVectorIndexFactory?: (options?: { databaseName?: string; opfsDirectory?: string }) => unknown }).__mockSqliteVectorIndexFactory;
         if (!factory) throw new Error('No mock SqliteVectorIndex factory configured');
-        return factory();
+        return factory(options);
     }),
 }));
 
@@ -92,6 +94,8 @@ const mockPlatform = (jest.requireMock('obsidian') as {
 }).Platform;
 
 class FakeVectorIndex implements VectorIndex {
+    inspectStorage = jest.fn<() => Promise<VSSStorageInspection>>(async () => ({ state: 'absent' }));
+    removeStorage = jest.fn(async () => undefined);
     status: VectorIndexStatus = 'ready';
     records = new Map<string, VSSFileRecord>();
     deleteFile = jest.fn<(path: string, options?: VectorIndexDeleteOptions) => Promise<void>>(async (path, _options) => {
@@ -743,6 +747,318 @@ function attachReadyIndex(vss: VSS, index: FakeVectorIndex): void {
 }
 
 describe('VSS SQLite/WASM lifecycle', () => {
+    const createProfiles = async (sameProfile = false) => {
+        const { plugin, vssStateStore, mockVault } = createPlugin();
+        const modelA = 'embedding-a';
+        const modelB = sameProfile ? modelA : 'embedding-b';
+        plugin.settings.aiConnections = {
+            schemaVersion: 1, connections: [
+                { id: 'a', name: 'A', providerId: 'openai', endpoints: { embedding: 'https://api.openai.com/v1' },
+                    models: { embedding: modelA }, options: {}, secretRef: 'key-a', revision: 0 },
+                { id: 'b', name: 'B', providerId: 'openai', endpoints: { embedding: 'https://api.openai.com/v1' },
+                    models: { embedding: modelB }, options: {}, secretRef: 'key-b', revision: 0 },
+            ], defaultConnectionId: 'a', bindings: { chat: { mode: 'inherit' }, embedding: { mode: 'inherit' }, image: { mode: 'inherit' } },
+            memorySelection: { revision: 'a', cause: 'configuration-change' }, migrationVersion: 1,
+        };
+        const vss = new VSS(plugin, 'cache');
+        const storage = (vss as any).getLegacyStorageTarget(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        const scope = (vss as any).getVaultStorageScope().safeName; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const profile = (model: string): EmbeddingProfile => ({ provider: 'openai', baseURL: 'https://api.openai.com/v1', model, dimensions: 1024, distanceMetric: 'COSINE' });
+        const entryA = createMemoryProfileEntry(scope, profile(modelA), 'configuration-change');
+        const entryB = createMemoryProfileEntry(scope, profile(modelB), 'configuration-change');
+        const catalog: MemoryProfileCatalog = { version: 1, entries: sameProfile ? [entryA] : [entryA, entryB],
+            firstUse: 'consumed', selectionRevision: 'a', legacy: { state: 'absent', storage } };
+        await vssStateStore.setProfileCatalog(catalog);
+        const a = new FakeVectorIndex();
+        const b = sameProfile ? a : new FakeVectorIndex();
+        a.inspectStorage.mockResolvedValue({ state: 'known', profileSignature: getEmbeddingProfileSignature(entryA.profile) });
+        if (!sameProfile) b.inspectStorage.mockResolvedValue({ state: 'known', profileSignature: getEmbeddingProfileSignature(entryB.profile) });
+        a.records.set('note.md', { path: 'note.md', contentHash: await computeContentHash('old body'), mtime: 1, size: 8, status: 'ready', updatedAt: 1 });
+        b.records.set('note.md', { path: 'note.md', contentHash: await computeContentHash('old body'), mtime: 1, size: 8, status: 'ready', updatedAt: 1 });
+        const marker = (entry: typeof entryA) => createReadyMarker({ profileSignature: getEmbeddingProfileSignature(entry.profile), opfsScope: scope });
+        await vssStateStore.forProfile(entryA.profileId).setMarker(marker(entryA));
+        if (!sameProfile) await vssStateStore.forProfile(entryB.profileId).setMarker(marker(entryB));
+        const legacy = new FakeVectorIndex();
+        (globalThis as { __mockSqliteVectorIndexFactory?: (options?: { databaseName?: string }) => unknown }).__mockSqliteVectorIndexFactory =
+            (options) => options?.databaseName === entryA.storage.databaseName ? a : options?.databaseName === entryB.storage.databaseName ? b : legacy;
+        const select = (id: string) => {
+            plugin.settings.aiConnections.bindings.embedding = { mode: 'connection', connectionId: id };
+            plugin.settings.aiConnections.memorySelection = { revision: id, cause: 'configuration-change' };
+        };
+        return { plugin, vss, vssStateStore, mockVault, a, b, legacy, entryA, entryB, select };
+    };
+
+    it('keeps each prepared profile and its failure guard across A/B switching and reload', async () => {
+        const { plugin, vss, vssStateStore, a, b, entryA, entryB, select } = await createProfiles();
+        const bState = vssStateStore.forProfile(entryB.profileId);
+        const guard = { version: 1 as const, reason: 'settings-changed' as const, startedAt: 'failed-b' };
+        await bState.replaceRebuildState({ marker: null, dirtyJournal: new Map([['b.md', { first: 1, last: 2 }]]), guard });
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'ready' });
+        select('b');
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'settings-changed', requiresApproval: true });
+        select('a');
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'ready' });
+        await expect(vssStateStore.forProfile(entryA.profileId).getMarker()).resolves.toBeTruthy();
+        await expect(bState.getRebuildGuard()).resolves.toEqual(guard);
+        expect(a.reset).not.toHaveBeenCalled();
+        expect(b.reset).not.toHaveBeenCalled();
+        expect((vss as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await vss.dispose();
+        const reloaded = new VSS(plugin, 'cache');
+        await expect(reloaded.getMemoryReadiness()).resolves.toMatchObject({ reason: 'ready' });
+        await reloaded.dispose();
+    });
+
+    it('does not reopen or reset Memory when only the account changes for the same profile', async () => {
+        const { vss, a, select } = await createProfiles(true);
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'ready' });
+        const opens = MockSqliteVectorIndex.mock.calls.length;
+        select('b');
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'ready' });
+        expect(MockSqliteVectorIndex.mock.calls).toHaveLength(opens);
+        expect(a.reset).not.toHaveBeenCalled();
+        await vss.dispose();
+    });
+
+    it.each(['similarity', 'hybrid'] as const)('discards a late %s query after the same-profile request identity is revoked', async (search) => {
+        const { plugin, vss, a, mockVault, select } = await createProfiles(true);
+        let credentialRevision = 0;
+        plugin.getAIConnectionCredentialRevision = () => credentialRevision;
+        await vss.getMemoryReadiness();
+        const opens = MockSqliteVectorIndex.mock.calls.length;
+        const started = createDeferred<void>();
+        const embedding = createDeferred<number[]>();
+        const embedQuery = jest.fn(async () => {
+            started.resolve();
+            return embedding.promise;
+        });
+        (vss as any).aiUtils.createEmbeddings.mockResolvedValue({ embedQuery }); // eslint-disable-line @typescript-eslint/no-explicit-any
+        const executeEmbeddingInvoke = jest.fn((invoke: () => Promise<number[]>) => invoke());
+        const queryEmbeddingOut: { value?: number[]; profileSignature?: string; sourceEpoch?: string } = {};
+        const file = createTFile('note.md', { mtime: 1, ctime: 1, size: 8 });
+        mockVault.getAbstractFileByPath.mockReturnValue(file);
+        mockVault.read.mockResolvedValue('old body');
+        a.search.mockResolvedValue([{ score: 1, doc: new Document({ pageContent: 'old body', metadata: { path: 'note.md' } }) }]);
+        const options = { executeEmbeddingInvoke, queryEmbeddingOut };
+        const pending = search === 'similarity' ? vss.searchSimilarity('query') : vss.searchHybrid('query', options);
+        await started.promise;
+        if (search === 'similarity') select('b');
+        else credentialRevision += 1;
+        await vss.synchronizeEmbeddingConfiguration();
+        embedding.resolve([1, 0]);
+
+        await expect(pending).resolves.toEqual([]);
+        expect(a.search).not.toHaveBeenCalled();
+        expect(queryEmbeddingOut.value).toBeUndefined();
+        if (search === 'hybrid') {
+            await vss.searchHybrid('query', options);
+            expect(executeEmbeddingInvoke).toHaveBeenCalledTimes(2);
+        }
+        expect(MockSqliteVectorIndex.mock.calls).toHaveLength(opens);
+        expect(a.reset).not.toHaveBeenCalled();
+        await vss.dispose();
+    });
+
+    it('rebuilds only the active profile and preserves the other prepared copy', async () => {
+        const { vss, vssStateStore, a, b, entryA, select } = await createProfiles();
+        await vss.getMemoryReadiness();
+        select('b');
+        await vss.getMemoryReadiness();
+        await vss.rebuildLocalIndex({ silent: true });
+        expect(b.reset).toHaveBeenCalled();
+        expect(a.reset).not.toHaveBeenCalled();
+        await expect(vssStateStore.forProfile(entryA.profileId).getMarker()).resolves.toBeTruthy();
+        await vss.dispose();
+    });
+
+    it('suppresses changed old chunks even when file metadata is unchanged after switching back', async () => {
+        const { vss, a, mockVault, select, vssStateStore, entryA } = await createProfiles();
+        await vss.getMemoryReadiness();
+        select('b');
+        await vss.getMemoryReadiness();
+        select('a');
+        await vss.getMemoryReadiness();
+        const file = createTFile('note.md', { mtime: 1, ctime: 1, size: 8 });
+        mockVault.getAbstractFileByPath.mockReturnValue(file);
+        mockVault.read.mockResolvedValue('new body');
+        a.search.mockResolvedValue([{ score: 1, doc: new Document({ pageContent: 'old body', metadata: { path: 'note.md' } }) }]);
+        await expect(vss.searchSimilarity('query')).resolves.toEqual([]);
+        expect((await vssStateStore.forProfile(entryA.profileId).getDirtyJournal()).has('note.md')).toBe(true);
+        expect(a.reset).not.toHaveBeenCalled();
+        await vss.dispose();
+    });
+
+    it('preserves an unknown legacy copy while a new profile remains manual preparation only', async () => {
+        const { plugin, vss, vssStateStore, legacy, entryA } = await createProfiles();
+        await vssStateStore.setProfileCatalog({ version: 1, entries: [], firstUse: 'consumed',
+            legacy: { state: 'unknown', storage: (vss as any).getLegacyStorageTarget() } }); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await vssStateStore.forProfile(entryA.profileId).replaceRebuildState({ marker: null, dirtyJournal: new Map(), guard: null });
+        legacy.inspectStorage.mockResolvedValue({ state: 'unknown', reason: 'locked' });
+        const empty = new FakeVectorIndex();
+        (globalThis as { __mockSqliteVectorIndexFactory?: (options?: { databaseName?: string }) => unknown }).__mockSqliteVectorIndexFactory =
+            (options) => options?.databaseName === entryA.storage.databaseName ? empty : legacy;
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'settings-changed', requiresApproval: true });
+        expect(legacy.initialize).not.toHaveBeenCalled();
+        expect(legacy.reset).not.toHaveBeenCalled();
+        expect(legacy.removeStorage).not.toHaveBeenCalled();
+        expect((vss as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await vss.dispose();
+        const reloaded = new VSS(plugin, 'cache');
+        await expect(reloaded.getMemoryReadiness()).resolves.toMatchObject({ reason: 'settings-changed' });
+        await reloaded.dispose();
+    });
+
+    it('finishes an old profile journal write before replacing its scoped store', async () => {
+        const { vss, vssStateStore, entryA, entryB, select } = await createProfiles();
+        await vss.getMemoryReadiness();
+        const aState = vssStateStore.forProfile(entryA.profileId);
+        const original = aState.setDirtyJournal.bind(aState);
+        let release!: () => void;
+        let started!: () => void;
+        const blocked = new Promise<void>((resolve) => { release = resolve; });
+        const entered = new Promise<void>((resolve) => { started = resolve; });
+        jest.spyOn(aState, 'setDirtyJournal').mockImplementation(async (dirty) => {
+            started();
+            await blocked;
+            await original(dirty);
+        });
+        (vss as any).markDirtyPath('a-change.md'); // eslint-disable-line @typescript-eslint/no-explicit-any
+        const saving = (vss as any).persistDirtyJournal(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await entered;
+        select('b');
+        const switching = vss.getMemoryReadiness();
+        release();
+        await saving;
+        await switching;
+        expect((await aState.getDirtyJournal()).has('a-change.md')).toBe(true);
+        expect((await vssStateStore.forProfile(entryB.profileId).getDirtyJournal()).has('a-change.md')).toBe(false);
+        await vss.dispose();
+    });
+
+    it('keeps a persisted configuration-change ineligible after state-store failure and restart', async () => {
+        const { plugin } = await createProfiles();
+        const state = new MemoryVSSIndexStateStore();
+        plugin.createVSSIndexStateStore.mockReturnValue(state);
+        const fail = jest.spyOn(state, 'setProfileCatalog').mockRejectedValueOnce(new Error('local write failed'));
+        const index = new FakeVectorIndex();
+        setMockSqliteIndex(index);
+        const failed = new VSS(plugin, 'cache');
+        await expect(failed.getMemoryReadiness()).resolves.toMatchObject({ reason: 'unavailable', action: 'none' });
+        expect(index.reset).not.toHaveBeenCalled();
+        expect((failed as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await failed.dispose();
+        fail.mockRestore();
+        const reloaded = new VSS(plugin, 'cache');
+        await expect(reloaded.getMemoryReadiness()).resolves.toMatchObject({ reason: 'settings-changed', requiresApproval: true });
+        expect((reloaded as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await reloaded.dispose();
+    });
+
+    it('retries legacy attribution using its actual profile rather than the selected connection', async () => {
+        const { vss, vssStateStore, a, b, entryA, entryB, select } = await createProfiles();
+        const catalog = (await vssStateStore.getProfileCatalog())!;
+        await vssStateStore.setProfileCatalog({ ...catalog, entries: [], legacy: { ...catalog.legacy, state: 'unknown' } });
+        await vssStateStore.forProfile(entryA.profileId).replaceRebuildState({ marker: null, dirtyJournal: new Map(), guard: null });
+        await vssStateStore.forProfile(entryB.profileId).replaceRebuildState({ marker: null, dirtyJournal: new Map(), guard: null });
+        const scope = (vss as any).getVaultStorageScope().safeName; // eslint-disable-line @typescript-eslint/no-explicit-any
+        await vssStateStore.setMarker(createReadyMarker({ profileSignature: getEmbeddingProfileSignature(entryB.profile), opfsScope: scope }));
+        const empty = new FakeVectorIndex();
+        (globalThis as { __mockSqliteVectorIndexFactory?: (options?: { databaseName?: string }) => unknown }).__mockSqliteVectorIndexFactory =
+            (options) => options?.databaseName === catalog.legacy.storage.databaseName ? b : empty;
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'settings-changed' });
+        select('b');
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'ready' });
+        const migrated = (await vssStateStore.getProfileCatalog())!;
+        expect(migrated.entries.find((entry) => entry.profileId === entryB.profileId)?.storageKind).toBe('legacy');
+        await expect(vssStateStore.getMarker()).resolves.toMatchObject({ profileSignature: getEmbeddingProfileSignature(entryB.profile) });
+        expect(a.reset).not.toHaveBeenCalled();
+        expect(b.reset).not.toHaveBeenCalled();
+        expect((vss as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await vss.dispose();
+    });
+
+    it('resets every vault profile and its profile-unknown legacy copy without resetting user data', async () => {
+        const { vss, vssStateStore, a, b, legacy } = await createProfiles();
+        const catalog = (await vssStateStore.getProfileCatalog())!;
+        await vssStateStore.setProfileCatalog({ ...catalog, legacy: { ...catalog.legacy, state: 'unknown' } });
+        legacy.inspectStorage.mockResolvedValue({ state: 'unknown', reason: 'missing_metadata' });
+        await vss.getMemoryReadiness();
+        await vss.resetLocalIndex();
+        expect(a.removeStorage).toHaveBeenCalledTimes(1);
+        expect(b.removeStorage).toHaveBeenCalledTimes(1);
+        expect(legacy.removeStorage).toHaveBeenCalledTimes(1);
+        expect(a.reset).not.toHaveBeenCalled();
+        expect(b.reset).not.toHaveBeenCalled();
+        await expect(vssStateStore.getProfileCatalog()).resolves.toMatchObject({ entries: [], firstUse: 'consumed', legacy: { state: 'absent' } });
+        await vss.dispose();
+    });
+
+    it('reports partial reset and retains the failed profile and its local state', async () => {
+        const { vss, vssStateStore, a, b, legacy, entryA } = await createProfiles();
+        await vss.getMemoryReadiness();
+        a.removeStorage.mockRejectedValueOnce(new Error('storage locked'));
+        await expect(vss.resetLocalIndex()).rejects.toThrow('partially completed');
+        expect(b.removeStorage).toHaveBeenCalledTimes(1);
+        // Do not remove the common ancestor of the failed profile as a fallback.
+        expect(legacy.removeStorage).not.toHaveBeenCalled();
+        const catalog = (await vssStateStore.getProfileCatalog())!;
+        expect(catalog.entries.map((entry) => entry.profileId)).toEqual([entryA.profileId]);
+        await expect(vssStateStore.forProfile(entryA.profileId).getMarker()).resolves.toBeTruthy();
+        await vss.dispose();
+    });
+
+    it('can clear local Memory even after its connection is removed', async () => {
+        const { plugin, vss, a, b, legacy, vssStateStore } = await createProfiles();
+        plugin.settings.aiConnections.bindings.embedding = { mode: 'unconfigured' };
+        await vss.resetLocalIndex();
+        expect(a.removeStorage).toHaveBeenCalledTimes(1);
+        expect(b.removeStorage).toHaveBeenCalledTimes(1);
+        expect(legacy.removeStorage).toHaveBeenCalledTimes(1);
+        await expect(vssStateStore.getProfileCatalog()).resolves.toMatchObject({ entries: [], firstUse: 'consumed' });
+        await vss.dispose();
+    });
+
+    it('durably consumes the one real initial-setup exception before a later reload', async () => {
+        const { plugin } = await createProfiles();
+        const state = new MemoryVSSIndexStateStore();
+        plugin.createVSSIndexStateStore.mockReturnValue(state);
+        plugin.settings.aiConnections.connections = plugin.settings.aiConnections.connections.slice(0, 1);
+        plugin.settings.aiConnections.memorySelection = { revision: 'initial', cause: 'initial-setup' };
+        const empty = new FakeVectorIndex();
+        setMockSqliteIndex(empty);
+        const initial = new VSS(plugin, 'cache');
+        await expect(initial.getMemoryReadiness()).resolves.toMatchObject({ reason: 'first-use' });
+        const unavailable = jest.spyOn(state, 'setProfileCatalog').mockRejectedValueOnce(new Error('write unavailable'));
+        await expect(initial.consumeFirstUseEligibility()).resolves.toBe(false);
+        expect(empty.reset).not.toHaveBeenCalled();
+        expect((initial as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        unavailable.mockRestore();
+        await expect(initial.consumeFirstUseEligibility()).resolves.toBe(true);
+        await initial.dispose();
+        const reloaded = new VSS(plugin, 'cache');
+        await expect(reloaded.getMemoryReadiness()).resolves.toMatchObject({ reason: 'settings-changed', requiresApproval: true });
+        await reloaded.dispose();
+    });
+
+    it('does not grant first-use to an explicitly selected new embedding connection', async () => {
+        const { plugin } = createPlugin();
+        plugin.settings.aiConnections = {
+            schemaVersion: 1,
+            connections: [{ id: 'openai-work', name: 'Work', providerId: 'openai',
+                endpoints: { embedding: 'https://api.openai.com/v1' },
+                models: { embedding: 'text-embedding-3-small' }, options: {}, secretRef: 'work', revision: 0 }],
+            defaultConnectionId: 'openai-work',
+            bindings: { chat: { mode: 'inherit' }, embedding: { mode: 'inherit' }, image: { mode: 'inherit' } },
+            memorySelection: { revision: 'selected-after-setup', cause: 'configuration-change' },
+            migrationVersion: 1,
+        };
+        setMockSqliteIndex(new FakeVectorIndex());
+        const vss = new VSS(plugin, 'cache');
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'settings-changed', action: 'rebuild', requiresApproval: true });
+        expect((vss as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await vss.dispose();
+    });
+
     const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
     const originalConfirm = Object.getOwnPropertyDescriptor(globalThis, 'confirm');
     const originalLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');

@@ -472,6 +472,8 @@ import { pluginT } from '../src/locales/plugin';
 import type { SettingsPermissionPatch } from '../src/plugin/settings-persistence';
 import { MOCK_LICENSE_TIER } from '../src/ai-services/capability-types';
 import { buildMemoryControlCenterSnapshot } from '../src/pa/memory-control-center';
+import { createConnectionDefaults } from '../src/ai-services/provider-definitions';
+import type { AIConnectionsSettings } from '../src/ai-services/ai-connection-types';
 
 function mockStringifyText(value: unknown): string {
     return value instanceof MockDocumentFragment ? mockDomTextContent(value) : String(value ?? '');
@@ -845,6 +847,7 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
         setTagStyleEnabled: jest.fn<(value: boolean) => Promise<void>>(),
         openGraphOptions: jest.fn(() => ({ close: jest.fn() })),
         openFeaturedImageOptions: jest.fn(() => ({ close: jest.fn() })),
+        getImageGenerationConnection: jest.fn(() => null),
         saveGraphOptions: jest.fn(async () => undefined),
         applyGraphOptionsToOpenGraphs: jest.fn(async () => undefined),
         saveFeaturedImageDefaults: jest.fn(async () => undefined),
@@ -4704,6 +4707,31 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(providerSummary()).toBe('Current model: committed-model@example');
     });
 
+    it('summarizes the saved default connection and its cached Key independently of legacy and Chat selections', () => {
+        const connections: AIConnectionsSettings = {
+            schemaVersion: 1,
+            connections: [
+                { ...createConnectionDefaults('openai'), id: 'work', name: 'OpenAI Work', secretRef: 'work-key', revision: 0 },
+                { ...createConnectionDefaults('openai'), id: 'personal', name: 'OpenAI Personal', secretRef: 'personal-key', revision: 0 },
+            ],
+            defaultConnectionId: 'personal',
+            bindings: { chat: { mode: 'connection', connectionId: 'work' }, embedding: { mode: 'inherit' }, image: { mode: 'inherit' } },
+            memorySelection: { revision: 'saved', cause: 'configuration-change' }, migrationVersion: 1,
+        };
+        const plugin = makePlugin({ aiProvider: 'qwen', aiProviderPreset: 'qwen', aiConnections: connections });
+        const getAIConnectionTokenState = jest.fn((id: string) => id === 'work' ? 'present' : 'unknown');
+        Object.assign(plugin, { getAIConnectionsController: () => ({ getAIConnectionTokenState }) });
+        const app = makeMockApp();
+        const tab = new SettingTab(app as never, plugin as never);
+        const summary = () => (tab as unknown as { settingsGroupSummary(id: string): string }).settingsGroupSummary('ai-provider');
+        expect(summary()).toBe(`OpenAI Personal · ${pluginT('plugin.settings.summary.token.unknown')}`);
+        connections.defaultConnectionId = 'work';
+        expect(summary()).toBe(`OpenAI Work · ${pluginT('plugin.settings.summary.token.present')}`);
+        expect(getAIConnectionTokenState.mock.calls.map(([id]) => id)).toEqual(['personal', 'work']);
+        expect(plugin.getAPITokenCacheState).not.toHaveBeenCalled();
+        expect(app.secretStorage.getSecret).not.toHaveBeenCalled();
+    });
+
     it('preserves the live background-Memory toggle while a provider save settles during confirmation', async () => {
         const plugin = makePlugin({
             aiProvider: 'qwen',
@@ -6122,6 +6150,20 @@ describe('Phase 4 P1 UX', () => {
     });
 
     describe('4g: featured image settings', () => {
+        it('hides legacy image credentials after connections are migrated', () => {
+            const plugin = makePlugin({ aiConnections: { schemaVersion: 1, connections: [], defaultConnectionId: null,
+                bindings: { chat: { mode: 'inherit' }, embedding: { mode: 'inherit' }, image: { mode: 'inherit' } },
+                memorySelection: { revision: 'saved', cause: 'configuration-change' }, migrationVersion: 1 },
+                imageGenerationConnectionMode: 'dedicated-wan' });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+            const names = getMockSettingRecords().map(row => row.name);
+            expect(names).not.toContain(pluginT('plugin.settings.imageGeneration.connection.name'));
+            expect(names).not.toContain(pluginT('plugin.settings.imageGeneration.token.name'));
+            expect(names).toContain(pluginT('plugin.settings.featuredImage.options.title'));
+        });
+
         it('uses Wan 2.7 Image and one image as new defaults', () => {
             expect(DEFAULT_SETTINGS.featuredImageModel).toBe('wan2.7-image');
             expect(DEFAULT_SETTINGS.numFeaturedImages).toBe(1);
@@ -6147,6 +6189,19 @@ describe('Phase 4 P1 UX', () => {
         it('preserves saved image count while old data is merged with defaults', () => {
             const settings = mergeLoadedSettings({ numFeaturedImages: 3 });
             expect(settings.numFeaturedImages).toBe(3);
+        });
+
+        it('keeps a multi-provider image count instead of silently reducing it to the Wan limit', () => {
+            const openai = { id: 'openai', name: 'OpenAI', providerId: 'openai',
+                endpoints: { image: 'https://api.openai.com/v1' }, secretRef: 'pa-openai-offline',
+                models: { image: 'gpt-image-2.5-flare' }, options: {}, revision: 1 };
+            const aiConnections = { schemaVersion: 1, connections: [openai], defaultConnectionId: openai.id,
+                bindings: { chat: { mode: 'inherit' }, embedding: { mode: 'inherit' }, image: { mode: 'inherit' } },
+                memorySelection: { revision: 'offline', cause: 'configuration-change' }, migrationVersion: 1 };
+            const settings = mergeLoadedSettings({ numFeaturedImages: 10, aiConnections });
+            expect(settings.numFeaturedImages).toBe(10);
+            // Provider admission owns unsupported counts; persistence must not hide a saved request.
+            expect(mergeLoadedSettings({ ...settings, numFeaturedImages: 12 }).numFeaturedImages).toBe(12);
         });
 
         it.each([
