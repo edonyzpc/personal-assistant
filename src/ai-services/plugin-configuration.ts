@@ -331,9 +331,10 @@ export class PluginAIConfiguration {
             if (!key && candidates.length && !input.providerId) throw new Error("ai_connection:legacy_provider_required");
             const providerId = input.providerId ?? legacyProviderId(settings.baseURL);
             const originalProvider = legacyProviderId(settings.baseURL);
-            // An unknown/custom destination is not evidence of a mistaken provider.
-            // Correct a known official mismatch, but retain the user's gateway and models.
-            const correctedProvider = originalProvider !== "custom" && providerId !== originalProvider;
+            // A blank address has no custom destination to retain when choosing a service.
+            // Otherwise, only correct known official mismatches; preserve custom gateways.
+            const correctedProvider = providerId !== originalProvider
+                && (originalProvider !== "custom" || !settings.baseURL.trim());
             const defaults = createConnectionDefaults(providerId);
             const next = this.mutableConnections(undefined);
             next.memorySelection.cause = "migration";

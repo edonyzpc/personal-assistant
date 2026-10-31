@@ -77,6 +77,13 @@ Owner于2026-10-30授权正式收尾、提交master并推送远程；不包含�
 
 ## Local Evidence Provenance
 
+2026-10-31 CI跟进：提交`46ca9178`的[完整CI](https://github.com/edonyzpc/personal-assistant/actions/runs/41065087563)
+为399/400 suites通过、9725/9726 tests通过；唯一失败是旧地址为空时明确选OpenAI，
+迁移仍保留空地址/模型而返回`token_required`。本地同样复现，不能归因于CI环境。
+窄修将空地址与非空自定义网关分开，复用原失败用例并补默认地址/模型断言。
+相关两套142项、TypeScript、受影响源码lint及diff检查通过，原Key引用不复制、有效网关保留。
+原验收记录是此前输入的证据，不表示该CI已通过；修复后的远程结论按对应提交CI另行核实。
+
 以下是本机原始证据定位，不作为其他checkout可运行的前置条件：
 
 - `/tmp/pa-b192-full-test.log`、`/tmp/pa-b192-ghost-permitted.log`、

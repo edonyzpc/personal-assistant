@@ -2203,7 +2203,11 @@ describe("inline AI setup coordinator", () => {
         secretStorage.setSecret.mockClear();
         await expect(completeSetup(plugin, { presetKey: 'openai' })).resolves.toEqual({ ok: true });
         const config = plugin.getAIConnectionsController().getAIConnections()!;
-        expect(config.connections).toEqual([expect.objectContaining({ providerId: 'openai', secretRef: 'pa-api-token' })]);
+        expect(config.connections).toEqual([expect.objectContaining({
+            providerId: 'openai', secretRef: 'pa-api-token',
+            endpoints: expect.objectContaining({ chat: 'https://api.openai.com/v1', embedding: 'https://api.openai.com/v1' }),
+            models: expect.objectContaining({ chat: 'gpt-4o-mini', embedding: 'text-embedding-3-small' }),
+        })]);
         expect(config.defaultConnectionId).toBe(config.connections[0].id);
         expect(readPersisted()?.aiConnections).toEqual(config);
         expect(secretStorage.setSecret).not.toHaveBeenCalled();
