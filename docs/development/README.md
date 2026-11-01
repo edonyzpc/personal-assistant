@@ -12,6 +12,7 @@
 - [Pagelet SDD Guide](./workflows/pagelet-sdd-guide.md) — Pagelet feature 的设计与交付规范。
 - [PM Needs Analysis Framework](./workflows/pm-needs-analysis-framework.md) — 产品需求讨论的分阶段分析与决策框架。
 - [UI/UX Review Framework](./workflows/pa-ui-ux-review-framework.md) — 可复用 UI/UX 审计方法。
+- [README 素材准备指南](./workflows/readme-media-production.md) — 已确认展示方案、拍摄分镜、示例入口、截图清单及双语占位替换方法。
 
 ## 验证
 
@@ -26,7 +27,7 @@
 
 ## Engineering Governance
 
-- [GOV-007 README 图文设计与交付契约](./governance/gov-007-readme-experience.md) — 首次体验、公开示例、真实素材与双语文档验收；[最终验收](../archive/2026/b193-readme-validation.md)。
+- [GOV-007 README 图文设计与交付契约](./governance/gov-007-readme-experience.md) — 产品展示、影响力、用户/开发分层、公开示例与双语验收；[原 B-193 历史验收](../archive/2026/b193-readme-validation.md)不代替新素材和展示效果验证。
 - [GOV-006 Lean Delivery And Beta Validation](./governance/gov-006-lean-delivery-and-beta-validation.md) — 验证复用、GLM恢复与beta流水线规则；[最终验证](./governance/gov-006-lean-delivery-and-beta-validation.md#final-validation-and-limits)。
 - [Governance Registry](./governance/README.md) — repo docs lifecycle、Agent workflow、checker、CI/release tooling 与工程授权边界；不定义 PA runtime 或用户产品行为。
 - [GOV-002 Master-First Branch And Beta Packaging](./governance/gov-002-master-first-branch-and-beta-packaging.md) — 所有已接受工作先进入 `master`，BRAT beta 仅从精确 `master` 基线包装。

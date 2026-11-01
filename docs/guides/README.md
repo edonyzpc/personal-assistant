@@ -1,5 +1,6 @@
 # User Guides
 
+- [从阅读积累到分享成果 / From reading to sharing](./reading-to-sharing-demo.md) — 四篇可复制的双语笔记，Agent、拾页、Writing、图片及分享提示与操作。
 - [README 虚构演示笔记 / Fictional example notes](./readme-examples.md) — 可复制的首次任务与关联阅读材料，不含私人数据。
 - [历史演示 / Historical demonstrations](./historical-demos.md) — 旧视频和 GIF 的集中入口，明确退役功能与版本边界。
 - [图片聊天与图文保存](./multimodal-chat-user-guide.md) — B-129 构建的图片入口、版本保存、风格参考及同步设置。

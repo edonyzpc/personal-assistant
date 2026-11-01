@@ -16,7 +16,7 @@ Authority: PA 仓库的 engineering governance/tooling contract 索引；不定�
 | GOV-004 | [测试审计与质量保护设计](./gov-004-test-audit-quality-preservation.md) | Current | B-150 | Focused tests + full Jest coverage gate；[历史验收依据](../../archive/2026/b150-test-audit/final-report.md) |
 | GOV-005 | [质量优先的测试精简](./gov-005-quality-first-test-reduction.md) | Current | B-151 | [B-151 最终验证](../../archive/2026/b151-test-reduction/final-report.md) |
 | GOV-006 | [Lean Delivery And Beta Validation](./gov-006-lean-delivery-and-beta-validation.md) | Current | B-156 | Current rules + release tooling/tests；[最终验证](./gov-006-lean-delivery-and-beta-validation.md#final-validation-and-limits) |
-| GOV-007 | [README 图文设计与交付契约](./gov-007-readme-experience.md) | Current | B-193 | [最终验收](../../archive/2026/b193-readme-validation.md) |
+| GOV-007 | [README 图文设计与交付契约](./gov-007-readme-experience.md) | Current | B-193 | 当前表达契约；[素材准备](../workflows/readme-media-production.md)；[原交付历史验收](../../archive/2026/b193-readme-validation.md) |
 
 ## Boundary
 
