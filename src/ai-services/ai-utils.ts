@@ -19,9 +19,9 @@ import { prepareProviderAdmission, runProviderAdmission } from './provider-admis
 import { onProviderFailedAttempt } from './provider-retry-policy';
 import type { AgentDebugCallScope } from './agent-debug-port';
 import type { PaAgentModelBudgetFacts } from './context/PaAgentContextBudget';
-import { resolveAIConnection } from './ai-connection-resolver';
+import { resolveAIConnection, resolveLegacyAIProviderId } from './ai-connection-resolver';
 import type { AIPurpose, AIConnectionsSettings, AIConnectionResolution } from './ai-connection-types';
-import { isOfficialOpenAITerraTarget, TerraChatOpenAI } from './openai-responses-adapter';
+import { OPENAI_TERRA_MODEL, PaChatOpenAI } from './openai-responses-adapter';
 
 export type ChatTransport = 'obsidian' | 'native';
 
@@ -234,7 +234,7 @@ const DASH_SCOPE_NATIVE_TOOL_CALLING_UNSUPPORTED_MODEL_SIGNALS = [
 
 export const DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] =
     [...buildDashScopeNativeToolCallingValidations(DASHSCOPE_NATIVE_TOOL_CALLING_MODELS),
-        { provider: 'openai', model: 'gpt-4o-mini', baseURL: 'https://api.openai.com/v1' }];
+        { provider: 'openai', model: OPENAI_TERRA_MODEL, baseURL: 'https://api.openai.com/v1' }];
 export interface ProviderRequestOptions {
     agentDebugCall?: AgentDebugCallScope;
     providerRequestScope?: ProviderRequestScope;
@@ -552,45 +552,27 @@ export class AIUtils {
             throwForReadiness(assessAIReadiness(settings, "missing", "chat"));
         }
         const requestOptions = this.bindConnectionRequest('chat', identity, options);
+        const connection = this.getConnectionConfiguration('chat');
+        const providerId = connection?.ok
+            ? connection.connection.providerId
+            : resolveLegacyAIProviderId(baseURL);
+        const protocolPolicy = providerId === 'openai'
+            ? 'responses'
+            : providerId === 'custom' ? 'chat-completions' : 'sdk';
+        const qwenModelKwargs = providerId.startsWith('dashscope-')
+            ? buildQwenModelKwargs(providerId, baseURL, options.qwenRequestOptions)
+            : undefined;
+        const modelFields = {
+            onFailedAttempt: onProviderFailedAttempt,
+            model: modelName,
+            apiKey: token,
+            configuration: this.createOpenAIClientOptions(baseURL, transport, requestOptions),
+            ...(providerId === 'openai' ? {} : { temperature }),
+            ...(typeof options.maxTokens === "number" ? { maxTokens: options.maxTokens } : {}),
+            ...(qwenModelKwargs ? { modelKwargs: qwenModelKwargs } : {}),
+        };
 
-        switch (provider) {
-            case 'qwen': {
-                const modelKwargs = buildQwenModelKwargs(provider, baseURL, options.qwenRequestOptions);
-                return new ChatOpenAI({
-                    onFailedAttempt: onProviderFailedAttempt,
-                    model: modelName,
-                    apiKey: token,
-                    configuration: this.createOpenAIClientOptions(baseURL, transport, requestOptions),
-                    temperature: temperature,
-                    ...(typeof options.maxTokens === "number" ? { maxTokens: options.maxTokens } : {}),
-                    ...(modelKwargs ? { modelKwargs } : {}),
-                });
-            }
-
-            case 'openai': {
-                if (isOfficialOpenAITerraTarget({ provider, model: modelName, baseURL })) {
-                    return new TerraChatOpenAI({
-                        onFailedAttempt: onProviderFailedAttempt,
-                        model: modelName,
-                        apiKey: token,
-                        configuration: this.createOpenAIClientOptions(baseURL, transport, requestOptions),
-                        temperature: temperature,
-                        ...(typeof options.maxTokens === "number" ? { maxTokens: options.maxTokens } : {}),
-                    });
-                }
-                return new ChatOpenAI({
-                    onFailedAttempt: onProviderFailedAttempt,
-                    model: modelName,
-                    apiKey: token,
-                    configuration: this.createOpenAIClientOptions(baseURL, transport, requestOptions),
-                    temperature: temperature,
-                    ...(typeof options.maxTokens === "number" ? { maxTokens: options.maxTokens } : {}),
-                });
-            }
-
-            default:
-                throw new Error(`Unsupported AI provider: ${provider}`);
-        }
+        return new PaChatOpenAI(modelFields, protocolPolicy);
     }
 
     getNativeToolCallingCapability(
@@ -857,7 +839,8 @@ export function buildQwenModelKwargs(
     baseURL: unknown,
     options?: QwenRequestOptions,
 ): QwenModelKwargs | undefined {
-    if (normalizeCapabilityValue(provider) !== "qwen") return undefined;
+    const normalizedProvider = normalizeCapabilityValue(provider);
+    if (normalizedProvider !== "qwen" && !normalizedProvider.startsWith("dashscope-")) return undefined;
     if (!isDashScopeCompatibleBaseURL(baseURL)) return undefined;
     if (options?.enableThinking === undefined) return undefined;
 

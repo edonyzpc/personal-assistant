@@ -245,7 +245,9 @@ async function runScenario(scenario: Scenario | 'ordinary-revoked' | 'history-re
                     name: 'present_writing', args: JSON.stringify({ contextHandle: handle, body: textOverride ?? body, explanation: '' }) }] });
                 if (scenario === 'revoked') styleCurrent = false;
             }
-            yield new AIMessageChunk({ content: '', response_metadata: { finish_reason: scenario === 'incomplete' ? 'length' : 'tool_calls' } });
+            yield new AIMessageChunk({ content: '', response_metadata: {
+                finish_reason: scenario === 'incomplete' && inputs.length > 1 ? 'length' : 'tool_calls',
+            } });
         });
         Object.assign(model, { bindTools: (bound: typeof schemas[number]) => { schemas.push(bound); return model; } });
         return model as unknown as Awaited<ReturnType<AIUtils['createChatModel']>>;

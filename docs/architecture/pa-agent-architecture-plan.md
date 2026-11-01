@@ -8,6 +8,11 @@ Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-a
 
 PA Agent is the current Chat runtime for supported OpenAI-compatible and DashScope-compatible Qwen providers. It is a transparent, cancellable, source-aware assistant for understanding the user's vault.
 
+Provider/SDK 与 PA 结果、harness 的长期分工见
+[AI连接与协议适配职责](./settings-status.md#ai-连接与协议适配的职责原则)。
+当前源码已采用 B-194 的协议选择与共同结果边界；验收及限制见
+[B-194 验收](../archive/2026/b194-sdk-protocol-validation.md)，不代替发布证明。
+
 Default runtime boundary:
 
 - Read-only vault and Obsidian context tools.

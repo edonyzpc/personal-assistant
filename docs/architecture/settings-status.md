@@ -26,6 +26,56 @@ or delivery status.
 以下说明当前源码行为；已完成的开发、双端运行验收与证据边界见
 [B-191 最终验证](../archive/2026/b191-settings-ux-validation.md)，不代表已发布版本。
 
+## AI 连接与协议适配的职责原则
+
+2026-11-01 Owner 确认的长期边界见 [DEC-078](../product/decisions/dec-078-sdk-protocol-and-agent-boundary.md)：
+
+- 连接定义与 resolver 表达用户选择的真实服务和用途；SDK 负责该服务的协议、消息与模型适配。
+- AIUtils 复用同一凭据、请求身份、来源准入、传输和取消路径，协议适配不复制这些机制。
+- PA 在结果边界理解文本、工具、usage与完成／失败，harness控制实际准入及效果；provider完成不等于业务任务完成。
+- 物理请求沿用 SDK 分类与有界退避，Agent 保留现有跨轮恢复；额度不足和 SDK 明确停止优先，限流不触发 stream→invoke 重发。图像错误脱敏仅保留安全状态、重试标记与等待时间，不复制原始响应；每次发送仍由既有来源、连接和取消准入控制。
+- 新抽象以当前消费缺口或具体SDK变化为依据，优先复用SDK，不维护另一份模型路由名单或新增provider平台。
+
+当前源码已按此边界统一连接协议与 SDK 接缝；产品约束见
+[B-194 Product Spec](../product/specs/pa-sdk-protocol-agent-boundary-product-spec.md)，
+已完成升级的证据及限制见 [B-194 验收](../archive/2026/b194-sdk-protocol-validation.md)。
+本节是当前架构，验收记录不是版本发布证明。
+
+### SDK 接缝与恢复职责
+
+当前锁定 `@langchain/core 1.3.2`、`@langchain/openai 1.8.0`，间接 OpenAI SDK 为
+`7.47.0`。`AIUtils` 按真实用途连接创建 `PaChatOpenAI`，不从模型名或兼容投影猜服务。
+OpenAI 使用公开 `useResponsesApi:true`；Custom 在 protected `_useResponsesApi`
+接缝强制 Chat Completions，因为 `false` 本身不能阻止 SDK 的自动选择。
+`withConfig` 保留子类及协议策略，SDK `bindTools` 也经过该派生路径。这个窄接缝与
+具体 SDK 版本耦合，升级时验证实际请求；不直接替换 SDK 的 internal 模型类。
+
+SDK 负责序列化、消息／工具格式及流式转换。`provider-result` 保留原消息并提取
+文本与终态；字符串端口继续接收字符串，不为 SDK 消息扩大所有下游接口。普通
+function tools 通过 SDK 保持 `strict:false` 的可选参数语义，Pagelet 自己的
+`strict:true` 结构化输出独立生效。provider 完成后仍须领域校验及既有执行准入。
+
+当前 SDK 的普通流转换会遗漏 `response.failed`，PA 只在原始流交界补传失败与
+错误码，再让 SDK 继续转换；不复制请求循环。completed 可进入正常结果消费，
+incomplete／failed／缺少终态／取消不能执行缓冲工具、交付成功写入或通过 invoke
+重放未知结果。工具 call ID、usage、拒绝与媒体块保留；`streamWithInvokeFallback`
+及文字辅助使用同一完成规则。
+
+`provider-retry-policy` 先委托 SDK 默认 handler。只有 SDK 明确归为
+`capacity/headerless_429` 且允许重试时才回到既有 AsyncCaller/pRetry，复用原次数、
+指数退避与抖动。SDK 已识别的短等待提示照常处理，过长等待不强行改为 SDK 即时重试。
+SDK 耗尽或流中断后，既有 Loop 继续负责有限跨轮恢复、等待、预算与取消；不增加
+第三套计时器或计数器。SDK 公开的 false 标记及额度停止优先于乐观 true；真实 SSE
+额度错误可能无 HTTP status，仍使用 SDK 默认 handler 的错误码识别，不另抄额度规则。
+图像失败在脱敏前解析事实，只保留安全 status、SDK 重试标记及有限非负等待时间，
+不携带原 message、body、headers 或 cause。重试前仍检查当前来源、连接身份和取消。
+
+连接、发送／工具／结果准入及实际效果分别由原 resolver、harness 和领域 owner
+负责，遵循 [Command Architecture Contract](./pa-agent-architecture-plan.md#command-architecture-contract)。
+OpenAI 显式 `store:false`，每轮组装当前准入历史，不新增远端会话链或响应缓存。
+没有 schema、凭据、历史或 Memory 迁移；回滚需成组恢复源码、依赖锁与相应文档，
+不能仅降级依赖而保留不匹配的适配代码，也不清除用户配置或索引。
+
 ## Current Summary
 
 多服务配置依据 [DEC-077](../product/decisions/dec-077-multi-provider-connections.md)
@@ -59,16 +109,26 @@ or delivery status.
 - resolver仅解析非秘密配置，不读Key。AIUtils的Agent、Policy及全部文字辅助消费者使用实际
   Chat连接；笔记准备/查询使用embedding用途。端点、模型、有效选项、连接及凭据版本构成
   用途请求身份，发送与结果交付检查同一身份；改名和不影响独立用途的默认变化不撤销该用途请求。
-- 2026-10-31 Owner 要求新建 OpenAI 连接的 Chat 默认采用 `gpt-6.1-terra`，不覆盖
-  其它已保存连接的模型。该确切模型在官方端点使用窄 Responses adapter，沿用
-  `createOpenAIClientOptions` 的凭据、来源准入与取消钩子；省略不兼容采样参数，
-  按2026-11-01 Owner后续要求默认 `reasoning.effort=high`，保留SDK最终请求参数中已有的
-  effort，显式 `store:false`。各请求仍重建当前准入的 canonical 语义历史，
-  不新增远端会话或加密推理缓存。adapter 保留文字 invoke 的 string content、函数
-  call_id 与已完成终态；failed／incomplete／缺少终态不作为成功工具执行或文字结果。
-  原模型、非官方端点、embedding 与图片接线保持；不据此承诺所有兼容网关或模型可用。
-  权限与范围见 [产品修订](../product/specs/pa-multi-provider-connections-product-spec.md#2026-10-31-openai-模型与-api-兼容修订)，
-  实际验证见 [OpenAI验收记录](../archive/2026/b193-readme-validation.md#openai-validation)。
+- OpenAI Chat 默认采用 `gpt-6.1-terra`／reasoning high，不覆盖其它已保存连接的模型。
+  当前 [DEC-078](../product/decisions/dec-078-sdk-protocol-and-agent-boundary.md) 将 OpenAI
+  连接的全部聊天用途统一为 Responses，Custom 固定 Chat Completions，DashScope
+  委托 SDK。新 schema 按真实 providerId，旧 schema 按既有官方地址归属，不按模型名、
+  显示 preset 或旧兼容投影切换协议。
+- `PaChatOpenAI` 保持 SDK 模型类关系及 withConfig／bindTools 派生策略，公共工厂
+  沿用 `createOpenAIClientOptions` 的凭据、请求身份、来源准入与取消。SDK 负责请求、
+  消息和流式转换；PA 只在 SDK 丢失必要失败事实时补传，并在共同结果入口解释终态。
+  原 SDK 消息块、usage、拒绝与 call_id 保留，纯文字消费者读取文本投影；不再把所有
+  invoke 消息强制改成 string content。普通工具保留可选参数语义，Pagelet 的显式
+  strict 结构化输出独立保持。
+- OpenAI 通过 SDK 公开配置表达 Terra 的 high 和 `store:false`；真实 OpenAI 连接不
+  注入 PA 内部温度或 top_p，使用 SDK／API 模型默认，不维护逐型号采样例外。
+  Custom／DashScope 保留传入温度；旧非 Terra OpenAI 的内部固定温度改随服务默认，
+  不改已保存配置。各请求重建当前准入的 canonical 历史，不新增远端响应链、Conversations 或
+  加密推理缓存。failed 保留实际错误，incomplete／缺少终态不作为成功工具执行或
+  写入成果；后台 Memory 与独立图片接线不随聊天协议改变。不能由此推定任意模型、
+  网关或账户可用。初版 Terra 适配的历史依据保留于
+  [B-192 产品修订](../product/specs/pa-multi-provider-connections-product-spec.md#2026-10-31-openai-模型与-api-兼容修订)
+  与 [B-193 验收](../archive/2026/b193-readme-validation.md#openai-validation)，升级验收见 [B-194 验收](../archive/2026/b194-sdk-protocol-validation.md)。
 - 2026-11-01 Owner后续要求新建OpenAI连接默认embedding使用 `text-embedding-3-large`，
   维度保持1024。仅修改当前新建连接预置，不改显式保存的small或旧单连接兼容预置，
   不自动切换用途、迁移Memory或调用provider。选型与边界见

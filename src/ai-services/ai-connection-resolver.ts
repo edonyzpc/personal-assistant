@@ -30,6 +30,21 @@ export function isHttpEndpoint(value: string): boolean {
     }
 }
 
+/**
+ * Legacy settings have only an endpoint. Preserve its historical service
+ * ownership; a custom display preset after a model edit is not service identity.
+ */
+export function resolveLegacyAIProviderId(baseURL: string): string {
+    const normalized = baseURL.trim().replace(/\/+$/, "");
+    const knownProviders = ["dashscope-intl", "dashscope-cn", "openai"] as const;
+    for (const providerId of knownProviders) {
+        const definition = getProviderDefinition(providerId);
+        const endpoint = definition?.defaults.endpoints.chat;
+        if (endpoint && endpoint.replace(/\/+$/, "") === normalized) return providerId;
+    }
+    return "custom";
+}
+
 /** Resolve the persisted selection without touching credentials or trying another service. */
 export function resolveAIConnection(
     settings: AIConnectionsSettings | undefined,

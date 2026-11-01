@@ -10,6 +10,7 @@ import {
 } from './agent-debug-observation';
 import type { AgentDebugRunRecorder } from './agent-debug-port';
 import type { PaAgentRunUsageLedger } from './agent-usage-ledger';
+import { assertProviderCompletion } from './provider-result';
 
 const PREPARATION_TIMEOUT_MS = 300_000;
 const UNKNOWN_MODEL_PROMPT_CHAR_FALLBACK = 120_000;
@@ -182,6 +183,7 @@ export async function prepareFeaturedImagePrompt(
         throw error;
     }
     observeAgentDebugResponse(debugCall, result, 'replace', 'provider-usage', 'all');
+    assertProviderCompletion(result);
     const prepared = modelText(result.content);
     if (prepared === null) throw new FeaturedImagePromptPreparationError('nontext_result');
     if (!prepared) throw new FeaturedImagePromptPreparationError('empty_result');

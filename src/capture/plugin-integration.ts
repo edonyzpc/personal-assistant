@@ -5,6 +5,7 @@ import type { PluginMessageKey } from "../locales/plugin";
 import { estimateTokens } from "../pagelet/pa-review-cost";
 import type { DataBoundaryDecision } from "../pa/contracts";
 import type { ReviewQueueCreateInput, ReviewQueueItem, ReviewQueueResult } from "../pa";
+import { assertProviderCompletion, readProviderText } from "../ai-services/provider-result";
 import {
     QuickCaptureService,
     type QuickCapturePostProcessInput,
@@ -113,6 +114,7 @@ export class QuickCapturePluginIntegration {
                 const model = await this.dependencies.createChatModel();
                 if (!model) return null;
                 const result = await model.invoke(prompt);
+                assertProviderCompletion(result);
                 const currentSettings = this.dependencies.getSettings();
                 const text = coerceModelResultToString(result);
                 this.dependencies.recordProviderCost({
@@ -132,6 +134,6 @@ export class QuickCapturePluginIntegration {
 
 function coerceModelResultToString(result: unknown): string {
     if (typeof result === "string") return result;
-    const content = (result as { content?: unknown })?.content;
-    return content != null ? String(content) : String(result);
+    const text = readProviderText(result);
+    return text !== undefined ? text : String(result);
 }

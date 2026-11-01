@@ -354,17 +354,17 @@ function createPageletAgentRuntime(
                         modelRecordedProjection = true;
                         originalRecordPromptProjection(transcript, turnIndex);
                     };
-                    for await (const chunk of model.stream(input)) {
-                        if (!observedProviderOutput) {
-                            observedProviderOutput = true;
-                            if (!modelRecordedProjection) {
-                                // Scripted fixtures model their provider boundary: only
-                                // actual model output turns prepared text into seen body.
-                                context.recordPromptProjection(input.transcript, input.turnIndex);
+                        for await (const chunk of model.stream(input)) {
+                            if (!observedProviderOutput) {
+                                observedProviderOutput = true;
+                                if (!modelRecordedProjection) {
+                                    // Scripted fixtures model their provider boundary: only
+                                    // actual model output turns prepared text into seen body.
+                                    context.recordPromptProjection(input.transcript, input.turnIndex);
+                                }
                             }
+                            yield chunk;
                         }
-                        yield chunk;
-                    }
                 },
             };
         },
@@ -390,6 +390,7 @@ function scriptedModel(onInput?: (input: PaAgentModelInput) => void): PaAgentMod
                     input: { path: 'notes/related.md' },
                     index: 1,
                 };
+                yield { type: 'provider_completion', completion: 'tool_calls' };
                 return;
             }
             yield {
@@ -400,6 +401,7 @@ function scriptedModel(onInput?: (input: PaAgentModelInput) => void): PaAgentMod
                     '而 `notes/related.md` 主张 release directly；这意味着直接发布会增加 risk。',
                 ].join('\n'),
             };
+            yield { type: 'provider_completion', completion: 'stop' };
         },
     };
 }
@@ -427,18 +429,23 @@ function citationCorrectionModel(options: {
                     input: { path: relatedMaterial.path },
                     index: 1,
                 };
+                yield { type: 'provider_completion', completion: 'tool_calls' };
                 return;
             }
             if (
                 input.turnIndex >= 2
                 && input.turnIndex < 2 + (options.emptyCorrectionAttempts ?? 0)
-            ) return;
+            ) {
+                yield { type: 'provider_completion', completion: 'stop' };
+                return;
+            }
             yield {
                 type: 'text_delta',
                 text: input.turnIndex === 1 || options.repeatInvalid
                     ? shortBasenameCitationInsight
                     : groundedCitationInsight,
             };
+            yield { type: 'provider_completion', completion: 'stop' };
         },
     };
 }
@@ -475,6 +482,7 @@ describe('Pagelet autonomous completed text', () => {
             stream: async function* (input) {
                 inputs.push(input);
                 yield { type: 'text_delta', text: 'NO_INSIGHT' };
+                yield { type: 'provider_completion', completion: 'stop' };
             },
         });
         const result = await runtime.run({ anchor: exactLeadAnchor, triggerReason: 'explicit' });
@@ -496,12 +504,16 @@ describe('Pagelet autonomous completed text', () => {
                 inputs.push(input);
                 if (input.turnIndex === 0) {
                     yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
+                    yield { type: 'provider_completion', completion: 'tool_calls' };
                 } else if (input.turnIndex <= bodies.length) {
                     yield { type: 'toolcall_delta', id: `stage-${input.turnIndex}`, name: 'stage_pagelet_insight', input: { insightMarkdown: bodies[input.turnIndex - 1], sourceIds: [anchor.path] }, index: 0 };
+                    yield { type: 'provider_completion', completion: 'tool_calls' };
                 } else if (input.turnIndex === bodies.length + 1) {
                     yield { type: 'toolcall_delta', id: 'continue-search', name: 'search_memory', input: { query: 'follow up after completed texts' }, index: 0 };
+                    yield { type: 'provider_completion', completion: 'tool_calls' };
                 } else {
                     yield { type: 'text_delta', text: terminal };
+                    yield { type: 'provider_completion', completion: 'stop' };
                 }
             },
         });
@@ -530,10 +542,13 @@ describe('Pagelet autonomous completed text', () => {
             stream: async function* (input) {
                 if (input.turnIndex === 0) {
                     yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
+                    yield { type: 'provider_completion', completion: 'tool_calls' };
                 } else if (input.turnIndex === 1) {
                     yield { type: 'toolcall_delta', id: 'stage-complete', name: 'stage_pagelet_insight', input: { insightMarkdown: staged, sourceIds: [anchor.path] }, index: 0 };
+                    yield { type: 'provider_completion', completion: 'tool_calls' };
                 } else if (mode === 'no-insight') {
                     yield { type: 'text_delta', text: 'NO_INSIGHT' };
+                    yield { type: 'provider_completion', completion: 'stop' };
                 } else {
                     yield { type: 'text_delta', text: unfinished };
                     if (mode === 'cancel') parent.abort();
@@ -556,11 +571,17 @@ describe('Pagelet autonomous completed text', () => {
             executeMemorySearch: async input => ({ usedMemory: false, query: input.query, documents: [], sources: [] }),
             captureSourceMaterial: async path => path === anchor.path ? { ...anchor } : null,
             createModel: context => ({ stream: async function* (input) {
-                if (input.turnIndex === 0) yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
-                else if (input.turnIndex === 1) yield { type: 'toolcall_delta', id: 'stage-completed', name: 'stage_pagelet_insight', input: { insightMarkdown: body, sourceIds: [anchor.path] }, index: 0 };
+                if (input.turnIndex === 0) {
+                    yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
+                    yield { type: 'provider_completion', completion: 'tool_calls' };
+                } else if (input.turnIndex === 1) {
+                    yield { type: 'toolcall_delta', id: 'stage-completed', name: 'stage_pagelet_insight', input: { insightMarkdown: body, sourceIds: [anchor.path] }, index: 0 };
+                    yield { type: 'provider_completion', completion: 'tool_calls' };
+                }
                 else {
                     context.recordPromptProjection([], input.turnIndex);
                     yield { type: 'text_delta', text: 'NO_INSIGHT' };
+                    yield { type: 'provider_completion', completion: 'stop' };
                 }
             } }),
         });
@@ -574,10 +595,19 @@ describe('Pagelet autonomous completed text', () => {
     it('freezes each completed text against its actual authoring inputs before later reads', async () => {
         const staged = '## Completed\n`notes/anchor.md` validate first';
         const runtime = runtimeFor({ stream: async function* (input) {
-            if (input.turnIndex === 0) yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
-            else if (input.turnIndex === 1) yield { type: 'toolcall_delta', id: 'stage-before-read', name: 'stage_pagelet_insight', input: { insightMarkdown: staged, sourceIds: [anchor.path] }, index: 0 };
-            else if (input.turnIndex === 2) yield { type: 'toolcall_delta', id: 'read-later', name: 'read_note', input: { path: relatedMaterial.path }, index: 0 };
-            else yield { type: 'text_delta', text: '## Final\n`notes/anchor.md` final response after more reading' };
+            if (input.turnIndex === 0) {
+                yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
+                yield { type: 'provider_completion', completion: 'tool_calls' };
+            } else if (input.turnIndex === 1) {
+                yield { type: 'toolcall_delta', id: 'stage-before-read', name: 'stage_pagelet_insight', input: { insightMarkdown: staged, sourceIds: [anchor.path] }, index: 0 };
+                yield { type: 'provider_completion', completion: 'tool_calls' };
+            } else if (input.turnIndex === 2) {
+                yield { type: 'toolcall_delta', id: 'read-later', name: 'read_note', input: { path: relatedMaterial.path }, index: 0 };
+                yield { type: 'provider_completion', completion: 'tool_calls' };
+            } else {
+                yield { type: 'text_delta', text: '## Final\n`notes/anchor.md` final response after more reading' };
+                yield { type: 'provider_completion', completion: 'stop' };
+            }
         } });
         const result = await runtime.run({ anchor, triggerReason: 'explicit' });
         expect(result.loopResult.status).toBe('completed');
@@ -617,10 +647,19 @@ describe('Pagelet autonomous completed text', () => {
             captureSourceMaterial: async path => path === anchor.path ? { ...anchor } : null,
             webCapabilities: [web.capability],
             createModel: () => ({ stream: async function* (input) {
-                if (input.turnIndex === 0) yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
-                else if (input.turnIndex === 1) yield { type: 'toolcall_delta', id: 'stage-before-web', name: 'stage_pagelet_insight', input: { insightMarkdown: staged, sourceIds: [anchor.path] }, index: 0 };
-                else if (input.turnIndex === 2) yield { type: 'toolcall_delta', id: 'web-after-stage', name: BUILTIN_WEB_SEARCH_TOOL_NAME, input: { query: 'release validation' }, index: 0 };
-                else yield { type: 'text_delta', text: terminal };
+                if (input.turnIndex === 0) {
+                    yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
+                    yield { type: 'provider_completion', completion: 'tool_calls' };
+                } else if (input.turnIndex === 1) {
+                    yield { type: 'toolcall_delta', id: 'stage-before-web', name: 'stage_pagelet_insight', input: { insightMarkdown: staged, sourceIds: [anchor.path] }, index: 0 };
+                    yield { type: 'provider_completion', completion: 'tool_calls' };
+                } else if (input.turnIndex === 2) {
+                    yield { type: 'toolcall_delta', id: 'web-after-stage', name: BUILTIN_WEB_SEARCH_TOOL_NAME, input: { query: 'release validation' }, index: 0 };
+                    yield { type: 'provider_completion', completion: 'tool_calls' };
+                } else {
+                    yield { type: 'text_delta', text: terminal };
+                    yield { type: 'provider_completion', completion: 'stop' };
+                }
             } }),
         });
         let now = 2_000;
@@ -653,11 +692,18 @@ describe('Pagelet autonomous completed text', () => {
         if (cached.status === 'cache-hit') expect(cached.insights).toHaveLength(1);
     });
 
-    it('retains original owner facts for a real metadata no-match observation', async () => {
+        it('retains original owner facts for a real metadata no-match observation', async () => {
         const runtime = runtimeFor({ stream: async function* (input) {
-            if (input.turnIndex === 0) yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
-            else if (input.turnIndex === 1) yield { type: 'toolcall_delta', id: 'metadata-no-match', name: 'search_vault_metadata', input: { query: 'UNMATCHED_SENTINEL_9762' }, index: 0 };
-            else yield { type: 'text_delta', text: '## Complete\n`notes/anchor.md` consider the current question' };
+            if (input.turnIndex === 0) {
+                yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
+                yield { type: 'provider_completion', completion: 'tool_calls' };
+            } else if (input.turnIndex === 1) {
+                yield { type: 'toolcall_delta', id: 'metadata-no-match', name: 'search_vault_metadata', input: { query: 'UNMATCHED_SENTINEL_9762' }, index: 0 };
+                yield { type: 'provider_completion', completion: 'tool_calls' };
+            } else {
+                yield { type: 'text_delta', text: '## Complete\n`notes/anchor.md` consider the current question' };
+                yield { type: 'provider_completion', completion: 'stop' };
+            }
         } });
         const result = await runtime.run({ anchor, triggerReason: 'explicit' });
         const observation = result.loopResult.turns.flatMap(turn => turn.toolResults)
@@ -672,9 +718,16 @@ describe('Pagelet autonomous completed text', () => {
 
     it('retains metadata dependency ancestors omitted from the visible query result', async () => {
         const runtime = runtimeFor({ stream: async function* (input) {
-            if (input.turnIndex === 0) yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
-            else if (input.turnIndex === 1) yield { type: 'toolcall_delta', id: 'query-one', name: 'query_notes', input: { folder: 'notes', limit: 1 }, index: 0 };
-            else yield { type: 'text_delta', text: '## Complete\n`notes/anchor.md` consider the current question' };
+            if (input.turnIndex === 0) {
+                yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
+                yield { type: 'provider_completion', completion: 'tool_calls' };
+            } else if (input.turnIndex === 1) {
+                yield { type: 'toolcall_delta', id: 'query-one', name: 'query_notes', input: { folder: 'notes', limit: 1 }, index: 0 };
+                yield { type: 'provider_completion', completion: 'tool_calls' };
+            } else {
+                yield { type: 'text_delta', text: '## Complete\n`notes/anchor.md` consider the current question' };
+                yield { type: 'provider_completion', completion: 'stop' };
+            }
         } });
         const result = await runtime.run({ anchor, triggerReason: 'explicit' });
         const evidence = result.insightDrafts?.[0].inputEvidence;
@@ -690,9 +743,16 @@ describe('Pagelet autonomous completed text', () => {
     it('revalidates a query aggregate under its original narrower Pagelet source owner', async () => {
         const host = createHost({ 'private/hidden.md': '# Hidden\nOutside the Pagelet boundary' });
         const runtime = runtimeFor({ stream: async function* (input) {
-            if (input.turnIndex === 0) yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
-            else if (input.turnIndex === 1) yield { type: 'toolcall_delta', id: 'query-owner-scope', name: 'query_notes', input: { limit: 1 }, index: 0 };
-            else yield { type: 'text_delta', text: '## Complete\n`notes/anchor.md` consider the current question' };
+            if (input.turnIndex === 0) {
+                yield { type: 'toolcall_delta', id: 'read-anchor', name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
+                yield { type: 'provider_completion', completion: 'tool_calls' };
+            } else if (input.turnIndex === 1) {
+                yield { type: 'toolcall_delta', id: 'query-owner-scope', name: 'query_notes', input: { limit: 1 }, index: 0 };
+                yield { type: 'provider_completion', completion: 'tool_calls' };
+            } else {
+                yield { type: 'text_delta', text: '## Complete\n`notes/anchor.md` consider the current question' };
+                yield { type: 'provider_completion', completion: 'stop' };
+            }
         } }, host);
         const result = await runtime.run({ anchor, triggerReason: 'explicit' });
         const evidence = result.insightDrafts?.[0].inputEvidence;
@@ -728,8 +788,13 @@ describe('Pagelet autonomous completed text', () => {
             captureSourceMaterial: async path => path === leadMaterial.path ? { ...leadMaterial } : path === relatedMaterial.path ? { ...relatedMaterial } : null,
             createModel: () => ({ stream: async function* (input) {
                 inputs.push(input);
-                if (input.turnIndex === 0) yield { type: 'toolcall_delta', id: 'original-search', name: 'search_memory', input: { query: 'frozen query' }, index: 0 };
-                else yield { type: 'text_delta', text: 'NO_INSIGHT' };
+                if (input.turnIndex === 0) {
+                    yield { type: 'toolcall_delta', id: 'original-search', name: 'search_memory', input: { query: 'frozen query' }, index: 0 };
+                    yield { type: 'provider_completion', completion: 'tool_calls' };
+                } else {
+                    yield { type: 'text_delta', text: 'NO_INSIGHT' };
+                    yield { type: 'provider_completion', completion: 'stop' };
+                }
             } }),
         });
         const result = await runtime.run({ anchor, triggerReason: 'explicit' });
@@ -772,9 +837,9 @@ describe('Pagelet autonomous completed text', () => {
                                 (modelOptions.onProviderRequestStart as () => void)();
                                 providerInputs.push(input);
                                 const turn = providerTurn++;
-                                if (turn === 0) return { content: '', tool_calls: [{ id: 'non-anchor-first', name: 'inspect_obsidian_note', args: { path: relatedMaterial.path }, index: 0 }] };
-                                if (turn === 1) return { content: '', tool_calls: [{ id: 'anchor-later', name: 'get_current_note_context', args: { mode: 'full' }, index: 0 }] };
-                                return { content: compatibleNonAnchorTerminal };
+                                if (turn === 0) return { content: '', response_metadata: { finish_reason: 'tool_calls' }, tool_calls: [{ id: 'non-anchor-first', name: 'inspect_obsidian_note', args: { path: relatedMaterial.path }, index: 0 }] };
+                                if (turn === 1) return { content: '', response_metadata: { finish_reason: 'tool_calls' }, tool_calls: [{ id: 'anchor-later', name: 'get_current_note_context', args: { mode: 'full' }, index: 0 }] };
+                                return { content: compatibleNonAnchorTerminal, response_metadata: { finish_reason: 'stop' } };
                             },
                         });
                         return Object.assign(runnable, { bindTools: () => runnable });
@@ -893,6 +958,7 @@ describe('Pagelet agent runtime', () => {
                         type: 'text_delta' as const,
                         text: 'No useful finding survived verification.\nNO_INSIGHT',
                     };
+                    yield { type: 'provider_completion' as const, completion: 'stop' };
                 },
             }),
         });
@@ -1021,9 +1087,11 @@ describe('Pagelet agent runtime', () => {
                                 input: { path: anchor.path },
                                 index: 1,
                             };
+                            yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                             return;
                         }
                         yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                        yield { type: 'provider_completion' as const, completion: 'stop' };
                     },
                 };
             },
@@ -1109,9 +1177,10 @@ describe('Pagelet agent runtime', () => {
                                                 index: 1,
                                             },
                                         ],
+                                        response_metadata: { finish_reason: 'tool_calls' },
                                     };
                                 }
-                                return { content: compatibleNonAnchorTerminal };
+                                return { content: compatibleNonAnchorTerminal, response_metadata: { finish_reason: 'stop' } };
                             },
                         });
                         return Object.assign(runnable, {
@@ -1197,10 +1266,11 @@ describe('Pagelet agent runtime', () => {
                                                 index: 1,
                                             },
                                         ],
+                                        response_metadata: { finish_reason: 'tool_calls' },
                                     };
                                 }
                                 if (mode === 'hidden') await providerStart(config?.signal);
-                                return { content: compatibleNonAnchorTerminal };
+                                return { content: compatibleNonAnchorTerminal, response_metadata: { finish_reason: 'stop' } };
                             },
                         });
                         return Object.assign(runnable, { bindTools: () => runnable });
@@ -1438,9 +1508,11 @@ describe('Pagelet agent runtime', () => {
                             input: { query: 'project launch' },
                             index: 1,
                         };
+                        yield { type: 'provider_completion', completion: 'tool_calls' };
                         return;
                     }
                     yield { type: 'text_delta', text: 'No matching Memory evidence.' };
+                    yield { type: 'provider_completion', completion: 'stop' };
                 },
             }),
             now: (() => {
@@ -1479,6 +1551,7 @@ describe('Pagelet agent runtime', () => {
             createModel: () => ({
                 stream: async function* () {
                     yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                    yield { type: 'provider_completion' as const, completion: 'stop' };
                 },
             }),
         });
@@ -1523,9 +1596,11 @@ describe('Pagelet agent runtime', () => {
                                 input: { query: 'launch' },
                                 index: 0,
                             };
+                            yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                             return;
                         }
                         yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                        yield { type: 'provider_completion' as const, completion: 'stop' };
                     },
                 };
             },
@@ -1575,9 +1650,11 @@ describe('Pagelet agent runtime', () => {
                             input: { query: 'launch' },
                             index: 0,
                         };
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                    yield { type: 'provider_completion' as const, completion: 'stop' };
                 },
             }),
         });
@@ -1618,6 +1695,7 @@ describe('Pagelet agent runtime', () => {
                             releaseResponse = () => { clearTimeout(timer); resolve(); };
                         });
                         yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                        yield { type: 'provider_completion' as const, completion: 'stop' };
                     },
                 }),
             });
@@ -1687,6 +1765,7 @@ describe('Pagelet agent runtime', () => {
                             releaseResponse = () => { clearTimeout(timer); resolve(); };
                         });
                         yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                        yield { type: 'provider_completion' as const, completion: 'stop' };
                     },
                 }),
             });
@@ -1751,6 +1830,7 @@ describe('Pagelet agent runtime', () => {
                             input: { mode: 'full' },
                             index: 1,
                         };
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     if (input.turnIndex === 2) {
@@ -1761,6 +1841,7 @@ describe('Pagelet agent runtime', () => {
                             input: { path: leadMaterial.path },
                             index: 0,
                         };
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     yield {
@@ -1769,6 +1850,7 @@ describe('Pagelet agent runtime', () => {
                             ? supportedExactLeadTerminal
                             : unsupportedExactLeadTerminal,
                     };
+                    yield { type: 'provider_completion' as const, completion: 'stop' };
                 },
             }),
         });
@@ -1808,12 +1890,14 @@ describe('Pagelet agent runtime', () => {
                             input: { query: 'PGL-KITE-507' },
                             index: 0,
                         };
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     yield {
                         type: 'text_delta' as const,
                         text: unsupportedExactLeadTerminal,
                     };
+                    yield { type: 'provider_completion' as const, completion: 'stop' };
                 },
             }),
         });
@@ -1854,6 +1938,7 @@ describe('Pagelet agent runtime', () => {
                             input: { query: 'PGL-KITE-507' },
                             index: 0,
                         };
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     yield {
@@ -1862,6 +1947,7 @@ describe('Pagelet agent runtime', () => {
                             ? unsupportedExactLeadTerminal
                             : 'NO_INSIGHT',
                     };
+                    yield { type: 'provider_completion' as const, completion: 'stop' };
                 },
             }),
         });
@@ -1904,9 +1990,11 @@ describe('Pagelet agent runtime', () => {
                             input: { query: 'PGL-KITE-507' },
                             index: 0,
                         };
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     yield { type: 'text_delta' as const, text: searchOnlyTerminal };
+                    yield { type: 'provider_completion' as const, completion: 'stop' };
                 },
             }),
         });
@@ -1954,6 +2042,7 @@ describe('Pagelet agent runtime', () => {
                             input: { path: relatedMaterial.path },
                             index: 0,
                         };
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     if (input.turnIndex === 2) {
@@ -1964,12 +2053,14 @@ describe('Pagelet agent runtime', () => {
                             input: { mode: 'full' },
                             index: 0,
                         };
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     yield {
                         type: 'text_delta' as const,
                         text: compatibleNonAnchorTerminal,
                     };
+                    yield { type: 'provider_completion' as const, completion: 'stop' };
                 },
             }),
         });
@@ -2068,9 +2159,11 @@ describe('Pagelet agent runtime', () => {
                             input: { query: 'release' },
                             index: 1,
                         } as const;
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     yield { type: 'text_delta', text: 'NO_INSIGHT' } as const;
+                    yield { type: 'provider_completion' as const, completion: 'stop' };
                 },
             }),
         });
@@ -2119,6 +2212,7 @@ describe('Pagelet agent runtime', () => {
                     modelInputs.push(input);
                     if (input.turnIndex >= 2) {
                         yield { type: 'text_delta', text: 'NO_INSIGHT' } as const;
+                        yield { type: 'provider_completion' as const, completion: 'stop' };
                         return;
                     }
                     yield {
@@ -2131,6 +2225,7 @@ describe('Pagelet agent runtime', () => {
                         },
                         index: 0,
                     } as const;
+                    yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                 },
             }),
         });
@@ -2173,6 +2268,7 @@ describe('Pagelet agent runtime', () => {
                 stream: async function* (input: PaAgentModelInput) {
                     modelInputs.push(input);
                     yield { type: 'text_delta', text: 'NO_INSIGHT' } as const;
+                    yield { type: 'provider_completion' as const, completion: 'stop' };
                 },
             }),
             now: () => nowCalls++ < 2 ? 0 : 150_001,
@@ -2224,6 +2320,7 @@ describe('Pagelet agent runtime', () => {
                             input: { mode: 'full' },
                             index: 0,
                         } as const;
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     if (input.turnIndex === 1) {
@@ -2234,6 +2331,7 @@ describe('Pagelet agent runtime', () => {
                             input: { path: 'notes/missing.md' },
                             index: 0,
                         } as const;
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     if (input.turnIndex === 2) {
@@ -2244,9 +2342,11 @@ describe('Pagelet agent runtime', () => {
                             input: { path: relatedMaterial.path },
                             index: 0,
                         } as const;
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     yield { type: 'text_delta', text: 'NO_INSIGHT' } as const;
+                    yield { type: 'provider_completion' as const, completion: 'stop' };
                 },
             }),
         });
@@ -2299,6 +2399,7 @@ describe('Pagelet agent runtime', () => {
                             input: { mode: 'full' },
                             index: 0,
                         } as const;
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     if (input.turnIndex === 1) {
@@ -2309,6 +2410,7 @@ describe('Pagelet agent runtime', () => {
                             argsText: '{"path"',
                             index: 0,
                         } as const;
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     if (input.turnIndex === 2) {
@@ -2319,9 +2421,11 @@ describe('Pagelet agent runtime', () => {
                             input: { path: relatedMaterial.path },
                             index: 0,
                         } as const;
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     yield { type: 'text_delta', text: 'NO_INSIGHT' } as const;
+                    yield { type: 'provider_completion' as const, completion: 'stop' };
                 },
             }),
         });
@@ -2365,6 +2469,7 @@ describe('Pagelet agent runtime', () => {
                     modelInputs.push(input);
                     if (input.turnIndex === 1) {
                         yield { type: 'text_delta', text: 'NO_INSIGHT' } as const;
+                        yield { type: 'provider_completion' as const, completion: 'stop' };
                         return;
                     }
                     yield {
@@ -2374,6 +2479,7 @@ describe('Pagelet agent runtime', () => {
                         input: { content: 'not allowed' },
                         index: 0,
                     } as const;
+                    yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                 },
             }),
         });
@@ -2430,9 +2536,11 @@ describe('Pagelet agent runtime', () => {
                             input: { query: 'related', limit: 5 },
                             index: 0,
                         } as const;
+                        yield { type: 'provider_completion' as const, completion: 'tool_calls' };
                         return;
                     }
                     yield { type: 'text_delta', text: 'NO_INSIGHT' } as const;
+                    yield { type: 'provider_completion' as const, completion: 'stop' };
                 },
             }),
         });

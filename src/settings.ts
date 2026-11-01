@@ -697,7 +697,7 @@ export const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
     openai: {
         label: "OpenAI",
         baseURL: "https://api.openai.com/v1",
-        chatModelName: "gpt-4o-mini",
+        chatModelName: "gpt-6.1-terra",
         embeddingModelName: "text-embedding-3-small",
         description: "OpenAI models via the official API.",
         runtimeProvider: "openai",
@@ -3068,7 +3068,7 @@ export class SettingTab extends PluginSettingTab {
             .setName(this.t("plugin.settings.ai.chatModel.name"))
             .setDesc(this.t("plugin.settings.ai.chatModel.desc"))
             .addText((text) => {
-                text.setPlaceholder("gpt-4o-mini");
+                text.setPlaceholder("gpt-6.1-terra");
                 text.setValue(providerConfiguration.chatModelName);
                 text.onChange((value: string) => {
                     const current = this.getEffectiveAIProviderConfiguration();

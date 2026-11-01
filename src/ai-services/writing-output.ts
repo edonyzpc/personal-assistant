@@ -1,7 +1,8 @@
-import type { ChatWritingContext, ChatWritingRequest, ProviderCompletion } from "./chat-types";
+import type { ChatWritingContext, ChatWritingRequest } from "./chat-types";
 import { escapeTaggedBoundary } from "./agent-utils";
 import { decodeNativeWritingPreview } from "./writing-preview";
 import type { ChatToolProviderSchema } from "./chat-tool-types";
+export { readProviderCompletion } from "./provider-result";
 
 export interface WritingOutputEnvelope {
     kind: "pa.writing";
@@ -140,14 +141,4 @@ export function decodeWritingOutput(rawText: string, request: ChatWritingRequest
             || record.body.length + record.explanation.length > maxTextChars) return undefined;
         return record as unknown as WritingOutputEnvelope;
     } catch { return undefined; }
-}
-
-/** Missing metadata is absent, so a usage-only tail cannot erase an earlier stop. */
-export function readProviderCompletion(value: unknown): ProviderCompletion | undefined {
-    if (!value || typeof value !== "object") return undefined;
-    const metadata = (value as { response_metadata?: unknown }).response_metadata;
-    if (!metadata || typeof metadata !== "object" || !Object.prototype.hasOwnProperty.call(metadata, "finish_reason")) return undefined;
-    const reason = (metadata as { finish_reason?: unknown }).finish_reason;
-    if (reason === undefined || reason === null || reason === "") return undefined;
-    return reason === "stop" || reason === "tool_calls" || reason === "length" || reason === "content_filter" ? reason : "unknown";
 }

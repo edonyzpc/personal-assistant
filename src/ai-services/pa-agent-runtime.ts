@@ -14,6 +14,7 @@ import { agentDebugError, agentDebugNow, createAgentDebugCall, observeAgentDebug
     observeAgentDebugLifecycle, observeAgentDebugPhase, observeAgentDebugResponse, observeAgentDebugToolResult,
     beginAgentDebugResponsePhase, finishAgentDebugResponsePhase } from './agent-debug-observation';
 import { getProviderAdmissionError, ProviderInputReprepareRequiredError } from './provider-admission-error';
+import { allowsProviderInvokeFallback } from './provider-retry-policy';
 import { resolveB125RetrievalOptimizationFlags } from "../retrieval-optimization-platform-policy";
 import { clonePageletChatAttachment, createPageletChatHandoffContext, pageletChatHandoffSourceLifetimeIsCurrent, type PageletChatHandoffContext } from "./pagelet-handoff";
 import { createPageletHistoryTool, READ_PAGELET_ATTACHMENT } from './pagelet-history-tool';
@@ -107,10 +108,12 @@ import {
 } from "./generation-input-snapshot";
 import { CanonicalToLegacyEventAdapter } from "./pa-agent-stream-bridge";
 import { readProviderCompletion, writingOutputInstruction, nativeWritingOutputInstruction, nativeWritingPreparationInstruction, nativeWritingOutputSchema, cloneChatWritingRequest, selectedWritingContext, isValidWritingContextHandle } from "./writing-output";
+import { assertProviderCompletion, ProviderCompletionError } from "./provider-result";
 import { REPORT_TASK_INCOMPLETE, taskIncompleteOutputSchema } from './pa-agent-task-outcome';
 import { NativeWritingCallCollector } from "./native-writing-call";
 import { ChatImageRequestScope, createResolveChatImagesTool, RESOLVE_CHAT_IMAGES } from "./image-request";
-import { ChatImageRequestError, isStructuredImageUnsupportedError, type ChatImageCapability } from "./image-capability";
+import { ChatImageRequestError, createChatImageProviderFailedError,
+    isStructuredImageUnsupportedError, type ChatImageCapability } from "./image-capability";
 import { formatInjectedContext, MEMORY_CONTEXT_MAX_CHARS } from "./context/PaAgentContextProjector";
 import { WRITING_STYLE_MAX_CONTEXT_CHARS } from "../pa/writing-style";
 import { BUNDLED_SKILL_RESOURCES } from "./bundled-skills";
@@ -486,13 +489,19 @@ export const canFallbackToNonStreaming = (
     signal?: AbortSignal,
     canReprepareInput = false,
 ): boolean => {
-    return !receivedAnyVisibleOutput
-        && (!getProviderAdmissionError(error) || (canReprepareInput
-            && getProviderAdmissionError(error) instanceof ProviderInputReprepareRequiredError))
+    if (receivedAnyVisibleOutput) return false;
+    const admission = getProviderAdmissionError(error);
+    // A stale serialized projection is a local boundary fact; fresh Host input may
+    // still make invoke safe even when the transport wrapper looks nonretryable.
+    if (admission) {
+        return canReprepareInput && admission instanceof ProviderInputReprepareRequiredError;
+    }
+    return allowsProviderInvokeFallback(error)
         && !(error instanceof PaAgentContextOverflowError)
         && !isProviderContextOverflow(error)
         && !(error instanceof ChatImageRequestError)
         && !isStructuredImageUnsupportedError(error)
+        && !(error instanceof ProviderCompletionError)
         && !isAbortError(error, signal);
 };
 
@@ -2790,6 +2799,7 @@ export class PaAgentRuntime {
                                 missingReason: 'cancelled_before_delivery' });
                             return undefined;
                         }
+                        assertProviderCompletion(response);
                         observeAgentDebugResponse(summaryCall, response, "replace", "provider-usage", "content_only");
                         observeAgentDebugCall(summaryCall, { phase: "consumer_end", status: "completed",
                             timing: { event: "consumer_end", at: agentDebugNow() } });
@@ -2933,7 +2943,9 @@ export class PaAgentRuntime {
                         new Error('Provider context window exceeded'), { code: 'context_length_exceeded' });
                     options.imageCapability?.onError(error);
                     throw error instanceof ChatImageRequestError ? error
-                        : new ChatImageRequestError(isStructuredImageUnsupportedError(error) ? "unsupported_model" : "provider_failed");
+                        : isStructuredImageUnsupportedError(error)
+                            ? new ChatImageRequestError("unsupported_model")
+                            : createChatImageProviderFailedError(error);
                 } finally {
                     if (!debugConsumerEnded && debugStreamPhaseId) debug('llm_stream:end', { turnId: input.turnId,
                         phaseInstanceId: debugStreamPhaseId, status: debugProviderCompletion ? 'completed' : input.signal?.aborted ? 'cancelled' : 'partial' });

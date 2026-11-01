@@ -31,7 +31,9 @@ Personal Assistant 在笔记库内提供 Chat。选择笔记上下文后，可�
 
 从旧设置升级时，“使用已保存的 Key”让你确认 Key 所属服务并核对保留的配置，不会发送测试请求。不要将保留的 Key 推定为其他服务商的凭据。
 
-Chat 空态也提供标准服务商设置，“Advanced setup”会打开上述设置。保存必需配置后，Chat 显示正常建议提示。协议兼容不代表任意模型都支持工具、图片输入或 embedding。官方 OpenAI 的 `gpt-6.1-terra` 使用 Responses API；自定义中转地址不会继承此适配。
+Chat 空态也提供标准服务商设置，“Advanced setup”会打开上述设置。保存必需配置后，Chat 显示正常建议提示。
+
+OpenAI 连接中选定的聊天模型统一通过 Responses API 用于 Chat 和文字辅助。Custom Chat 固定使用 OpenAI-compatible Chat Completions；DashScope 沿用 SDK 兼容路径与服务参数。协议由保存的服务归属决定，模型名或在 Custom 中填写官方地址不会切换协议。协议兼容仍不代表任意模型都支持工具、图片输入、embedding，或账户具有对应模型权限。
 
 填写凭据前，先检查“笔记与隐私 → PA 可以使用的笔记”和 Memory 设置。首次单笔记任务只需要聊天能力；笔记检索和图片生成分别有自己的服务依赖。若只想先体验选定笔记，请在发送前关闭 Memory 和拾页自动发现。Memory 默认开启，首次 Chat 可能在后台准备允许范围内的笔记，将文本发送到 embedding 服务商并使用 API 额度；本地索引不代表全部在本地处理。
 

@@ -18,6 +18,7 @@ import {
     type APITokenCacheState,
     type QwenRequestOptions,
 } from "./ai-services/ai-utils";
+import { assertProviderCompletion, readProviderText } from "./ai-services/provider-result";
 import { stableStringify } from "./ai-services/agent-utils";
 import {
     ChatService,
@@ -729,6 +730,7 @@ export class PluginManager extends Plugin {
                 return {
                     invoke: async (prompt: string) => {
                         const result = await model.invoke(prompt);
+                        assertProviderCompletion(result);
                         const text = coerceModelResultToString(result);
                         this.pageletCostTracker.record({
                             inputTokens: estimateTokens(prompt),
@@ -6151,6 +6153,7 @@ export class PluginManager extends Plugin {
                 revalidate: requestIsCurrent,
                 reserve: () => this.reservePageletRateLimitSlot(requestIsCurrent),
             });
+            assertProviderCompletion(result);
             const text = coerceModelResultToString(result);
             const inputTokens = estimateTokens(fullPrompt);
             const outputTokens = estimateTokens(text);
@@ -9129,8 +9132,8 @@ export class PluginManager extends Plugin {
 
 function coerceModelResultToString(result: unknown): string {
     if (typeof result === "string") return result;
-    const content = (result as { content?: unknown })?.content;
-    return content != null ? String(content) : String(result);
+    const text = readProviderText(result);
+    return text !== undefined ? text : String(result);
 }
 
 function createStatisticsVaultId(): string {

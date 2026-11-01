@@ -141,7 +141,7 @@ Memory 需要配置 embedding 模型，并在本设备准备。首次准备与�
 
 Memory 为不同检索配置保留独立的本设备 profile。更换 embedding 模型／维度可能需要重新准备；兼容的已有索引可复用，未启用的 profile 不执行付费后台维护。切换 profile 并不天然触发整库上传或重建。
 
-OpenAI 图片生成／编辑只接受官方 `https://api.openai.com/v1`；Wan 识别受支持的 DashScope 端点。Custom 的 Chat／embedding 兼容不提供图片生成适配。[连接设置](./Manual-CN.md#3-配置) · [图片指南](./docs/guides/multimodal-chat-user-guide.md)
+Custom Chat 使用 OpenAI-compatible Chat Completions 接口。OpenAI 图片生成／编辑只接受官方 `https://api.openai.com/v1`；Wan 识别受支持的 DashScope 端点。Custom 的 Chat／embedding 兼容不提供图片生成适配。[连接设置](./Manual-CN.md#3-配置) · [图片指南](./docs/guides/multimodal-chat-user-guide.md)
 
 ### Mobile VSS 验证说明
 

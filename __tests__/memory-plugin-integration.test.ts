@@ -1,9 +1,14 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import type { App, Debouncer } from "obsidian";
+import { AIMessage } from "@langchain/core/messages";
 import { DEFAULT_SETTINGS, type PluginManagerSettings } from "../src/settings";
 import { MemoryUserProfileStore } from "../src/ai-services/memory-extraction";
+import type { CreateModelForExtraction } from "../src/ai-services/memory-extraction/extraction-scheduler";
 import { MemoryStatusNotifier } from "../src/plugin/memory-status";
 import { MemoryPluginIntegration } from "../src/memory/plugin-integration";
+import { PageletCostTracker } from "../src/pagelet/pa-review-cost";
+import { PluginManager } from "../src/plugin";
+import { createPluginHarness } from "./helpers/plugin-harness";
 
 function createStatusNotifier(): MemoryStatusNotifier {
     return new MemoryStatusNotifier({
@@ -15,6 +20,34 @@ function createStatusNotifier(): MemoryStatusNotifier {
 }
 
 describe("MemoryPluginIntegration", () => {
+    it("projects completed SDK text blocks at the plugin extraction model boundary", async () => {
+        const sdkResult = new AIMessage({
+            content: [{ type: "text", text: "projected extraction text" }],
+            response_metadata: { status: "completed", output: [] },
+        });
+        const model = {
+            invoke: jest.fn(async () => sdkResult),
+        };
+        const createChatModel = jest.spyOn(PluginManager.prototype, "createChatModel")
+            .mockResolvedValue(model as unknown as Awaited<ReturnType<PluginManager["createChatModel"]>>);
+        try {
+            const { plugin } = createPluginHarness();
+            (plugin as unknown as { pageletCostTracker: PageletCostTracker }).pageletCostTracker
+                = new PageletCostTracker();
+            const integration = (plugin as unknown as {
+                memoryIntegration: {
+                options: { createExtractionModel: CreateModelForExtraction };
+                };
+            }).memoryIntegration;
+
+            const extractionModel = await integration.options.createExtractionModel();
+            expect(createChatModel).toHaveBeenCalledWith(0, { maxTokens: 256 });
+            expect(await extractionModel?.invoke("extraction prompt")).toBe("projected extraction text");
+        } finally {
+            createChatModel.mockRestore();
+        }
+    });
+
     it("owns one scheduler and stops extraction admission before late resource disposal", async () => {
         jest.useFakeTimers();
         const settings = {

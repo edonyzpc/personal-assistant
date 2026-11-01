@@ -610,7 +610,7 @@ describe('B157 independent context harness contracts (offline)', () => {
                 options.onProviderRequestStart(); attempts++;
                 options.onProviderRequestTrace({ phase: 'http_dispatch', transport: 'native', requestId: `retry-${attempts}` });
                 if (attempts === 1) return new Response('{"error":{"message":"synthetic","type":"rate_limit"}}',
-                    { status: 429, headers: { 'retry-after-ms': '1', 'content-type': 'application/json' } });
+                    { status: 429, headers: { 'retry-after': '0', 'content-type': 'application/json' } });
                 const body = JSON.parse(String(init?.body));
                 return new Response(JSON.stringify({ id: 'completion', object: 'chat.completion', created: 0,
                     model: body.model, choices: [{ index: 0, message: { role: 'assistant', content: '合成回答' }, finish_reason: 'stop' }] }),

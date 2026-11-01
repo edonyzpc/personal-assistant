@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "@jest/globals";
+import { stampRetryable } from "@langchain/core/errors";
 
 import { RUN_SCOPE_TURN_ID } from "../src/ai-services/agent-runtime-primitives";
 import { AgentRunCoordinator } from "../src/ai-services/agent-run-coordinator";
@@ -28,6 +29,7 @@ describe("PaAgentLoop", () => {
             runId: `source-expired-${retrySafety}`, userInput: "Perform this request", maxTurns: 1,
             model: { stream: async function* () {
                 yield { type: "toolcall_delta", id: "call-1", name: "source_tool", input: {}, index: 0 } as const;
+                yield { type: "provider_completion", completion: "tool_calls" } as const;
             } },
             toolExecutor: {
                 getRetrySafety: () => retrySafety,
@@ -71,6 +73,7 @@ describe("PaAgentLoop", () => {
                 modelTurns += 1;
                 yield { type: "toolcall_delta", id: `call-${modelTurns}`, name: "execute_operations",
                     input: { intentId: "intent-1" }, index: 0 } as const;
+                yield { type: "provider_completion", completion: "tool_calls" } as const;
             } },
             toolExecutor: {
                 getRetrySafety: () => "side_effect",
@@ -295,6 +298,7 @@ describe("PaAgentLoop", () => {
                     input.notifyProviderRequestStarted?.();
                     await new Promise(resolve => setTimeout(resolve, 80));
                     yield { type: "text_delta", text: "Answer." };
+                    yield { type: "provider_completion", completion: "stop" } as const;
                 } },
             });
             const pending = loop.run();
@@ -360,6 +364,7 @@ describe("PaAgentLoop", () => {
                         stream: async function* () {
                             await new Promise<void>((resolve) => setTimeout(resolve, 300_001));
                             yield { type: "text_delta", text: "Long response completed." } as const;
+                            yield { type: "provider_completion", completion: "stop" } as const;
                         },
                     }
                     : {
@@ -413,6 +418,7 @@ describe("PaAgentLoop", () => {
                             return;
                         }
                         yield { type: "text_delta", text: "Recovered." } as const;
+                        yield { type: "provider_completion", completion: "stop" } as const;
                     },
                 },
             });
@@ -450,6 +456,7 @@ describe("PaAgentLoop", () => {
                         input.notifyProviderRequestStarted?.();
                         await new Promise<void>((resolve) => setTimeout(resolve, 80));
                         yield { type: "text_delta", text: "Recovered after SDK retry." } as const;
+                        yield { type: "provider_completion", completion: "stop" } as const;
                     },
                 },
             });
@@ -491,6 +498,7 @@ describe("PaAgentLoop", () => {
                         });
                     }
                     yield { type: "text_delta", text: "Recovered." } as const;
+                    yield { type: "provider_completion", completion: "stop" } as const;
                 } },
             });
             const pending = loop.run();
@@ -512,6 +520,86 @@ describe("PaAgentLoop", () => {
         } finally {
             jest.useRealTimers();
         }
+    });
+
+    it("normalizes a plain numeric Retry-After as seconds before SDK classification", async () => {
+        jest.useFakeTimers();
+        try {
+            let attempts = 0;
+            const loop = new PaAgentLoop({
+                runId: "retry-after-numeric-header",
+                userInput: "complete the bounded task",
+                model: { stream: async function* () {
+                    attempts += 1;
+                    if (attempts === 1) {
+                        throw Object.assign(new Error("rate limited"), {
+                            status: 429,
+                            headers: { "retry-after": 2 },
+                        });
+                    }
+                    yield { type: "text_delta", text: "Recovered." } as const;
+                    yield { type: "provider_completion", completion: "stop" } as const;
+                } },
+            });
+            const pending = loop.run();
+            await jest.advanceTimersByTimeAsync(0);
+            expect(attempts).toBe(1);
+            await jest.advanceTimersByTimeAsync(1_999);
+            expect(attempts).toBe(1);
+            await jest.advanceTimersByTimeAsync(1);
+            const result = await pending;
+            expect(result.status).toBe("completed");
+            expect(attempts).toBe(2);
+            expect(result.turns[0].diagnostics).toEqual(expect.arrayContaining([
+                expect.objectContaining({ type: "provider_error", retryAfterMs: 2_000 }),
+            ]));
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("does not surface a non-finite SDK Retry-After hint", async () => {
+        const result = await new PaAgentLoop({
+            runId: "retry-after-infinite-hint",
+            userInput: "complete the bounded task",
+            maxTurns: 1,
+            model: { stream: async function* () {
+                throw Object.assign(new Error("rate limited"), {
+                    status: 429,
+                    headers: { "retry-after": "Infinity" },
+                });
+            } },
+        }).run();
+        const diagnostic = result.turns[0].diagnostics.find(entry => entry.type === "provider_error");
+        expect(diagnostic).toMatchObject({ type: "provider_error", retryable: true });
+        expect(diagnostic).not.toHaveProperty("retryAfterMs");
+    });
+
+    it("does not open a recovery turn for quota even when the SDK retry mark is already true", async () => {
+        let attempts = 0;
+        const quota = Object.assign(new Error("insufficient quota"), {
+            status: 429,
+            code: "insufficient_quota",
+        });
+        stampRetryable(quota, true);
+        const result = await new PaAgentLoop({
+            runId: "quota-sdk-true",
+            userInput: "complete the bounded task",
+            model: { stream: async function* () {
+                attempts += 1;
+                throw quota;
+            } },
+        }).run();
+        expect(result.status).toBe("error");
+        expect(attempts).toBe(1);
+        expect(result.turns).toHaveLength(1);
+        expect(result.turns[0].diagnostics).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: "provider_error",
+                retryable: false,
+                category: "rate_limited",
+            }),
+        ]));
     });
 
     it("surfaces local admission failure from an async generator as a specific terminal diagnostic", async () => {
@@ -552,6 +640,7 @@ describe("PaAgentLoop", () => {
                     expect(await input.prepareForProviderRetry?.()).toBe(input);
                     physicalRequests += 1;
                     yield { type: "text_delta", text: "Accepted answer" } as const;
+                    yield { type: "provider_completion", completion: "stop" } as const;
                 },
             },
         });
@@ -608,9 +697,11 @@ describe("PaAgentLoop", () => {
                             input: { query: "x" },
                             index: 0,
                         } as const;
+                        yield { type: "provider_completion", completion: "tool_calls" } as const;
                         return;
                     }
                     yield { type: "text_delta", text: "Done." } as const;
+                    yield { type: "provider_completion", completion: "stop" } as const;
                 },
             },
             toolExecutor: {
@@ -677,9 +768,11 @@ describe("PaAgentLoop", () => {
                             input: { query: "x" },
                             index: 0,
                         } as const;
+                        yield { type: "provider_completion", completion: "tool_calls" } as const;
                         return;
                     }
                     yield { type: "text_delta", text: "Done." } as const;
+                    yield { type: "provider_completion", completion: "stop" } as const;
                 },
             },
             toolExecutor: {
@@ -725,6 +818,7 @@ describe("PaAgentLoop", () => {
                     stream: async function* (input) {
                         modelInputs.push(input);
                         yield { type: "text_delta", text: "Final answer." } as const;
+                        yield { type: "provider_completion", completion: "stop" } as const;
                     },
                 },
                 hostPolicy: {
@@ -794,9 +888,11 @@ describe("PaAgentLoop", () => {
                                 input: { query: "launch" },
                                 index: 0,
                             } as const;
+                            yield { type: "provider_completion", completion: "tool_calls" } as const;
                             return;
                         }
                         yield { type: "text_delta", text: "Final answer from available context." } as const;
+                        yield { type: "provider_completion", completion: "stop" } as const;
                     },
                 },
                 toolExecutor: {
@@ -853,6 +949,7 @@ describe("PaAgentLoop", () => {
                     stream: async function* (input) {
                         modelInputs.push(input);
                         yield { type: "text_delta", text: "Answer without Memory." } as const;
+                        yield { type: "provider_completion", completion: "stop" } as const;
                     },
                 },
                 hostPolicy: policy,
@@ -902,9 +999,11 @@ describe("PaAgentLoop", () => {
                                 input: { query: "latest launch" },
                                 index: 1,
                             } as const;
+                            yield { type: "provider_completion", completion: "tool_calls" } as const;
                             return;
                         }
                         yield { type: "text_delta", text: "Final answer from partial evidence." } as const;
+                        yield { type: "provider_completion", completion: "stop" } as const;
                     },
                 },
                 toolExecutor: {
@@ -1018,12 +1117,14 @@ describe("PaAgentLoop", () => {
                                 input: { mode: "full" },
                                 index: 1,
                             } as const;
+                            yield { type: "provider_completion", completion: "tool_calls" } as const;
                             return;
                         }
                         yield {
                             type: "text_delta",
                             text: "I cannot verify the requested Memory evidence.",
                         } as const;
+                        yield { type: "provider_completion", completion: "stop" } as const;
                     },
                 },
                 toolExecutor: { execute },
@@ -1089,9 +1190,11 @@ describe("PaAgentLoop", () => {
                             input: { query: "launch" },
                             index: 0,
                         } as const;
+                        yield { type: "provider_completion", completion: "tool_calls" } as const;
                         return;
                     }
                     yield { type: "text_delta", text: "Memory is currently unavailable." } as const;
+                    yield { type: "provider_completion", completion: "stop" } as const;
                 },
             },
             toolExecutor: { execute },
@@ -1135,9 +1238,11 @@ describe("PaAgentLoop", () => {
                             input: { query: "launch" },
                             index: 0,
                         } as const;
+                        yield { type: "provider_completion", completion: "tool_calls" } as const;
                         return;
                     }
                     yield { type: "text_delta", text: "No matching note was found." } as const;
+                    yield { type: "provider_completion", completion: "stop" } as const;
                 },
             },
             toolExecutor: { execute },
@@ -1192,6 +1297,7 @@ describe("PaAgentLoop", () => {
                                 input: { query: "launch" },
                                 index: 0,
                             } as const;
+                            yield { type: "provider_completion", completion: "tool_calls" } as const;
                         }
                     },
                 },
@@ -1267,6 +1373,7 @@ describe("PaAgentLoop", () => {
                                 : { mode: "full" },
                             index: 0,
                         } as const;
+                        yield { type: "provider_completion", completion: "tool_calls" } as const;
                     },
                 },
                 toolExecutor: { execute },
@@ -1486,6 +1593,7 @@ describe("PaAgentLoop", () => {
                     stream: async function* (input) {
                         modelInputs.push(input);
                         yield { type: "text_delta", text: "Final answer." } as const;
+                        yield { type: "provider_completion", completion: "stop" } as const;
                     },
                 },
                 hostPolicy: {
@@ -1561,7 +1669,10 @@ describe("PaAgentLoop", () => {
                         modelInputs.push(input);
                         if (input.toolMode === "final_answer_only") {
                             finalStartedAfterAbort = ordinaryAbortObserved;
-                            return streamChunks([{ type: "text_delta", text: "Final answer." }]);
+                            return streamChunks([
+                                { type: "text_delta", text: "Final answer." },
+                                { type: "provider_completion", completion: "stop" },
+                            ]);
                         }
                         return (async function* () {
                             input.notifyProviderRequestStarted?.();
@@ -1877,6 +1988,7 @@ describe("PaAgentLoop", () => {
                         modelInputs.push(input);
                         if (input.toolMode === "final_answer_only") {
                             yield { type: "text_delta", text: "Safe final answer." } as const;
+                            yield { type: "provider_completion", completion: "stop" } as const;
                             return;
                         }
                         yield* streamWithInvokeFallback({
@@ -2119,6 +2231,7 @@ describe("PaAgentLoop", () => {
                 stream: () => streamChunks([
                     { type: "text_delta", text: "Hello " },
                     { type: "text_delta", text: "world" },
+                    { type: "provider_completion", completion: "stop" },
                 ]),
             },
             createId: createDeterministicId,
@@ -2237,9 +2350,11 @@ describe("PaAgentLoop", () => {
                             input: { query: "周至" },
                             index: 0,
                         } as const;
+                        yield { type: "provider_completion", completion: "tool_calls" } as const;
                         return;
                     }
                     yield { type: "text_delta", text: "Answer from memory." } as const;
+                    yield { type: "provider_completion", completion: "stop" } as const;
                 },
             },
             toolExecutor: {
@@ -2318,6 +2433,7 @@ describe("PaAgentLoop", () => {
             chunks: [
                 { type: "thinking_delta", text: "I should reason first. " },
                 { type: "text_delta", text: "Final answer." },
+                { type: "provider_completion", completion: "stop" },
             ],
         });
 
@@ -2354,6 +2470,7 @@ describe("PaAgentLoop", () => {
                     input: { query: "launch notes" },
                     index: 0,
                 },
+                { type: "provider_completion", completion: "tool_calls" },
             ],
         });
 
@@ -2397,6 +2514,7 @@ describe("PaAgentLoop", () => {
                     type: "text_delta",
                     text: input.turnIndex === 0 ? "First pass. " : "Final pass.",
                 };
+                yield { type: "provider_completion", completion: "stop" } as const;
             },
         };
         let decisions = 0;
@@ -2448,6 +2566,7 @@ describe("PaAgentLoop", () => {
                         type: "text_delta",
                         text: input.turnIndex === 0 ? "Draft." : "Final.",
                     };
+                    yield { type: "provider_completion", completion: "stop" } as const;
                 },
             },
             hostPolicy: {
@@ -2497,6 +2616,7 @@ describe("PaAgentLoop", () => {
                         type: "text_delta",
                         text: input.turnIndex === 0 ? "Draft." : "Final.",
                     };
+                    yield { type: "provider_completion", completion: "stop" } as const;
                 },
             },
             hostPolicy: {
@@ -2683,12 +2803,12 @@ describe("PaAgentLoop", () => {
         expect(committedSnapshots).toEqual([]);
         expect(events.find((event) => event.type === "turn_end")).toMatchObject({
             status: "incomplete",
-            metadata: { diagnostics: [expect.objectContaining({ type: "assistant_empty_response" })] },
+            metadata: { diagnostics: [{ type: "provider_completion_missing" }] },
         });
         expect(events.at(-1)).toMatchObject({
             type: "agent_end",
             status: "incomplete",
-            metadata: { diagnostics: [expect.objectContaining({ type: "assistant_empty_response" })] },
+            metadata: { diagnostics: [{ type: "provider_completion_missing" }] },
         });
     });
 
@@ -2705,7 +2825,11 @@ describe("PaAgentLoop", () => {
         expect(result.committedFinalText).toBe("");
         expect(committedSnapshots).toEqual([]);
         expect(events.at(-1)).toMatchObject({ type: "agent_end", status: "incomplete",
-            metadata: { diagnostics: expect.arrayContaining([{ type: "assistant_empty_response", message: expect.any(String) }]) } });
+            metadata: {
+                diagnostics: [withStop
+                    ? { type: "assistant_empty_response", message: expect.any(String) }
+                    : { type: "provider_completion_missing" }],
+            } });
     });
 
     it("does not treat whitespace followed by idle as a partial answer", async () => {
@@ -2740,8 +2864,13 @@ describe("PaAgentLoop", () => {
             hostPolicy: policy, toolExecutor: { execute: async () => ({ outcome: "success", promptText: "Observed fact" }) },
             model: { stream: async function* (input) {
                 inputs.push(input);
-                if (input.turnIndex === 0) yield { type: "toolcall_delta", id: "read", name: "read_note", input: {}, index: 0 };
-                else yield { type: "text_delta", text: input.turnIndex === 1 || stillBlank ? " \n" : answer };
+                if (input.turnIndex === 0) {
+                    yield { type: "toolcall_delta", id: "read", name: "read_note", input: {}, index: 0 };
+                    yield { type: "provider_completion", completion: "tool_calls" };
+                } else {
+                    yield { type: "text_delta", text: input.turnIndex === 1 || stillBlank ? " \n" : answer };
+                    yield { type: "provider_completion", completion: "stop" };
+                }
             } },
         });
         const result = await loop.run();
@@ -2768,7 +2897,7 @@ describe("PaAgentLoop", () => {
         expect(committedSnapshots).toEqual([]);
         expect(events.find((event) => event.type === "turn_end")).toMatchObject({
             status: "incomplete",
-            metadata: { diagnostics: [expect.objectContaining({ type: "assistant_empty_response" })] },
+            metadata: { diagnostics: [{ type: "provider_completion_missing" }] },
         });
     });
 
@@ -2827,6 +2956,7 @@ describe("PaAgentLoop", () => {
                 { type: "thinking_delta", text: "Thinking. " },
                 { type: "text_delta", text: "Need a tool." },
                 { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "x" }, index: 0 },
+                { type: "provider_completion", completion: "tool_calls" },
             ],
             chunkDelayMs: 1,
             assistantIdleTimeoutMs: 20,
@@ -3074,8 +3204,7 @@ describe("PaAgentLoop", () => {
                         yield { type: "toolcall_delta", id: "call_1", name: "search_memory", argsText: '{"query":', index: 0 } as const;
                         order.push("complete-arguments");
                         yield { type: "toolcall_delta", id: "call_1", name: "search_memory", argsText: '"launch"}', index: 0 } as const;
-                        // Preserve the currently supported EOF tool phase. Native
-                        // tool_calls completion needs a real type-chain change first.
+                        yield { type: "provider_completion", completion: "tool_calls" } as const;
                         order.push("content-phase-ended");
                     },
                 },
@@ -3357,6 +3486,7 @@ describe("PaAgentLoop", () => {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", argsText: "{\"query\":" },
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", argsText: "\"launch\"}", index: 0 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -3437,6 +3567,7 @@ describe("PaAgentLoop", () => {
             model: {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_vault_metadata", input: { query: "x" }, index: 0 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -3489,6 +3620,7 @@ describe("PaAgentLoop", () => {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_2", name: "webSearch", input: { query: "second" }, index: 1 },
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "first" }, index: 0 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -3533,6 +3665,7 @@ describe("PaAgentLoop", () => {
             model: {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "x" }, index: 0 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -3584,9 +3717,11 @@ describe("PaAgentLoop", () => {
                             input: { query: "launch" },
                             index: 0,
                         } as const;
+                        yield { type: "provider_completion", completion: "tool_calls" } as const;
                         return;
                     }
                     yield { type: "text_delta", text: "Final from tool." } as const;
+                    yield { type: "provider_completion", completion: "stop" } as const;
                 },
             },
             toolExecutor: {
@@ -3625,6 +3760,7 @@ describe("PaAgentLoop", () => {
             model: {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", argsText: "{\"query\"", index: 0 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -3664,6 +3800,7 @@ describe("PaAgentLoop", () => {
             input: { query: `q${index + 1}` },
             index,
         }));
+        chunks.push({ type: "provider_completion", completion: "tool_calls" });
         const loop = new PaAgentLoop({
             runId: "run_1",
             userInput: "many tools",
@@ -3710,6 +3847,7 @@ describe("PaAgentLoop", () => {
                     { type: "toolcall_delta", id: "call_2", name: "search_memory", input: { query: "allowed" }, index: 1 },
                     { type: "toolcall_delta", id: "call_3", name: "webSearch", argsText: "{\"query\"", index: 2 },
                     { type: "toolcall_delta", id: "call_4", name: "webSearch", input: { query: "later" }, index: 3 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -3742,6 +3880,7 @@ describe("PaAgentLoop", () => {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "a" }, index: 0 },
                     { type: "toolcall_delta", id: "call_2", name: "webSearch", input: { query: "b" }, index: 1 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -3788,6 +3927,7 @@ describe("PaAgentLoop", () => {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "same" }, index: 0 },
                     { type: "toolcall_delta", id: "call_2", name: "search_memory", input: { query: "same" }, index: 1 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -3839,6 +3979,7 @@ describe("PaAgentLoop", () => {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "read_note", input: { path: "note.md" }, index: 0 },
                     { type: "toolcall_delta", id: "call_2", name: "read_note", input: { path: "note.md" }, index: 1 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -3866,6 +4007,7 @@ describe("PaAgentLoop", () => {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "fail" }, index: 0 },
                     { type: "toolcall_delta", id: "call_2", name: "webSearch", input: { query: "ok" }, index: 1 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -3904,6 +4046,7 @@ describe("PaAgentLoop", () => {
             model: {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "slow" }, index: 0 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -3942,6 +4085,7 @@ describe("PaAgentLoop", () => {
             model: {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "webSearch", input: { query: "blocked" }, index: 0 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -3986,6 +4130,7 @@ describe("PaAgentLoop", () => {
             model: {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: outcome }, index: 0 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -4025,6 +4170,7 @@ describe("PaAgentLoop", () => {
             model: {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "slow" }, index: 0 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -4065,6 +4211,7 @@ describe("PaAgentLoop", () => {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "slow" }, index: 0 },
                     { type: "toolcall_delta", id: "call_2", name: "webSearch", input: { query: "skip" }, index: 1 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -4109,6 +4256,7 @@ describe("PaAgentLoop", () => {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "slow" }, index: 0 },
                     { type: "toolcall_delta", id: "call_2", name: "webSearch", input: { query: "skip" }, index: 1 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -4152,6 +4300,7 @@ describe("PaAgentLoop", () => {
             model: {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "slow" }, index: 0 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -4183,6 +4332,7 @@ describe("PaAgentLoop", () => {
             model: {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "slow" }, index: 0 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -4229,6 +4379,7 @@ describe("PaAgentLoop hybrid tool execution (P0-A)", () => {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "a" }, index: 0 },
                     { type: "toolcall_delta", id: "call_2", name: "search_memory", input: { query: "b" }, index: 1 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -4276,6 +4427,7 @@ describe("PaAgentLoop hybrid tool execution (P0-A)", () => {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "a" }, index: 0 },
                     { type: "toolcall_delta", id: "call_2", name: "write_thing", input: { value: "b" }, index: 1 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -4314,6 +4466,7 @@ describe("PaAgentLoop hybrid tool execution (P0-A)", () => {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "a" }, index: 0 },
                     { type: "toolcall_delta", id: "call_2", name: "search_memory", input: { query: "b" }, index: 1 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -4352,6 +4505,7 @@ describe("PaAgentLoop hybrid tool execution (P0-A)", () => {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "a" }, index: 0 },
                     { type: "toolcall_delta", id: "call_2", name: "search_memory", input: { query: "b" }, index: 1 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -4404,6 +4558,7 @@ describe("PaAgentLoop hybrid tool execution (P0-A)", () => {
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "a" }, index: 0 },
                     { type: "toolcall_delta", id: "call_2", name: "search_memory", input: { query: "b" }, index: 1 },
                     { type: "toolcall_delta", id: "call_3", name: "search_memory", input: { query: "c" }, index: 2 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -4437,6 +4592,7 @@ describe("PaAgentLoop hybrid tool execution (P0-A)", () => {
                 stream: () => streamChunks([
                     { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "same" }, index: 0 },
                     { type: "toolcall_delta", id: "call_2", name: "search_memory", input: { query: "same" }, index: 1 },
+                    { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
             toolExecutor: {
@@ -4592,6 +4748,7 @@ describe("PaAgentLoop final_answer_only executor guard (#8)", () => {
                 stream: async function* (input) {
                     if (input.turnIndex === 0) {
                         yield { type: "text_delta", text: "Draft." };
+                        yield { type: "provider_completion", completion: "stop" } as const;
                     } else {
                         yield {
                             type: "toolcall_delta",
@@ -4600,6 +4757,7 @@ describe("PaAgentLoop final_answer_only executor guard (#8)", () => {
                             input: { query: "should not run" },
                             index: 0,
                         };
+                        yield { type: "provider_completion", completion: "tool_calls" } as const;
                     }
                 },
             },

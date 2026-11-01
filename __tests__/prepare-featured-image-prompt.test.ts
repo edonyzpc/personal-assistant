@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 type PreparedModelInvoke = (
     messages: Array<{ content: unknown }>,
     options?: { signal?: AbortSignal },
-) => Promise<{ content: unknown }>;
+) => Promise<{ content: unknown; response_metadata?: unknown }>;
 const createChatModel = jest.fn<(temperature?: unknown, options?: unknown) => Promise<{ invoke: PreparedModelInvoke }>>();
 jest.mock('../src/ai-services/ai-utils', () => {
     const actual = jest.requireActual<typeof import('../src/ai-services/ai-utils')>('../src/ai-services/ai-utils');
@@ -46,6 +46,7 @@ beforeEach(() => {
 describe('prepareFeaturedImagePrompt', () => {
     it('sends only the exact source and current user request with the Featured system prompt', async () => {
         const invoke = jest.fn<PreparedModelInvoke>(async () => ({
+            response_metadata: { finish_reason: 'stop' },
             content: [{ type: 'text', text: 'PREPARED-IMAGE-SENTINEL' }],
         }));
         createChatModel.mockResolvedValueOnce({ invoke });
@@ -82,7 +83,9 @@ describe('prepareFeaturedImagePrompt', () => {
     });
 
     it('rejects an oversized result after exactly one model invocation', async () => {
-        const invoke = jest.fn<PreparedModelInvoke>(async () => ({ content: 'x'.repeat(5_001) }));
+        const invoke = jest.fn<PreparedModelInvoke>(async () => ({
+            response_metadata: { finish_reason: 'stop' }, content: 'x'.repeat(5_001),
+        }));
         createChatModel.mockResolvedValueOnce({ invoke });
         await expect(prepareFeaturedImagePrompt(host, {
             sourceText: 'source',
@@ -99,6 +102,7 @@ describe('prepareFeaturedImagePrompt', () => {
         host.settings.chatModelName = 'deepseek-v4-pro';
         host.settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
         createChatModel.mockResolvedValueOnce({ invoke: async () => ({
+            response_metadata: { finish_reason: 'stop' },
             content: [{ type: 'text', text: 'DEEPSEEK-PREPARED-SENTINEL' }],
         }) });
         await expect(prepareFeaturedImagePrompt(host, {
@@ -117,7 +121,9 @@ describe('prepareFeaturedImagePrompt', () => {
     ] as const)(
         'rejects %s without serializing it as an image description',
         async (_name, content) => {
-            createChatModel.mockResolvedValueOnce({ invoke: async () => ({ content }) });
+            createChatModel.mockResolvedValueOnce({ invoke: async () => ({
+                response_metadata: { finish_reason: 'stop' }, content,
+            }) });
             await expect(prepareFeaturedImagePrompt(host, {
                 sourceText: 'source',
                 userRequest: '',
@@ -138,6 +144,7 @@ describe('prepareFeaturedImagePrompt', () => {
         };
         const usageLedger = new PaAgentRunUsageLedger();
         createChatModel.mockResolvedValueOnce({ invoke: async () => ({
+            response_metadata: { finish_reason: 'stop' },
             content: 'PREPARED',
             usage_metadata: { input_tokens: 11, output_tokens: 7, total_tokens: 18 },
         }) });

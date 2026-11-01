@@ -1,3 +1,6 @@
+import { readProviderErrorStatus, readProviderRetryAfterMs, resolveProviderRetryable } from "./provider-retry-policy";
+import { stampRetryable } from "@langchain/core/errors";
+
 export type ChatImageCapability = "supported" | "unsupported" | "unknown";
 export interface ChatImageModelIdentity { aiProvider: string; baseURL: string; chatModelName: string; }
 
@@ -45,9 +48,39 @@ export function isStructuredImageUnsupportedError(error: unknown): boolean {
         && /(?:only supported by certain models|(?:model|models).{0,50}(?:does not support|do not support|not support|unsupported))|(?:not supported.{0,30}model)/i.test(message);
 }
 
+interface ChatImageProviderFailureFacts {
+    status?: number;
+    retryAfterMs?: number;
+    retryable: boolean;
+}
+
 /** Never forward SDK error bodies which can echo full serialized image requests. */
 export class ChatImageRequestError extends Error {
-    constructor(public readonly code: "unsupported_model" | "source_unavailable" | "image_budget" | "provider_failed" | "request_changed") {
+    constructor(
+        public readonly code: "unsupported_model" | "source_unavailable" | "image_budget" | "provider_failed" | "request_changed",
+        providerFailure?: ChatImageProviderFailureFacts,
+    ) {
         super(`chat_images:${code}`); this.name = "ChatImageRequestError";
+        if (providerFailure?.status !== undefined) this.status = providerFailure.status;
+        if (providerFailure?.retryAfterMs !== undefined) this.retryAfterMs = providerFailure.retryAfterMs;
+        if (providerFailure !== undefined) {
+            this.retryable = providerFailure.retryable;
+            stampRetryable(this, providerFailure.retryable);
+        }
     }
+
+    /** Normalized provider transport facts only; never a raw SDK error/body/header carrier. */
+    readonly status?: number;
+    readonly retryAfterMs?: number;
+    readonly retryable?: boolean;
+}
+
+export function createChatImageProviderFailedError(error: unknown): ChatImageRequestError {
+    const status = readProviderErrorStatus(error);
+    const retryAfterMs = readProviderRetryAfterMs(error);
+    return new ChatImageRequestError("provider_failed", {
+        ...(status === undefined ? {} : { status }),
+        ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+        retryable: resolveProviderRetryable(error),
+    });
 }

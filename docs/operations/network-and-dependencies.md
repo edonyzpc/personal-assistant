@@ -26,6 +26,8 @@ In stable 3.0.4, Chat image generation/editing uses supported Wan connections. C
 
 Personal Assistant does not upload telemetry or analytics. The old capability-usage toggle has been retired; the [local usage-event document](../operations/pa-agent-telemetry-baseline.md) is engineering background, not a current Settings instruction. By default, Statistics history is stored in local Obsidian app storage on the current device and is not uploaded by the plugin. If you enable cross-device Statistics history, the plugin creates vault-visible Statistics history files so your normal vault sync can carry them; Git users will see those files change.
 
+OpenAI Chat and text assistance use Responses with explicit `store:false`; PA assembles the currently permitted history for each request and does not use a remote response chain or Conversations. This does not promise zero provider logging or ZDR eligibility. Custom Chat stays on Chat Completions; DashScope uses the SDK's compatible route. This SDK upgrade adds no Memory preparation trigger; existing first-use and background behavior remains described below.
+
 | Feature | Trigger | Data sent | Destination | Background? | User control |
 | --- | --- | --- | --- | --- | --- |
 | Chat | You send a message | Prompt; selected note/tool context, Memory search query and excerpts when enabled; processed copies of attached images when the Chat model supports images | Configured AI provider | No | Provider, chat, Memory, and attachment controls |
@@ -89,6 +91,8 @@ The local VSS SQLite/WASM backend has been smoke-tested on Obsidian Desktop and 
 ### 网络与隐私说明
 
 Personal Assistant 不上传 telemetry 或 analytics。旧能力使用统计开关已退役；[本地使用事件文档](../operations/pa-agent-telemetry-baseline.md)作为工程背景保留，不代表当前设置入口。默认情况下，Statistics history 存储在当前设备的本地 Obsidian app storage 中，插件不会上传这些统计数据。如果你开启跨设备同步 Statistics history，插件会创建 vault-visible 的 Statistics history 文件，让你已有的 vault sync 机制同步这些文件；Git 用户会看到这些文件变化。
+
+OpenAI Chat 与文字辅助使用 Responses，并显式设置 `store:false`；PA 每轮组装当前允许的历史，不使用远端响应链或 Conversations。这不承诺服务商零日志或具有 ZDR 资格。Custom Chat 固定使用 Chat Completions，DashScope 沿用 SDK 兼容路径。本次 SDK 升级不新增 Memory 准备触发；既有首次准备和后台行为仍见下表。
 
 | 功能 | 触发条件 | 发送的数据 | 目标位置 | 是否后台 | 用户控制 |
 | --- | --- | --- | --- | --- | --- |

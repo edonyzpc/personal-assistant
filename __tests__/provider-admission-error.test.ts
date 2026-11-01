@@ -67,12 +67,15 @@ describe('physical provider admission with the installed SDK', () => {
     });
 
     it.each([429, 500])('retains HTTP %s retries and rechecks admission for each dispatch', async status => {
-        network.mockResolvedValueOnce(new Response('{"error":{"message":"retry"}}', { status, headers: { 'content-type': 'application/json' } }))
+        const retryHeaders: Record<string, string> = status === 429
+            ? { 'content-type': 'application/json', 'retry-after': '0' }
+            : { 'content-type': 'application/json' };
+        network.mockResolvedValueOnce(new Response('{"error":{"message":"retry"}}', { status, headers: retryHeaders }))
             .mockResolvedValueOnce(new Response(successBody, { status: 200, headers: { 'content-type': 'application/json' } }));
         const admission = jest.fn();
         const prepare = jest.fn(async () => undefined);
         const model = await utils.createChatModel(0, { transport: 'native', prepareProviderRequest: prepare, onProviderRequestStart: admission });
-        const result = model.invoke('fixture');
+        const result = model.invoke('fixture').catch(error => error);
         await jest.runAllTimersAsync();
         expect((await result).content).toBe('Answer');
         expect(network).toHaveBeenCalledTimes(2);
@@ -80,8 +83,46 @@ describe('physical provider admission with the installed SDK', () => {
         expect(prepare).toHaveBeenCalledTimes(2);
     });
 
+    it('retries a headerless SDK 429 after real non-zero backoff and re-admits the retry', async () => {
+        network.mockResolvedValueOnce(new Response('{"error":{"message":"rate limited without a hint"}}', {
+            status: 429, headers: { 'content-type': 'application/json' },
+        })).mockResolvedValueOnce(new Response(successBody, { status: 200, headers: { 'content-type': 'application/json' } }));
+        const admission = jest.fn();
+        const prepare = jest.fn(async () => undefined);
+        const model = await utils.createChatModel(0, { transport: 'native', prepareProviderRequest: prepare, onProviderRequestStart: admission });
+        const result = model.invoke('fixture');
+        await jest.advanceTimersByTimeAsync(0);
+        expect(network).toHaveBeenCalledTimes(1);
+        expect(admission).toHaveBeenCalledTimes(1);
+        expect(prepare).toHaveBeenCalledTimes(1);
+        await jest.advanceTimersByTimeAsync(1);
+        expect(network).toHaveBeenCalledTimes(1);
+        await jest.runAllTimersAsync();
+        expect(await result).toMatchObject({ content: 'Answer' });
+        expect(network).toHaveBeenCalledTimes(2);
+        expect(admission).toHaveBeenCalledTimes(2);
+        expect(prepare).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+        ['quota', { code: 'insufficient_quota', retryAfter: undefined }],
+        ['long Retry-After', { code: 'rate_limit_exceeded', retryAfter: '61' }],
+    ] as const)('does not give a %s 429 to the SDK physical retry loop', async (name, failure) => {
+        void name;
+        network.mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: failure.code, message: failure.code } }), {
+            status: 429,
+            headers: { 'content-type': 'application/json', ...(failure.retryAfter ? { 'retry-after': failure.retryAfter } : {}) },
+        }));
+        const model = await utils.createChatModel(0, { transport: 'native', onProviderRequestStart: jest.fn() });
+        const result = model.invoke('fixture').catch(error => error);
+        await jest.runAllTimersAsync();
+        await expect(await result).toMatchObject({ status: 429 });
+        expect(network).toHaveBeenCalledTimes(1);
+    });
+
     it('stops a network retry if admission is revoked before its dispatch', async () => {
-        network.mockResolvedValueOnce(new Response('{"error":{"message":"retry"}}', { status: 429, headers: { 'content-type': 'application/json' } }));
+        network.mockResolvedValueOnce(new Response('{"error":{"message":"retry"}}', { status: 429,
+            headers: { 'content-type': 'application/json', 'retry-after': '0' } }));
         const admission = jest.fn().mockImplementationOnce(() => undefined).mockImplementation(() => { throw new Error('sources revoked'); });
         const model = await utils.createChatModel(0, { transport: 'native', onProviderRequestStart: admission });
         const result = model.invoke('fixture').catch(error => error);

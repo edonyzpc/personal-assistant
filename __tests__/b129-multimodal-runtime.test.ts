@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
-import { BaseMessage } from "@langchain/core/messages";
+import { AIMessage, BaseMessage, HumanMessage } from "@langchain/core/messages";
 import { ChatOpenAI } from "@langchain/openai";
 import { AIUtils, type CreateChatModelOptions } from "../src/ai-services/ai-utils";
 import * as aiUtilsModule from '../src/ai-services/ai-utils';
@@ -32,7 +32,8 @@ const image = (n: number): MessageImage => ({ ref: { assetId: `image-${n}`, cont
 const envelope = (body = '正文："海风"\n🌊') => JSON.stringify({ kind: "pa.writing", version: 1, requestId: "writing-1", body, explanation: "参考当前材料" });
 type RequestBody = { stream?: boolean; messages: Array<{ role: string; content: string | Array<Record<string, unknown>> }>; tools?: Array<{ function: { name: string } }> };
 type FixtureTool = { name: string; input: unknown };
-type Reply = { text?: string; finish?: string | null; tool?: FixtureTool; tools?: FixtureTool[]; error?: unknown; httpError?: { status: number; code: string; retryAfter?: string };
+type Reply = { text?: string; finish?: string | null; tool?: FixtureTool; tools?: FixtureTool[]; error?: unknown;
+    streamError?: { code: string; message?: string }; httpError?: { status: number; code: string; retryAfter?: string };
     usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; onEnd?: () => void };
 const writingScene = { writingTask: 'copywriting', purpose: 'social_share', audience: 'friends', domain: 'travel' };
 const latestHistoryTurn = (): ChatMessage[] => [
@@ -73,6 +74,12 @@ function nativeWritingOptions(prepare: StructuredStylePreparation, candidates: W
 }
 const response = (body: RequestBody, reply: Reply): Response => {
     if (reply.error) throw reply.error;
+    if (reply.streamError) {
+        if (!body.stream) throw new Error("The SSE error fixture requires a stream request");
+        return new Response(`data: ${JSON.stringify({
+            error: { code: reply.streamError.code, message: reply.streamError.message ?? "Provider stream failed" },
+        })}\n\n`, { headers: { "content-type": "text/event-stream" } });
+    }
     if (reply.httpError) return new Response(JSON.stringify({ error: { code: reply.httpError.code, message: "Request rejected; echoed data:image/jpeg;base64,SECRET" } }), {
         status: reply.httpError.status, headers: { "content-type": "application/json", ...(reply.httpError.retryAfter ? { "retry-after": reply.httpError.retryAfter } : {}) },
     });
@@ -997,7 +1004,8 @@ describe('B-135 T14 selected-image history summary', () => {
                 else current = false;
                 return { content: 'LATE_CANCELLED_SUMMARY',
                     additional_kwargs: { reasoning_content: 'LATE_CANCELLED_REASON' },
-                    usage_metadata: { input_tokens: 5, output_tokens: 2 } };
+                    usage_metadata: { input_tokens: 5, output_tokens: 2 },
+                    response_metadata: { finish_reason: 'stop' } };
             },
             }) as never;
         });
@@ -1264,6 +1272,108 @@ it('B-135 T14 preserves published Writing context when Memory grows beyond the o
 });
 
 describe("B-129 production runtime with real ChatOpenAI/bindTools and offline transport", () => {
+    it('B-194 sends a production OpenAI image and text request through Responses with admitted history', async () => {
+        const imageDataUrl = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+        let admitted = 0;
+        let requestBody: Record<string, unknown> | undefined;
+        const fetcher = jest.fn(async (url: string | URL, init?: RequestInit) => {
+            expect(String(url)).toBe('https://api.openai.com/v1/responses');
+            requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            return new Response(JSON.stringify({
+                id: 'resp-b194-image', object: 'response', created_at: 0, status: 'completed',
+                model: 'gpt-6.1-terra', error: null, incomplete_details: null,
+                output: [{ id: 'msg-b194', type: 'message', status: 'completed', role: 'assistant',
+                    content: [{ type: 'output_text', text: 'image and text observed', annotations: [] }] }],
+                usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
+                output_text: 'image and text observed',
+            }), { headers: { 'content-type': 'application/json' } });
+        }) as typeof fetch;
+        globalThis.fetch = fetcher;
+        const host = {
+            settings: { aiProvider: 'openai', baseURL: 'https://api.openai.com/v1',
+                chatModelName: 'gpt-6.1-terra', embeddingModelName: 'text-embedding-3-small' },
+            getAPIToken: async () => 'offline-token', log: jest.fn(),
+        };
+        const model = await new AIUtils(host as never).createChatModel(0, {
+            transport: 'native', maxTokens: 80,
+            prepareProviderRequest: () => { admitted += 1; },
+        });
+        const response = await model.invoke([
+            new HumanMessage('Allowed prior request'),
+            new AIMessage('Allowed prior answer'),
+            new HumanMessage({
+                content: [
+                    { type: 'text', text: 'Describe the synthetic image with the allowed prior rule.' },
+                    { type: 'image_url', image_url: { url: imageDataUrl } },
+                ],
+            }),
+        ]);
+
+        expect(response.text).toBe('image and text observed');
+        expect(admitted).toBe(1);
+        expect(requestBody).toMatchObject({ store: false, stream: false, model: 'gpt-6.1-terra' });
+        expect(requestBody).not.toHaveProperty('previous_response_id');
+        const input = requestBody?.input as Array<Record<string, unknown>>;
+        expect(input.map(item => [item.role, item.type])).toEqual([
+            ['user', 'message'], ['assistant', 'message'], ['user', 'message'],
+        ]);
+        const finalContent = input[2].content as Array<Record<string, unknown>>;
+        expect(finalContent).toEqual([
+            { type: 'input_text', text: 'Describe the synthetic image with the allowed prior rule.' },
+            { type: 'input_image', image_url: imageDataUrl },
+        ]);
+    });
+
+    it.each([false, true])('B-194 recovers a stream 429 across Loop turns for text and image requests without invoke duplication', async withImage => {
+        const f = fixture((_request, index) => {
+            if (index === 0) return { httpError: { status: 429, code: 'rate_limit_exceeded', retryAfter: '0.001' } };
+            return { text: withImage ? 'Recovered with the image.' : 'Recovered text.' };
+        });
+        await f.run({ images: withImage ? [image(1)] : [], prompt: withImage ? '请描述图片' : '请继续文字任务' });
+        expect(f.requests.map(request => request.stream)).toEqual([true, true]);
+        if (withImage) {
+            expect(f.requests.map(request => pixels(request))).toEqual([[expect.anything()], [expect.anything()]]);
+        }
+        const failedTurn = f.lifecycle.find((event): event is Extract<AgentEvent, { type: 'turn_end' }> =>
+            event.type === 'turn_end' && event.status === 'error');
+        expect(failedTurn?.metadata).toMatchObject({ diagnostics: expect.arrayContaining([
+            expect.objectContaining({ type: 'provider_error', retryable: true, category: 'rate_limited', retryAfterMs: 1 }),
+        ]) });
+        if (withImage) {
+            expect(JSON.stringify([f.events, f.lifecycle, f.host.log.mock.calls])).not.toMatch(/SECRET|data:image|base64/);
+        }
+    });
+
+    it.each([false, true])('B-194 does not recover quota for text or image requests and sanitizes the image failure', async withImage => {
+        const f = fixture([{ httpError: { status: 429, code: 'insufficient_quota', retryAfter: '0.001' } }]);
+        await expect(f.run({ images: withImage ? [image(1)] : [], prompt: withImage ? '请描述图片' : '请继续文字任务' }))
+            .rejects.toThrow();
+        expect(f.requests.map(request => request.stream)).toEqual([true]);
+        const failedTurn = f.lifecycle.find((event): event is Extract<AgentEvent, { type: 'turn_end' }> =>
+            event.type === 'turn_end' && event.status === 'error');
+        expect(failedTurn?.metadata).toMatchObject({ diagnostics: expect.arrayContaining([
+            expect.objectContaining({ type: 'provider_error', retryable: false, category: 'rate_limited', retryAfterMs: 1 }),
+        ]) });
+        if (withImage) {
+            expect(JSON.stringify([f.events, f.lifecycle, f.host.log.mock.calls])).not.toMatch(/SECRET|data:image|base64/);
+        }
+    });
+
+    it.each([false, true])('B-194 stops a real SSE quota frame for text or image requests without invoke recovery', async withImage => {
+        const f = fixture([{ streamError: { code: 'insufficient_quota', message: 'You exceeded your current quota' } }]);
+        await expect(f.run({ images: withImage ? [image(1)] : [], prompt: withImage ? '请描述图片' : '请继续文字任务' }))
+            .rejects.toThrow();
+        expect(f.requests.map(request => request.stream)).toEqual([true]);
+        const failedTurn = f.lifecycle.find((event): event is Extract<AgentEvent, { type: 'turn_end' }> =>
+            event.type === 'turn_end' && event.status === 'error');
+        expect(failedTurn?.metadata).toMatchObject({ diagnostics: expect.arrayContaining([
+            expect.objectContaining({ type: 'provider_error', retryable: false }),
+        ]) });
+        if (withImage) {
+            expect(JSON.stringify([f.events, f.lifecycle, f.host.log.mock.calls])).not.toMatch(/SECRET|data:image|base64/);
+        }
+    });
+
     it('B-135 blocks a summary SDK retry after the request epoch changes', async () => {
         let current = true;
         const f = fixture((_body, index) => {
@@ -1369,7 +1479,9 @@ describe("B-129 production runtime with real ChatOpenAI/bindTools and offline tr
     it.each(["length", "content_filter", null, "other-reason"])("does not promote legal JSON with provider completion %s", async (finish) => {
         const f = fixture([{ text: envelope(), finish }]); await f.run({ writingRequest: { requestId: "writing-1" } });
         expect(f.events.some((event) => event.kind === "writing-artifact" || event.kind === "answer-snapshot")).toBe(false);
-        expect(f.events.find((event) => event.kind === "writing-recovery")).toMatchObject({ rawText: envelope(), reason: "provider_incomplete" });
+        expect(f.events.find((event) => event.kind === "writing-recovery")).toMatchObject({
+            rawText: envelope(), reason: finish === null ? "incomplete" : "provider_incomplete",
+        });
     });
 
     it.each(['completed', 'provider_incomplete', 'source_changed'] as const)('keeps the host completion and source guards for a single JSON fence: %s', async (state) => {

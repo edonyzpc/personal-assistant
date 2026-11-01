@@ -721,6 +721,7 @@ describe("Chat scoped Debug observation", () => {
         const createChatModel = jest.fn(async () => RunnableLambda.from(async () => ({
             content: '{"keywords":"source;planning","temporal":"none"}',
             usage_metadata: { input_tokens: 17, output_tokens: 4 },
+            response_metadata: { finish_reason: "stop" },
         })));
         const tool = new MemorySearchTool({ settings: { debug: true, aiProvider: "test" } } as never, { createChatModel } as never);
         const invokeRewrite = tool as unknown as { rewriteQueryWithTimeout(query: string, model: string, signal?: AbortSignal,

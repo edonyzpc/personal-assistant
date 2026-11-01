@@ -1780,6 +1780,7 @@ describe("MemorySearchTool searchVss contract", () => {
                         ranking: [0, 1],
                         needsMoreEvidence: true,
                     }),
+                    response_metadata: { finish_reason: "stop" },
                 };
             })),
             cleanMarkdownContent: jest.fn((content: string) => content),

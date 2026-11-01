@@ -321,6 +321,7 @@ describe('complete tool batch Host preflight', () => {
                 for (const [index, name] of ['load_skill', 'get_current_note_context', 'search_memory'].entries()) {
                     yield { type: 'toolcall_delta', id: `call-${index}`, name, input: { query: 'public' }, index } as const;
                 }
+                yield { type: 'provider_completion', completion: 'tool_calls' } as const;
             } },
             onEvent: event => {
                 if (event.type === 'message_end' && event.message.role === 'toolResult') {
@@ -410,6 +411,7 @@ describe('complete tool batch Host preflight', () => {
             maxTurns: 3, maxToolCalls: 2,
             model: { stream: async function* () {
                 yield { type: 'toolcall_delta', id: 'repeated', name: 'search_memory', input: { query: 'same' }, index: 0 } as const;
+                yield { type: 'provider_completion', completion: 'tool_calls' } as const;
             } }, toolExecutor: { execute, preflightBatch: () => denied },
             hostPolicy: { afterTurn: () => ({ action: 'continue', reason: 'corrective_turn' }) },
             onEvent: (event) => events.push(event),

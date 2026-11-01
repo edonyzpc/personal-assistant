@@ -422,6 +422,7 @@ describe("Operations Agent direct runtime", () => {
                         input: { mode: "apply", path: "0.unsorted/timeout.md", content: "pending" },
                         index: 0,
                     } as const;
+                    yield { type: "provider_completion", completion: "tool_calls" } as const;
                 },
             },
             toolExecutor: executor,
@@ -479,6 +480,7 @@ describe("Operations Agent direct runtime", () => {
                         input: { mode: "apply", path: "0.unsorted/abort.md", content: "pending" },
                         index: 0,
                     } as const;
+                    yield { type: "provider_completion", completion: "tool_calls" } as const;
                 },
             },
             toolExecutor: createOperationsStagingToolExecutor({

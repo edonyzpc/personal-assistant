@@ -194,8 +194,10 @@ describe('Ghost action continuity (controlled Ghost responses and recorded model
         const model = { bindTools: (schemas: unknown) => { boundSchemas.push(schemas); return model; }, stream: async function* (input: unknown) {
             providerInputs.push(input);
             if (dispatch++ === 0) yield { tool_call_chunks: [{ index: 0, id: 'b157-real-prepare-call',
-                name: 'prepare_ghost_post', args: JSON.stringify({ intent: 'prepare' }) }] };
-            else yield { content: 'Use the publishing card to verify its status.' };
+                name: 'prepare_ghost_post', args: JSON.stringify({ intent: 'prepare' }) }],
+                response_metadata: { finish_reason: 'tool_calls' as const } };
+            else yield { content: 'Use the publishing card to verify its status.',
+                response_metadata: { finish_reason: 'stop' as const } };
         } };
         mockCreateChatModel.mockResolvedValue(model);
         const chat = new ChatService(host as unknown as ConstructorParameters<typeof ChatService>[0]);

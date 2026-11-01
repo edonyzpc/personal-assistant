@@ -15,6 +15,7 @@ import {
     type PageletReviewInput,
     type PageletReviewOutcome,
 } from "../src/pagelet";
+import { PaChatOpenAI } from "../src/ai-services/openai-responses-adapter";
 
 // ---------------------------------------------------------------------------
 // Test harness — three flavors of mock model:
@@ -66,7 +67,7 @@ function makeStructuredModel(steps: StructuredStep[]): StructuredModelHarness {
         invoke: jest.fn(async (input: unknown) => {
             harness.invokeInvocations += 1;
             harness.capturedInvokeInputs.push(input);
-            return { content: "" };
+            return { content: "", response_metadata: { finish_reason: "stop" } };
         }),
         withStructuredOutput: (schema: unknown, options?: unknown) => {
             harness.capturedStructuredSchemas.push(schema);
@@ -78,7 +79,10 @@ function makeStructuredModel(steps: StructuredStep[]): StructuredModelHarness {
                     const step = queue.shift();
                     if (!step) throw new Error("structured queue exhausted (test bug)");
                     if (step.kind === "throw") throw step.error;
-                    return step.payload as never;
+                    return {
+                        parsed: step.payload,
+                        raw: { response_metadata: { finish_reason: "stop" } },
+                    } as never;
                 },
             };
         },
@@ -108,7 +112,7 @@ function makeJsonModeOnlyModel(steps: InvokeStep[]): JsonModeHarness {
             const step = queue.shift();
             if (!step) throw new Error("invoke queue exhausted (test bug)");
             if (step.kind === "throw") throw step.error;
-            return { content: step.content };
+            return { content: step.content, response_metadata: { finish_reason: "stop" } };
         }),
         // NOTE: deliberately no withStructuredOutput — simulates provider gap.
     };
@@ -161,6 +165,101 @@ function validResultPayload(overrides: Record<string, unknown> = {}) {
 // ---------------------------------------------------------------------------
 
 describe("PageletReviewModel — happy path (structured output, 3 provider personalities)", () => {
+    it("accepts an actual SDK structured result only after observing its terminal", async () => {
+        let requestBody: {
+            text?: { format?: { type?: string; strict?: boolean } };
+        } | undefined;
+        const payload = validResultPayload();
+        const fetcher = jest.fn(async (_url: string | URL, init?: RequestInit) => {
+            requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            const text = JSON.stringify(payload);
+            return new Response(JSON.stringify({
+                id: "resp-pagelet", object: "response", created_at: 0, status: "completed",
+                model: "gpt-6.1-terra", error: null, incomplete_details: null,
+                output: [{ id: "msg-pagelet", type: "message", status: "completed", role: "assistant",
+                    content: [{ type: "output_text", text, annotations: [] }] }],
+                usage: { input_tokens: 5, output_tokens: 4, total_tokens: 9 }, output_text: text,
+            }), { headers: { "content-type": "application/json" } });
+        }) as typeof fetch;
+        const model = new PaChatOpenAI({
+            model: "gpt-6.1-terra", apiKey: "offline-key",
+            configuration: { baseURL: "https://api.openai.com/v1", fetch: fetcher },
+        }, "responses");
+
+        const outcome = await reviewNote(async () => model, defaultInput(), { disableFreeFormFallback: true });
+
+        expect(outcome.status).toBe("ok");
+        if (outcome.status !== "ok") return;
+        expect(outcome.diagnostics.path).toBe("structured");
+        expect(requestBody).toMatchObject({ store: false, stream: false });
+        expect(requestBody?.text?.format).toMatchObject({ type: "json_schema", strict: true });
+    });
+
+    it("rejects an actual SDK structured payload when its Responses terminal is unfinished", async () => {
+        const payload = validResultPayload();
+        const text = JSON.stringify(payload);
+        const fetcher = jest.fn(async () => new Response(JSON.stringify({
+            id: "resp-pagelet", object: "response", created_at: 0, status: "in_progress",
+            model: "gpt-6.1-terra", error: null, incomplete_details: null,
+            output: [{ id: "msg-pagelet", type: "message", status: "in_progress", role: "assistant",
+                content: [{ type: "output_text", text, annotations: [] }] }],
+            usage: { input_tokens: 5, output_tokens: 4, total_tokens: 9 }, output_text: text,
+        }), { headers: { "content-type": "application/json" } })) as typeof fetch;
+        const model = new PaChatOpenAI({
+            model: "gpt-6.1-terra", apiKey: "offline-key",
+            configuration: { baseURL: "https://api.openai.com/v1", fetch: fetcher },
+        }, "responses");
+
+        const costTracker = new PageletCostTracker();
+        const outcome = await reviewNote(async () => model, defaultInput(), {
+            costTracker,
+        });
+
+        expect(outcome.status).toBe("error");
+        if (outcome.status !== "error") return;
+        expect(outcome.errorCode).toBe("provider_error");
+        expect(outcome.diagnostics.attempts).toBe(1);
+        expect(outcome.diagnostics.path).toBe("structured");
+        expect(outcome.diagnostics.timings?.find(timing => timing.phase === "llm_attempt")).toMatchObject({
+            phase: "llm_attempt",
+            metadata: expect.objectContaining({ outcome: "provider_error" }),
+        });
+        expect(costTracker.getEntries()).toEqual([]);
+        expect(fetcher).toHaveBeenCalledTimes(1);
+    });
+
+    it("maps an unfinished actual SDK JSON result to one provider_error attempt", async () => {
+        const fetcher = jest.fn(async () => new Response(JSON.stringify({
+            id: "resp-pagelet-json", object: "response", created_at: 0, status: "in_progress",
+            model: "gpt-6.1-terra", error: null, incomplete_details: null,
+            output: [{ id: "msg-pagelet-json", type: "message", status: "in_progress", role: "assistant",
+                content: [{ type: "output_text", text: "{}", annotations: [] }] }],
+            usage: { input_tokens: 5, output_tokens: 1, total_tokens: 6 }, output_text: "{}",
+        }), { headers: { "content-type": "application/json" } })) as typeof fetch;
+        const model = new PaChatOpenAI({
+            model: "gpt-6.1-terra", apiKey: "offline-key",
+            configuration: { baseURL: "https://api.openai.com/v1", fetch: fetcher },
+        }, "responses");
+        const costTracker = new PageletCostTracker();
+
+        const outcome = await reviewNote(async () => model, defaultInput(), {
+            disableStructuredOutput: true,
+            costTracker,
+        });
+
+        expect(outcome.status).toBe("error");
+        if (outcome.status !== "error") return;
+        expect(outcome.errorCode).toBe("provider_error");
+        expect(outcome.diagnostics.attempts).toBe(1);
+        expect(outcome.diagnostics.path).toBe("json_mode");
+        expect(outcome.diagnostics.timings?.find(timing => timing.phase === "llm_attempt")).toMatchObject({
+            phase: "llm_attempt",
+            metadata: expect.objectContaining({ outcome: "provider_error" }),
+        });
+        expect(costTracker.getEntries()).toEqual([]);
+        expect(fetcher).toHaveBeenCalledTimes(1);
+    });
+
     it("provider A (OpenAI-compatible): withStructuredOutput returns a clean payload → status=ok", async () => {
         // Provider A models the OpenAI / Qwen happy path that D026 designates as the main route.
         // We assert the diagnostics carry the structured path so future telemetry hooks (§11) can
@@ -512,7 +611,7 @@ describe("PageletReviewModel — failure matrix (SDD §4.3, 8 rows)", () => {
         const withTrailingComma = valid.slice(0, -1) + ",}";
         const messyPayload = "```json\n" + withTrailingComma + "\n```";
         const factory: PageletChatModelFactory = async () => ({
-            invoke: jest.fn(async () => ({ content: messyPayload })),
+            invoke: jest.fn(async () => ({ content: messyPayload, response_metadata: { finish_reason: "stop" } })),
             withStructuredOutput: () => ({
                 invoke: async () => {
                     throw new Error("should not be called when disableStructuredOutput");
@@ -537,13 +636,19 @@ describe("PageletReviewModel — provider degradation paths", () => {
             { kind: "throw", error: schemaError([{ path: ["x"], message: "still bad" }]) },
         ];
         const model: PageletChatModelLike = {
-            invoke: jest.fn(async () => ({ content: JSON.stringify(validResultPayload()) })),
+            invoke: jest.fn(async () => ({
+                content: JSON.stringify(validResultPayload()),
+                response_metadata: { finish_reason: "stop" },
+            })),
             withStructuredOutput: () => ({
                 invoke: async () => {
                     const step = structuredQueue.shift();
                     if (!step) throw new Error("queue empty");
                     if (step.kind === "throw") throw step.error;
-                    return step.payload as never;
+                    return {
+                        parsed: step.payload,
+                        raw: { response_metadata: { finish_reason: "stop" } },
+                    } as never;
                 },
             }),
         };
@@ -660,7 +765,7 @@ describe("PageletReviewModel — provider degradation paths", () => {
             }),
             invoke: async () => {
                 jsonInvocations += 1;
-                return { content: JSON.stringify(validResultPayload()) };
+                return { content: JSON.stringify(validResultPayload()), response_metadata: { finish_reason: "stop" } };
             },
         });
 
@@ -795,7 +900,10 @@ describe("PageletReviewModel — B4 cost ceiling (D018)", () => {
             return {
                 invoke: jest.fn(async () => ({ content: "" })),
                 withStructuredOutput: () => ({
-                    invoke: async () => validResultPayload() as never,
+                    invoke: async () => ({
+                        parsed: validResultPayload(),
+                        raw: { response_metadata: { finish_reason: "stop" } },
+                    }) as never,
                 }),
             };
         };

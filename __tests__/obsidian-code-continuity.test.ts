@@ -107,6 +107,7 @@ describe("composed owner continuity through the original loop", () => {
             now: () => now, remoteAttemptTimeoutMs: 100, maxWallClockMs: 1_000,
             model: { stream: async function* () {
                 yield { type: "toolcall_delta", id: "parent", name: "execute_obsidian_code", input: {}, index: 0 } as const;
+                yield { type: "provider_completion", completion: "tool_calls" } as const;
             } },
             toolExecutor: { getRetrySafety: () => "side_effect", execute: async () => {
                 now = 101;
@@ -172,6 +173,7 @@ describe("composed owner continuity through the original loop", () => {
             toolAbortGraceMs: 100, maxTurns: 1,
             model: { stream: async function* () {
                 yield { type: "toolcall_delta", id: "parent", name: "execute_obsidian_code", input: {}, index: 0 } as const;
+                yield { type: "provider_completion", completion: "tool_calls" } as const;
             } },
             toolExecutor: { getRetrySafety: () => "side_effect", execute: async input =>
                 chatToolResultToPaAgentToolExecutionResult(input.toolCall,

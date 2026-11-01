@@ -6,6 +6,7 @@ import type { AIUtils, ProviderRequestOptions } from "./ai-utils";
 import type { AiServiceHost, LatestMemorySourceMaterial } from "./AiServiceHost";
 import type { AgentDebugCallScope } from "./agent-debug-port";
 import { agentDebugError, agentDebugNow, createAgentDebugCall, observeAgentDebugCall, observeAgentDebugResponse } from "./agent-debug-observation";
+import { assertProviderCompletion, readProviderText } from "./provider-result";
 import { createAbortError, throwIfAborted } from "./chat-utils";
 import { truncate } from "./chat-tool-execution-helpers";
 import { normalizeVaultPath } from "../pa/helpers";
@@ -939,7 +940,8 @@ export class MemorySearchTool {
                 throwIfAborted(s);
                 assertTaskSourceMemoryReadCurrent(this.taskSourceReadGuard);
                 observeAgentDebugResponse(debugCall, response, "replace", "provider-usage", "content_only");
-                return typeof response.content === "string" ? response.content : "";
+                assertProviderCompletion(response);
+                return readProviderText(response) ?? "";
             };
             const rewritten = await rewriteQueryForSearch(query, invoker, combined.signal);
             observeAgentDebugCall(debugCall, { phase: "consumer_end", status: "completed",
@@ -1122,9 +1124,10 @@ export class MemorySearchTool {
                         throwIfAborted(signal);
                         if (combined.signal.aborted) throw createAbortError();
                         observeAgentDebugResponse(debugCall, response, "replace", "provider-usage", "content_only");
+                        assertProviderCompletion(response);
                         observeAgentDebugCall(debugCall, { phase: "consumer_end", status: "completed",
                             timing: { event: "consumer_end", at: agentDebugNow() } });
-                        const content = typeof response.content === "string" ? response.content : "";
+                        const content = readProviderText(response) ?? "";
                         return parseRerankResponse(content, candidates);
                     } catch (error) {
                         observeAgentDebugCall(debugCall, { phase: "error", status: combined.signal.aborted ? "cancelled" : "failed", error: agentDebugError(error) });

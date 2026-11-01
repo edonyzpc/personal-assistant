@@ -36,6 +36,7 @@ async function runPageletStartedText(
                 if (input.turnIndex === 0) {
                     yield { type: "toolcall_delta", id: "anchor", name: "get_current_note_context", input: {}, index: 0 } as const;
                     yield { type: "toolcall_delta", id: "related", name: "inspect_obsidian_note", input: { path: relatedPath }, index: 1 } as const;
+                    yield { type: "provider_completion", completion: "tool_calls" } as const;
                     return;
                 }
                 if (input.turnIndex !== 1) throw new Error("Unexpected request after the terminal boundary.");

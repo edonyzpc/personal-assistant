@@ -6,6 +6,10 @@ Updated: 2026-10-30
 Authority: Owner 在本次多 provider 讨论中逐项选择并最终同意的产品边界；本文整理这些决定，不代表实现、技术验收或发布批准。
 Work item: B-192
 
+2026-11-01 的聊天协议与 SDK 职责目标由 [DEC-078](./dec-078-sdk-protocol-and-agent-boundary.md)
+接续；连接、用途、图片和 Memory 选择继续由本决定治理。后续实施状态见其 Tracker，
+不据已确认目标改写本次历史验收。
+
 ## Context
 
 当前聊天和笔记检索共用一组 provider、地址、模型设置及 vault 级凭据。切换预设

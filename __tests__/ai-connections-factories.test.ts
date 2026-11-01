@@ -49,6 +49,25 @@ function mockChatFetch() {
     return fetcher;
 }
 
+function mockProtocolFetch() {
+    return jest.fn<typeof fetch>(async (url, _init) => {
+        const endpoint = String(url);
+        if (endpoint.endsWith('/responses')) {
+            return new Response(JSON.stringify({ id: 'offline', object: 'response', created_at: 0,
+                status: 'completed', model: 'offline', error: null, incomplete_details: null,
+                output: [{ id: 'msg', type: 'message', status: 'completed', role: 'assistant',
+                    content: [{ type: 'output_text', text: 'ok', annotations: [] }] }],
+                usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }, output_text: 'ok' }),
+                { headers: { 'content-type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ id: 'offline', object: 'chat.completion', created: 0,
+            model: 'offline', choices: [{ index: 0, finish_reason: 'stop',
+                message: { role: 'assistant', content: 'ok' } }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }),
+            { headers: { 'content-type': 'application/json' } });
+    });
+}
+
 describe('B-192 connection-bound model factories', () => {
     it('sends chat and independent retrieval to their own endpoint, model and Key', async () => {
         const { ai, host } = fixture();
@@ -95,6 +114,107 @@ describe('B-192 connection-bound model factories', () => {
         ]);
     });
 
+    it('uses Responses for every OpenAI chat and policy model', async () => {
+        const { ai, configuration, openai } = fixture();
+        configuration.bindings.chat = { mode: 'connection', connectionId: openai.id };
+        openai.models.chat = 'gpt-6.1-sol';
+        const fetcher = mockProtocolFetch();
+        globalThis.fetch = fetcher as typeof fetch;
+        await (await ai.createChatModel(0.7, { transport: 'native' })).invoke('main');
+        await (await ai.createChatModel(0, {
+            transport: 'native', modelName: 'gpt-6-astra',
+        })).invoke('policy');
+        await (await ai.createChatModel(0.2, {
+            transport: 'native', modelName: 'gpt-6.1-terra',
+        })).invoke('default reasoning');
+
+        expect(fetcher.mock.calls.map(([url]) => String(url))).toEqual([
+            'https://api.openai.com/v1/responses',
+            'https://api.openai.com/v1/responses',
+            'https://api.openai.com/v1/responses',
+        ]);
+        const bodies = fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>);
+        expect(bodies.map(body => body.model)).toEqual([
+            'gpt-6.1-sol', 'gpt-6-astra', 'gpt-6.1-terra',
+        ]);
+        for (const body of bodies) {
+            expect(body.store).toBe(false);
+            expect(body).not.toHaveProperty('previous_response_id');
+            expect(body).not.toHaveProperty('temperature');
+            expect(body).not.toHaveProperty('top_p');
+        }
+        expect(bodies[2]).toMatchObject({ reasoning: { effort: 'high' } });
+    });
+
+    it('derives legacy protocol ownership from the endpoint, not the display provider', async () => {
+        const { ai, host } = fixture();
+        delete (host.settings as { aiConnections?: AIConnectionsSettings }).aiConnections;
+        const fetcher = mockProtocolFetch();
+        globalThis.fetch = fetcher as typeof fetch;
+
+        host.settings.aiProvider = 'qwen';
+        host.settings.baseURL = 'https://api.openai.com/v1';
+        await (await ai.createChatModel(0, { transport: 'native' })).invoke('official endpoint');
+
+        host.settings.aiProvider = 'openai';
+        host.settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+        host.settings.chatModelName = 'qwen3.6-plus';
+        await (await ai.createChatModel(0, {
+            transport: 'native', qwenRequestOptions: { enableThinking: true },
+        })).invoke('DashScope endpoint');
+
+        expect(fetcher.mock.calls.map(([url]) => String(url))).toEqual([
+            'https://api.openai.com/v1/responses',
+            'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+        ]);
+        const bodies = fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>);
+        expect(bodies[0]).toMatchObject({ model: 'legacy-model', store: false });
+        expect(bodies[0]).not.toHaveProperty('enable_thinking');
+        expect(bodies[1]).toMatchObject({ model: 'qwen3.6-plus', enable_thinking: true });
+    });
+
+    it('keeps Custom on Chat Completions after config and tool derivation', async () => {
+        const { ai, configuration } = fixture();
+        const custom: AIConnection = { ...createConnectionDefaults('custom'),
+            id: 'custom', name: 'Custom', secretRef: 'pa-custom-offline', revision: 1,
+            endpoints: { chat: 'https://api.openai.com/v1' }, models: { chat: 'gpt-6.1-terra' } };
+        configuration.connections.push(custom);
+        configuration.bindings.chat = { mode: 'connection', connectionId: custom.id };
+        const fetcher = mockProtocolFetch();
+        globalThis.fetch = fetcher as typeof fetch;
+        const base = await ai.createChatModel(0.6, { transport: 'native', maxTokens: 45 });
+        const derived = base.bindTools([{
+            type: 'function',
+            function: {
+                name: 'read_note',
+                parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+            },
+        }]).withConfig({ stop: ['\n'] });
+        await derived.invoke('custom model that would prefer Responses');
+
+        expect(String(fetcher.mock.calls[0][0])).toBe('https://api.openai.com/v1/chat/completions');
+        const body = JSON.parse(String(fetcher.mock.calls[0][1]?.body)) as Record<string, unknown>;
+        expect(body).toMatchObject({ model: 'gpt-6.1-terra', temperature: 0.6, max_completion_tokens: 45 });
+        expect(body).not.toHaveProperty('store');
+        expect(body).not.toHaveProperty('enable_thinking');
+    });
+
+    it('keeps DashScope SDK Chat Completions and its valid thinking parameter', async () => {
+        const { ai, configuration, dashscope } = fixture();
+        configuration.bindings.chat = { mode: 'connection', connectionId: dashscope.id };
+        dashscope.models.chat = 'qwen3.6-plus';
+        const fetcher = mockProtocolFetch();
+        globalThis.fetch = fetcher as typeof fetch;
+        await (await ai.createChatModel(0.4, {
+            transport: 'native', qwenRequestOptions: { enableThinking: true },
+        })).invoke('dashscope');
+
+        expect(String(fetcher.mock.calls[0][0])).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions');
+        expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toMatchObject({
+            model: 'qwen3.6-plus', temperature: 0.4, enable_thinking: true,
+        });
+    });
+
     it('keeps a pinned chat live across default changes and rename, but blocks an old Key before dispatch', async () => {
         const { ai, configuration, openai, revisions } = fixture();
         configuration.bindings.chat = { mode: 'connection', connectionId: openai.id };
@@ -131,7 +251,7 @@ describe('B-192 connection-bound model factories', () => {
 
     it('declares only the known OpenAI tool protocol on its exact endpoint', () => {
         const { ai, openai } = fixture();
-        openai.models.chat = 'gpt-4o-mini';
+        openai.models.chat = 'gpt-6.1-terra';
         expect(ai.getNativeToolCallingCapability({ internalGate: true }).supported).toBe(true);
         openai.endpoints.chat = 'https://unverified.invalid/v1';
         expect(ai.getNativeToolCallingCapability({ internalGate: true }).supported).toBe(false);

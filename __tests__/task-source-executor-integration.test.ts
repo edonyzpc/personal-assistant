@@ -25,6 +25,7 @@ describe('action wrapper batch preflight forwarding', () => {
             } }) },
             model: { stream: async function* () {
                 yield { type: 'toolcall_delta', id: 'read-a', name: 'read_note', input: { path: 'a.md' }, index: 0 } as const;
+                yield { type: 'provider_completion', completion: 'tool_calls' } as const;
             } } });
         const result = await loop.run();
         expect(result.status).toBe(reason === 'cancel' ? 'aborted' : 'incomplete');
@@ -63,6 +64,7 @@ describe('action wrapper batch preflight forwarding', () => {
             model: { stream: async function* () {
                 yield { type: 'toolcall_delta', id: 'read-a', name: 'get_current_note_context', input: {}, index: 0 } as const;
                 yield { type: 'toolcall_delta', id: 'write-b', name: 'frontmatter_update', input: { path: 'b.md', set: { state: 'done' } }, index: 1 } as const;
+                yield { type: 'provider_completion', completion: 'tool_calls' } as const;
             } } });
         const result = await loop.run();
         expect(preflightBatch).toHaveBeenCalledTimes(1);

@@ -274,10 +274,13 @@ export class CanonicalToLegacyEventAdapter {
         let reason: WritingRecoveryReason | undefined;
         // A warning's impact is unknown here. It must not silently become a verified version.
         if (!sourceCurrent) reason = "source_changed";
+        else if (candidate?.providerCompletion !== undefined
+            && candidate.providerCompletion !== (native ? "tool_calls" : "stop")) {
+            reason = "provider_incomplete";
+        }
         else if (event.status !== "completed" || !candidate
             || (native ? !this.nativeAcceptedReceiptId || candidate.stopReason !== "tool_calls" || calls.length !== 1
                 || calls[0].name !== "present_writing" : candidate.stopReason !== "stop" || calls.length > 0)) reason = "incomplete";
-        else if (candidate.providerCompletion !== (native ? "tool_calls" : "stop")) reason = "provider_incomplete";
         else {
             try { if (!writing.isCurrent()) reason = "source_changed"; }
             catch { reason = "source_changed"; }

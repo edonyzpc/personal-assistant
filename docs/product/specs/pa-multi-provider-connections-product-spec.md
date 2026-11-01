@@ -6,6 +6,11 @@ Work item: B-192
 Decision: [DEC-077](../decisions/dec-077-multi-provider-connections.md)
 Authority: Owner 已确认的多连接、继承、Memory 保留及 OpenAI 图片行为契约；实施验收事实见最终验证记录，不代表版本发布。
 
+2026-11-01 已确认的后续聊天协议目标见 [B-194 Product Spec](./pa-sdk-protocol-agent-boundary-product-spec.md)：
+OpenAI统一Responses、Custom固定Chat Completions、SDK与PA结果／harness分工。
+它接续下文Terra-only协议范围和旧聊天默认保留范围；当前源码已按后续设计修改，
+升级验收见 [B-194 最终验证](../../archive/2026/b194-sdk-protocol-validation.md)。本页其余连接、embedding、图片、Memory与历史验证边界不变。
+
 ## Problem And Product Outcome
 
 用户配置一次默认服务即可开始使用，并能在已保存服务间切换而不反复改 Key。

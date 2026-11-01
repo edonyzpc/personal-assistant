@@ -2017,8 +2017,8 @@ describe("PA Agent canonical host tool executor", () => {
             runId: "run-memory",
             userInput: "What do my launch notes say?",
             model: createModel([
-                [toolCallChunk("call_memory_1", "search_memory", { query: "project launch notes" })],
-                [{ type: "text_delta", text: "Phase two starts Monday." }],
+                [toolCallChunk("call_memory_1", "search_memory", { query: "project launch notes" }), { type: "provider_completion", completion: "tool_calls" } as const],
+                [{ type: "text_delta", text: "Phase two starts Monday." }, { type: "provider_completion", completion: "stop" } as const],
             ], modelInputs),
             toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
@@ -2159,8 +2159,8 @@ describe("PA Agent canonical host tool executor", () => {
             runId: "run-memory-strict-partial-recovery",
             userInput: "What do my launch notes say?",
             model: createModel([
-                [toolCallChunk("call_memory_strict_partial", "search_memory", { query })],
-                [{ type: "text_delta", text: "The cumulative evidence is available." }],
+                [toolCallChunk("call_memory_strict_partial", "search_memory", { query }), { type: "provider_completion", completion: "tool_calls" } as const],
+                [{ type: "text_delta", text: "The cumulative evidence is available." }, { type: "provider_completion", completion: "stop" } as const],
             ], modelInputs),
             toolExecutor: createPaAgentCapabilityToolExecutor({
                 registry,
@@ -2243,8 +2243,8 @@ describe("PA Agent canonical host tool executor", () => {
             runId: "run-memory-query-alias",
             userInput: "What do my launch notes say?",
             model: createModel([
-                [toolCallChunk("call_memory_alias_1", "search_memory", { question: "project launch notes" })],
-                [{ type: "text_delta", text: "Phase two starts Monday." }],
+                [toolCallChunk("call_memory_alias_1", "search_memory", { question: "project launch notes" }), { type: "provider_completion", completion: "tool_calls" } as const],
+                [{ type: "text_delta", text: "Phase two starts Monday." }, { type: "provider_completion", completion: "stop" } as const],
             ], modelInputs),
             toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
@@ -2294,8 +2294,8 @@ describe("PA Agent canonical host tool executor", () => {
             runId: "run-memory-canonical-dedup",
             userInput: "What do my launch notes say?",
             model: createModel([
-                [first, second],
-                [{ type: "text_delta", text: "No matching note." }],
+                [first, second, { type: "provider_completion", completion: "tool_calls" } as const],
+                [{ type: "text_delta", text: "No matching note." }, { type: "provider_completion", completion: "stop" } as const],
             ], modelInputs),
             toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
@@ -2328,8 +2328,8 @@ describe("PA Agent canonical host tool executor", () => {
             runId: "run-memory-missing-query",
             userInput,
             model: createModel([
-                [toolCallChunk("call_memory_missing_query_1", "search_memory", {})],
-                [{ type: "text_delta", text: "Sorry, I cannot answer without a query." }],
+                [toolCallChunk("call_memory_missing_query_1", "search_memory", {}), { type: "provider_completion", completion: "tool_calls" } as const],
+                [{ type: "text_delta", text: "Sorry, I cannot answer without a query." }, { type: "provider_completion", completion: "stop" } as const],
             ], modelInputs),
             toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
@@ -2366,8 +2366,8 @@ describe("PA Agent canonical host tool executor", () => {
             runId: "run-current-note",
             userInput: "Summarize the selected text.",
             model: createModel([
-                [toolCallChunk("call_current_1", "get_current_note_context", { mode: "selection-or-nearby" })],
-                [{ type: "text_delta", text: "The selected text is project context." }],
+                [toolCallChunk("call_current_1", "get_current_note_context", { mode: "selection-or-nearby" }), { type: "provider_completion", completion: "tool_calls" } as const],
+                [{ type: "text_delta", text: "The selected text is project context." }, { type: "provider_completion", completion: "stop" } as const],
             ], modelInputs),
             toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
@@ -2419,8 +2419,8 @@ describe("PA Agent canonical host tool executor", () => {
             runId: "run-current-note-mode-drift",
             userInput: "Use the current note and return the token.",
             model: createModel([
-                [toolCallChunk("call_current_1", "get_current_note_context", { mode: "nearby" })],
-                [{ type: "text_delta", text: "pa-positive-snippet-token-1701" }],
+                [toolCallChunk("call_current_1", "get_current_note_context", { mode: "nearby" }), { type: "provider_completion", completion: "tool_calls" } as const],
+                [{ type: "text_delta", text: "pa-positive-snippet-token-1701" }, { type: "provider_completion", completion: "stop" } as const],
             ], modelInputs),
             toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
@@ -2460,8 +2460,8 @@ describe("PA Agent canonical host tool executor", () => {
             runId: "run-current-note-full-lookup",
             userInput: "Use the current note only. Reply with the exact token whose prefix is pa-positive-snippet-token.",
             model: createModel([
-                [toolCallChunk("call_current_1", "get_current_note_context", { mode: "outline" })],
-                [{ type: "text_delta", text: "pa-positive-snippet-token-1701" }],
+                [toolCallChunk("call_current_1", "get_current_note_context", { mode: "outline" }), { type: "provider_completion", completion: "tool_calls" } as const],
+                [{ type: "text_delta", text: "pa-positive-snippet-token-1701" }, { type: "provider_completion", completion: "stop" } as const],
             ], modelInputs),
             toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
@@ -2506,8 +2506,8 @@ describe("PA Agent canonical host tool executor", () => {
             runId: "run-web",
             userInput: "Search the web for latest docs.",
             model: createModel([
-                [toolCallChunk("call_web_1", BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "latest docs", limit: 1 })],
-                [{ type: "text_delta", text: "External result found." }],
+                [toolCallChunk("call_web_1", BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "latest docs", limit: 1 }), { type: "provider_completion", completion: "tool_calls" } as const],
+                [{ type: "text_delta", text: "External result found." }, { type: "provider_completion", completion: "stop" } as const],
             ], modelInputs),
             toolExecutor: createPaAgentCapabilityToolExecutor({
                 registry,
@@ -2572,8 +2572,8 @@ describe("PA Agent canonical host tool executor", () => {
                 [toolCallChunk("call_web_drift_1", BUILTIN_WEB_SEARCH_TOOL_NAME, {
                     search_query: "official Obsidian homepage domain",
                     max_results: "1",
-                })],
-                [{ type: "text_delta", text: "obsidian.md" }],
+                }), { type: "provider_completion", completion: "tool_calls" } as const],
+                [{ type: "text_delta", text: "obsidian.md" }, { type: "provider_completion", completion: "stop" } as const],
             ], modelInputs),
             toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
@@ -2618,8 +2618,8 @@ describe("PA Agent canonical host tool executor", () => {
             runId: "run-web-missing-query",
             userInput,
             model: createModel([
-                [toolCallChunk("call_web_missing_query_1", BUILTIN_WEB_SEARCH_TOOL_NAME, {})],
-                [{ type: "text_delta", text: "Sorry, I cannot search without a query." }],
+                [toolCallChunk("call_web_missing_query_1", BUILTIN_WEB_SEARCH_TOOL_NAME, {}), { type: "provider_completion", completion: "tool_calls" } as const],
+                [{ type: "text_delta", text: "Sorry, I cannot search without a query." }, { type: "provider_completion", completion: "stop" } as const],
             ], modelInputs),
             toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
@@ -2663,8 +2663,8 @@ describe("PA Agent canonical host tool executor", () => {
             runId: "run-web-no-sources",
             userInput: "Search the web for latest docs.",
             model: createModel([
-                [toolCallChunk("call_web_empty_1", BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "latest docs", limit: 1 })],
-                [{ type: "text_delta", text: "No normalized web sources were available." }],
+                [toolCallChunk("call_web_empty_1", BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "latest docs", limit: 1 }), { type: "provider_completion", completion: "tool_calls" } as const],
+                [{ type: "text_delta", text: "No normalized web sources were available." }, { type: "provider_completion", completion: "stop" } as const],
             ], modelInputs),
             toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),

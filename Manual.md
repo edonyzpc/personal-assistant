@@ -34,7 +34,9 @@ In **Settings → Personal Assistant → AI connection**, open **AI connections*
 
 When upgrading from legacy settings, **Use an already saved Key** lets you identify the service for that Key and review the preserved configuration. This does not send a test request. Do not assume a retained Key belongs to a different provider.
 
-The Chat empty state also offers standard-provider setup and **Advanced setup** opens these settings. Once the required configuration is saved, Chat shows the normal starting prompts. Protocol compatibility alone does not guarantee tool calls, image input, embedding, or every model. Official OpenAI `gpt-6.1-terra` uses the Responses API; a custom relay does not inherit that adapter.
+The Chat empty state also offers standard-provider setup and **Advanced setup** opens these settings. Once the required configuration is saved, Chat shows the normal starting prompts.
+
+OpenAI connections use the Responses API for Chat and text assistance across their selected models. Custom Chat uses OpenAI-compatible Chat Completions; DashScope uses the SDK's compatible route and its service settings. The saved service determines this choice; a model name or an official address entered in Custom does not switch its protocol. Protocol compatibility alone does not guarantee tool calls, image input, embedding, or access to every model.
 
 Before adding credentials, check **Notes & privacy → Notes PA can use** and the Memory settings. Only Chat is needed for the first-note task; embedding and an image-generation connection are separate requirements. If you want to try only the selected note first, turn off Memory and Pagelet automatic discovery before sending. Memory is enabled by default and a first Chat can otherwise prepare eligible notes in the background, sending their text to the embedding provider and using API credits. A local index does not make remote processing local.
 

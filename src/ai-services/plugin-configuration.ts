@@ -18,7 +18,11 @@ import {
 import { KEYCHAIN_API_TOKEN_ID, getVaultApiTokenId } from "../utils";
 import { getPlatformCrypto } from "../platform-dom";
 import { createConnectionDefaults, getProviderDefinition } from "./provider-definitions";
-import { isHttpEndpoint, resolveAIConnection as resolveSavedAIConnection } from "./ai-connection-resolver";
+import {
+    isHttpEndpoint,
+    resolveAIConnection as resolveSavedAIConnection,
+    resolveLegacyAIProviderId,
+} from "./ai-connection-resolver";
 import type {
     AIConnection, AIConnectionsSettings, AIPurpose, PurposeBinding, AIConnectionResolution,
 } from "./ai-connection-types";
@@ -329,8 +333,8 @@ export class PluginAIConfiguration {
             }
             if (!key && !input.secretRef && candidates.length > 1) throw new Error("ai_connection:legacy_secret_ambiguous");
             if (!key && candidates.length && !input.providerId) throw new Error("ai_connection:legacy_provider_required");
-            const providerId = input.providerId ?? legacyProviderId(settings.baseURL);
-            const originalProvider = legacyProviderId(settings.baseURL);
+            const providerId = input.providerId ?? resolveLegacyAIProviderId(settings.baseURL);
+            const originalProvider = resolveLegacyAIProviderId(settings.baseURL);
             // A blank address has no custom destination to retain when choosing a service.
             // Otherwise, only correct known official mismatches; preserve custom gateways.
             const correctedProvider = providerId !== originalProvider
@@ -1239,15 +1243,6 @@ function randomConnectionSuffix(length: number): string {
     const bytes = crypto.getRandomValues(new Uint8Array(length));
     const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
     return Array.from(bytes, byte => alphabet[byte % alphabet.length]).join("");
-}
-
-function legacyProviderId(baseURL: string): string {
-    // Editing a legacy model marks the display preset custom without changing its service.
-    const normalized = baseURL.trim().replace(/\/+$/, "");
-    if (normalized === PROVIDER_PRESETS.openai.baseURL) return "openai";
-    if (normalized === PROVIDER_PRESETS.qwen.baseURL) return "dashscope-cn";
-    if (normalized === PROVIDER_PRESETS["qwen-intl"].baseURL) return "dashscope-intl";
-    return "custom";
 }
 
 function connectionRequestIdentity(connection: AIConnection): string {

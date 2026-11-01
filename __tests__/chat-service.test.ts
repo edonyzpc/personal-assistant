@@ -128,7 +128,7 @@ function createInvokeModel(content: unknown, onInput?: (input: unknown) => void)
     const model = {
         invoke: jest.fn(async (input: unknown) => {
             onInput?.(input);
-            return { content };
+            return { content, response_metadata: { finish_reason: 'stop' as const } };
         }),
         bindTools: jest.fn(() => model),
     };
@@ -163,6 +163,7 @@ function createStreamModel(content: string, onInput?: (input: Record<string, str
         stream: jest.fn(async function* (input: Record<string, string>) {
             onInput?.(input);
             yield { content };
+            yield { response_metadata: { finish_reason: 'stop' as const } };
         }),
     };
     return model;
@@ -187,6 +188,7 @@ function createNoWebAnswerModel(onInput?: (input: Record<string, string>) => voi
         stream: jest.fn(async function* (input: Record<string, string>) {
             onInput?.(input);
             yield { content: 'Answer without web access.' };
+            yield { response_metadata: { finish_reason: 'stop' as const } };
         }),
     };
     return model;
@@ -401,8 +403,10 @@ async function runTamperedGhostResult(mutation: 'body' | 'url' | 'fact' | 'sourc
             providerInputs.push(input);
             if (dispatch++ === 0) {
                 yield { tool_call_chunks: [{ index: 0, id: 'ghost-tampered', name: 'prepare_ghost_post',
-                    args: JSON.stringify({ intent: 'prepare', name: 'Publishing' }) }] };
-            } else yield { content: 'The malformed Ghost result is unavailable.' };
+                    args: JSON.stringify({ intent: 'prepare', name: 'Publishing' }) }],
+                    response_metadata: { finish_reason: 'tool_calls' as const } };
+            } else yield { content: 'The malformed Ghost result is unavailable.',
+                response_metadata: { finish_reason: 'stop' as const } };
         }),
     };
     mockCreateChatModel.mockResolvedValue(model);
@@ -702,6 +706,7 @@ describe('run-scoped Provider transport ownership', () => {
                         name: 'search_memory',
                         args: JSON.stringify({ query: 'launch' }),
                     }],
+                    response_metadata: { finish_reason: 'tool_calls' as const },
                 };
             }),
             invoke: jest.fn(),
@@ -973,10 +978,12 @@ describe('ChatService.streamLLM integration', () => {
         const model = { bindTools: jest.fn(() => model), stream: async function* (input: unknown) {
             requests.push(JSON.stringify(input));
             if (cycle++ === 0) yield { tool_call_chunks: [{ id: 'b157-empty-search', index: 0, name: 'search_vault_metadata',
-                args: JSON.stringify({ query: 'NO_HITS_SCOPE_SENTINEL' }) }] };
+                args: JSON.stringify({ query: 'NO_HITS_SCOPE_SENTINEL' }) }],
+                response_metadata: { finish_reason: 'tool_calls' as const } };
             else if (cycle === 2) yield { tool_call_chunks: [{ id: 'b157-image-call', index: 0, name: 'create_image',
-                args: JSON.stringify({ prompt: 'Synthetic landscape', operation: 'generate' }) }] };
-            else yield { content: 'The request was accepted.' };
+                args: JSON.stringify({ prompt: 'Synthetic landscape', operation: 'generate' }) }],
+                response_metadata: { finish_reason: 'tool_calls' as const } };
+            else yield { content: 'The request was accepted.', response_metadata: { finish_reason: 'stop' as const } };
         } };
         mockCreateChatModel.mockResolvedValue(model);
         const plugin = createPlugin();
@@ -1024,7 +1031,8 @@ describe('ChatService.streamLLM integration', () => {
                 auxiliaryRequests.push(input);
                 const payload = JSON.parse(input[1].content);
                 return { content: JSON.stringify({ goals: [], constraints: [{ text: 'Keep the offline requirement.',
-                    sourceMessages: [payload.sourceMessages[0].index] }], decisions: [], completed: [], open_questions: [], facts: [] }) };
+                    sourceMessages: [payload.sourceMessages[0].index] }], decisions: [], completed: [], open_questions: [], facts: [] }),
+                    response_metadata: { finish_reason: 'stop' as const } };
             }) };
         });
         const newService = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
@@ -1111,9 +1119,11 @@ describe('ChatService.streamLLM integration', () => {
             stream: jest.fn(async function* () {
                 if (modelTurn++ === 0) {
                     yield { tool_call_chunks: [{ index: 0, id: 'memory-source-identity', name: 'search_memory',
-                        args: JSON.stringify({ query: '不要限定最近30天的项目记录', temporal: 'none' }) }] };
+                        args: JSON.stringify({ query: '不要限定最近30天的项目记录', temporal: 'none' }) }],
+                        response_metadata: { finish_reason: 'tool_calls' as const } };
                 } else {
-                    yield { content: 'The structured Memory evidence was returned.' };
+                    yield { content: 'The structured Memory evidence was returned.',
+                        response_metadata: { finish_reason: 'stop' as const } };
                 }
             }),
         };
@@ -1203,9 +1213,11 @@ describe('ChatService.streamLLM integration', () => {
                 providerInputs.push(input);
                 if (dispatch++ < 2) {
                     yield { tool_call_chunks: [{ index: 0, id: `memory-command-${dispatch}`, name: 'search_memory',
-                        args: JSON.stringify({ query: 'project records' }) }] };
+                        args: JSON.stringify({ query: 'project records' }) }],
+                        response_metadata: { finish_reason: 'tool_calls' as const } };
                 } else {
-                    yield { content: 'No project evidence was found.' };
+                    yield { content: 'No project evidence was found.',
+                        response_metadata: { finish_reason: 'stop' as const } };
                 }
             }),
         };
@@ -1344,9 +1356,10 @@ describe('ChatService.streamLLM integration', () => {
                         expect(editor.getValue).not.toHaveBeenCalled();
                         yield { content: '', tool_call_chunks: [
                             { id: 'read-current', index: 0, name: 'get_current_note_context', args: '{"mode":"full"}' },
-                        ] };
+                        ], response_metadata: { finish_reason: 'tool_calls' as const } };
                     } else {
-                        yield { content: 'Answer based on Source note evidence.' };
+                        yield { content: 'Answer based on Source note evidence.',
+                            response_metadata: { finish_reason: 'stop' as const } };
                     }
                 },
             };
@@ -1383,14 +1396,15 @@ describe('ChatService.streamLLM integration', () => {
                     yield { content: '', tool_call_chunks: [{
                         id: 'read-image-source', index: 0, name: 'get_current_note_context',
                         args: '{"mode":"full"}',
-                    }] };
+                    }], response_metadata: { finish_reason: 'tool_calls' as const } };
                 } else if (currentTurn === 1) {
                     yield { content: '', tool_call_chunks: [{
                         id: 'create-from-source', index: 0, name: 'create_image',
                         args: JSON.stringify({ prompt: 'IMAGE_SOURCE_SENTINEL', operation: 'generate' }),
-                    }] };
+                    }], response_metadata: { finish_reason: 'tool_calls' as const } };
                 } else {
-                    yield { content: 'Image request accepted.' };
+                    yield { content: 'Image request accepted.',
+                        response_metadata: { finish_reason: 'stop' as const } };
                 }
             },
         };
@@ -1472,9 +1486,10 @@ describe('ChatService.streamLLM integration', () => {
                     yield { content: '', tool_call_chunks: [{
                         id: 'create-from-attachment', index: 0, name: 'create_image',
                         args: JSON.stringify({ prompt: 'DERIVED_FROM_ATTACHMENT', operation: 'generate' }),
-                    }] };
+                    }], response_metadata: { finish_reason: 'tool_calls' as const } };
                 } else {
-                    yield { content: 'The image request was accepted.' };
+                    yield { content: 'The image request was accepted.',
+                        response_metadata: { finish_reason: 'stop' as const } };
                 }
             },
         };
@@ -1544,14 +1559,15 @@ describe('ChatService.streamLLM integration', () => {
                     yield { content: '', tool_call_chunks: [{
                         id: 'read-note-only', index: 0, name: 'get_current_note_context',
                         args: '{"mode":"full"}',
-                    }] };
+                    }], response_metadata: { finish_reason: 'tool_calls' as const } };
                 } else if (currentTurn === 1) {
                     yield { content: '', tool_call_chunks: [{
                         id: 'create-note-only', index: 0, name: 'create_image',
                         args: JSON.stringify({ prompt: 'NOTE-ONLY-SENTINEL', operation: 'generate' }),
-                    }] };
+                    }], response_metadata: { finish_reason: 'tool_calls' as const } };
                 } else {
-                    yield { content: 'Image request accepted.' };
+                    yield { content: 'Image request accepted.',
+                        response_metadata: { finish_reason: 'stop' as const } };
                 }
             },
         };
@@ -1591,8 +1607,10 @@ describe('ChatService.streamLLM integration', () => {
             stream: jest.fn(async function* () {
                 if (mode === 'desktop' && turn++ === 0) {
                     yield { tool_call_chunks: [{ index: 0, id: 'ghost-prepare', name: 'prepare_ghost_post',
-                        args: JSON.stringify({ intent: 'prepare' }) }] };
-                } else yield { content: 'Check the publishing card and preview before continuing.' };
+                        args: JSON.stringify({ intent: 'prepare' }) }],
+                        response_metadata: { finish_reason: 'tool_calls' as const } };
+                } else yield { content: 'Check the publishing card and preview before continuing.',
+                    response_metadata: { finish_reason: 'stop' as const } };
             }),
         };
         mockCreateChatModel.mockResolvedValue(model);
@@ -1659,9 +1677,11 @@ describe('ChatService.streamLLM integration', () => {
                 providerInputs.push(input);
                 if (dispatch++ === 0) {
                     yield { tool_call_chunks: [{ index: 0, id: 'ghost-status', name: 'prepare_ghost_post',
-                        args: JSON.stringify({ intent: 'prepare', name: 'Publishing' }) }] };
+                        args: JSON.stringify({ intent: 'prepare', name: 'Publishing' }) }],
+                        response_metadata: { finish_reason: 'tool_calls' as const } };
                 } else {
-                    yield { content: 'Use the checked publishing card.' };
+                    yield { content: 'Use the checked publishing card.',
+                        response_metadata: { finish_reason: 'stop' as const } };
                 }
             }),
         };
@@ -1740,9 +1760,10 @@ describe('ChatService.streamLLM integration', () => {
                     yield { tool_call_chunks: [{
                         index: 0, id: 'create-image-1', name: 'create_image',
                         args: JSON.stringify({ prompt: 'Watercolor bookstore', operation: 'generate' }),
-                    }] };
+                    }], response_metadata: { finish_reason: 'tool_calls' as const } };
                 } else {
-                    yield { content: 'The image request was accepted.' };
+                    yield { content: 'The image request was accepted.',
+                        response_metadata: { finish_reason: 'stop' as const } };
                 }
             }),
         };
@@ -1886,6 +1907,7 @@ describe('ChatService.streamLLM integration', () => {
                 name: 'search_memory',
                 args: JSON.stringify({ query: 'launch' }),
             }],
+            response_metadata: { finish_reason: 'tool_calls' as const },
         }]);
         const finalModel = createStreamModel('Answer now.');
         mockCreateChatModel
@@ -1979,6 +2001,7 @@ describe('ChatService.streamLLM integration', () => {
                                     config?.signal?.addEventListener('abort', () => resolve(), { once: true });
                                 });
                                 yield { content: '' };
+                                yield { response_metadata: { finish_reason: 'stop' as const } };
                             },
                         };
                     }
@@ -2063,6 +2086,7 @@ describe('ChatService.streamLLM integration', () => {
                                             content: '# Near soft deadline',
                                         }),
                                     }],
+                                    response_metadata: { finish_reason: 'tool_calls' as const },
                                 };
                             },
                         };
@@ -2087,6 +2111,7 @@ describe('ChatService.streamLLM integration', () => {
                             // A staged preview uses the ordinary finalization
                             // contract; an empty response is still incomplete.
                             yield { content: '' };
+                            yield { response_metadata: { finish_reason: 'stop' as const } };
                         },
                     };
                 }),
@@ -2168,10 +2193,12 @@ describe('ChatService.streamLLM integration', () => {
                                 content: '# Unverified',
                             }),
                         }],
+                        response_metadata: { finish_reason: 'tool_calls' as const },
                     };
                     return;
                 }
-                yield { content: 'The proposal is ready for review.' };
+                yield { content: 'The proposal is ready for review.',
+                    response_metadata: { finish_reason: 'stop' as const } };
             }),
             invoke: jest.fn(async () => ({ content: '' })),
         };
@@ -2258,6 +2285,7 @@ describe('ChatService.streamLLM integration', () => {
                                                 content: '# Buffered acknowledgement',
                                             }),
                                         }],
+                                        response_metadata: { finish_reason: 'tool_calls' as const },
                                     };
                                 },
                             };
@@ -2506,6 +2534,7 @@ describe('ChatService.streamLLM integration', () => {
         let expandedAtFinalBoundary = false;
         const planningModel = createStreamChunksModel([{
             tool_call_chunks: [{ index: 0, id: 'memory-before-growth', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
+            response_metadata: { finish_reason: 'tool_calls' as const },
         }]);
         const answerModel = {
             bindTools: jest.fn(() => answerModel),
@@ -2514,7 +2543,8 @@ describe('ChatService.streamLLM integration', () => {
                 throw new Error('stream rejected before output');
                 yield { content: 'unreachable' };
             }),
-            invoke: jest.fn(async () => ({ content: 'must not invoke after overflow' })),
+            invoke: jest.fn(async () => ({ content: 'must not invoke after overflow',
+                response_metadata: { finish_reason: 'stop' as const } })),
         };
         const summaryModel = createInvokeModel('{}');
         mockCreateChatModel.mockResolvedValueOnce(planningModel).mockImplementation(async (temperature) => {
@@ -2797,7 +2827,7 @@ describe('ChatService.streamLLM integration', () => {
                 goals: [], constraints: hasOfflineRequirement
                     ? [{ text: 'The user requires an offline export.', sourceMessages: [1] }] : [],
                 decisions: [], completed: [], open_questions: [], facts: [],
-            }) };
+            }), response_metadata: { finish_reason: 'stop' as const } };
         });
         const inputs: unknown[] = [];
         const summaryCallsAtAnswerRequests: number[] = [];
@@ -2807,12 +2837,14 @@ describe('ChatService.streamLLM integration', () => {
                 inputs.push(input);
                 summaryCallsAtAnswerRequests.push(summaryModel.invoke.mock.calls.length);
                 if (fallback) throw new Error('stream rejected before output');
-                yield { content: 'The export stays offline.' };
+                yield { content: 'The export stays offline.',
+                    response_metadata: { finish_reason: 'stop' as const } };
             }),
             invoke: jest.fn(async (input: unknown) => {
                 inputs.push(input);
                 summaryCallsAtAnswerRequests.push(summaryModel.invoke.mock.calls.length);
-                return { content: 'The export stays offline.' };
+                return { content: 'The export stays offline.',
+                    response_metadata: { finish_reason: 'stop' as const } };
             }),
         };
         mockCreateChatModel.mockImplementation(async (temperature) => temperature === 0 ? summaryModel : answerModel);
@@ -2863,6 +2895,7 @@ describe('ChatService.streamLLM integration', () => {
         });
         const planningModel = createStreamChunksModel([{
             tool_call_chunks: [{ index: 0, id: 'memory-before-summary', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
+            response_metadata: { finish_reason: 'tool_calls' as const },
         }]);
         const answerInputs: unknown[] = [];
         const answerModel = createStreamModel('Memory evidence is unavailable.', (input) => answerInputs.push(input));
@@ -2905,6 +2938,7 @@ describe('ChatService.streamLLM integration', () => {
         };
         const planningModel = createStreamChunksModel([{
             tool_call_chunks: [{ index: 0, id: 'memory-before-summary-dispatch', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
+            response_metadata: { finish_reason: 'tool_calls' as const },
         }]);
         const answerInputs: unknown[] = [];
         const answerModel = createStreamModel('Memory evidence is unavailable.', (input) => answerInputs.push(input));
@@ -2962,6 +2996,7 @@ describe('ChatService.streamLLM integration', () => {
             const initial = memoryResult('Initial evidence requiring reduction. '.repeat(180));
             const planningModel = createStreamChunksModel([{
                 tool_call_chunks: [{ index: 0, id: 'memory-summary-deadline', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
+                response_metadata: { finish_reason: 'tool_calls' as const },
             }]);
             const summaryModel = createInvokeModel('{}');
             let markAnswerStarted!: () => void;
@@ -3055,6 +3090,7 @@ describe('ChatService.streamLLM integration', () => {
                         name: 'search_memory',
                         args: JSON.stringify({ query: 'launch' }),
                     }],
+                    response_metadata: { finish_reason: 'tool_calls' as const },
                 };
             }),
             invoke: jest.fn(),
@@ -3064,7 +3100,8 @@ describe('ChatService.streamLLM integration', () => {
             bindTools: jest.fn(() => finalModel),
             stream: jest.fn(async function* (input: unknown) {
                 providerInputs.push(input);
-                yield { content: 'Safe final answer.' };
+                yield { content: 'Safe final answer.',
+                    response_metadata: { finish_reason: 'stop' as const } };
             }),
             invoke: jest.fn(),
         };
@@ -3188,11 +3225,19 @@ describe('ChatService.streamLLM integration', () => {
             executeMemorySearch: async input => ({ usedMemory: false, query: input.query, documents: [], sources: [] }),
             createModel: context => ({ stream: async function* (input) {
                 context.recordPromptProjection(input.transcript, input.turnIndex);
-                if (input.turnIndex === 0) yield { type: 'toolcall_delta', id: 'real-anchor-read',
-                    name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
-                else if (input.turnIndex === 1) yield { type: 'toolcall_delta', id: 'real-empty-metadata',
-                    name: 'search_vault_metadata', input: { query: 'UNMATCHED_SENTINEL_9762' }, index: 0 };
-                else yield { type: 'text_delta', text: body };
+                if (input.turnIndex === 0) {
+                    yield { type: 'toolcall_delta', id: 'real-anchor-read',
+                        name: 'get_current_note_context', input: { mode: 'full' }, index: 0 };
+                    yield { type: 'provider_completion', completion: 'tool_calls' };
+                } else if (input.turnIndex === 1) {
+                    yield { type: 'toolcall_delta', id: 'real-empty-metadata',
+                        name: 'search_vault_metadata', input: { query: 'UNMATCHED_SENTINEL_9762' }, index: 0 };
+                    yield { type: 'provider_completion', completion: 'tool_calls' };
+                }
+                else {
+                    yield { type: 'text_delta', text: body };
+                    yield { type: 'provider_completion', completion: 'stop' };
+                }
             } }),
         });
         const controller = new PageletDeepDiscoverController({ runtime, captureSnapshot: capture,
@@ -3311,6 +3356,7 @@ describe('ChatService.streamLLM integration', () => {
             const inputs: Record<string, string>[] = [];
             const toolModel = (name: string, args: unknown, id: string) => createStreamChunksModel([{
                 tool_call_chunks: [{ index: 0, id, name, args: JSON.stringify(args) }],
+                response_metadata: { finish_reason: 'tool_calls' as const },
             }], input => inputs.push(input));
             mockCreateChatModel.mockReset()
                 .mockResolvedValueOnce(toolModel('load_tools', { names: ['read_pagelet_attachment'] }, 'load-pagelet'))
@@ -3646,6 +3692,7 @@ describe('ChatService.streamLLM integration', () => {
                                 content: 'must not write',
                             }),
                         }],
+                        response_metadata: { finish_reason: 'tool_calls' as const },
                     };
                     return;
                 }
@@ -3720,10 +3767,12 @@ describe('ChatService.streamLLM integration', () => {
                                 content: '# Operations E2E',
                             }),
                         }],
+                        response_metadata: { finish_reason: 'tool_calls' as const },
                     };
                     return;
                 }
-                yield { content: 'The note has been saved.' };
+                yield { content: 'The note has been saved.',
+                    response_metadata: { finish_reason: 'stop' as const } };
             }),
         };
         mockCreateChatModel.mockResolvedValue(model);

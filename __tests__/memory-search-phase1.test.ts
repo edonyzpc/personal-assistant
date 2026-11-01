@@ -244,10 +244,12 @@ describe("Phase 1 reranker invocation", () => {
         const llm = RunnableLambda.from(async (input: unknown) => {
             const promptValue = input as { toChatMessages?: () => Array<{ content?: unknown }> };
             const system = String(promptValue.toChatMessages?.()[0]?.content ?? "");
+            const text = system.includes("ranking")
+                ? '{"verdict":"relevant","ranking":[0],"needsMoreEvidence":false}'
+                : '{"keywords":"useful evidence","temporal":"none"}';
             return {
-                content: system.includes("ranking")
-                    ? '{"verdict":"relevant","ranking":[0],"needsMoreEvidence":false}'
-                    : '{"keywords":"useful evidence","temporal":"none"}',
+                response_metadata: { finish_reason: "stop" },
+                content: [{ type: "text", text }],
             };
         });
         const createChatModel = jest.fn(async (_temperature: number, _options: unknown) => llm);
@@ -315,10 +317,11 @@ describe("Phase 1 reranker invocation", () => {
         expect(result).toEqual({ ok: false });
     });
 
-    it("reranks even one candidate with the selected Chat model", async () => {
+    it("reranks one candidate from SDK text blocks with the selected Chat model", async () => {
         const candidate = await makeAnchoredCandidate("notes/one.md", "# One\n\nUseful evidence.");
         const invoke = jest.fn(async (_input: unknown) => ({
-            content: '{"verdict":"relevant","ranking":[0],"needsMoreEvidence":false}',
+            response_metadata: { finish_reason: "stop" },
+            content: [{ type: "text", text: '{"verdict":"relevant","ranking":[0],"needsMoreEvidence":false}' }],
         }));
         const llm = RunnableLambda.from(invoke);
         const createChatModel = jest.fn(async (
@@ -607,7 +610,7 @@ describe("Phase 1 search assembly", () => {
                     ? await options.invokeResponse(config?.signal)
                     : options.response)
                 : options.rewriteResponse ?? options.response;
-            return { content };
+            return { response_metadata: { finish_reason: "stop" }, content };
         });
         const llm = RunnableLambda.from(invoke);
         const createChatModel = jest.fn(async (_temperature?: number, modelOptions?: unknown) => {

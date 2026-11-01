@@ -257,20 +257,17 @@ SOFTWARE.
 | --- | --- | --- | --- |
 | `@cfworker/json-schema` | `4.1.1` | `MIT` | `node_modules/@cfworker/json-schema` |
 | `@kurkle/color` | `0.3.4` | `MIT` | `node_modules/@kurkle/color` |
-| `@langchain/core` | `1.1.41` | `MIT` | `node_modules/@langchain/core` |
-| `@langchain/openai` | `1.4.4` | `MIT` | `node_modules/@langchain/openai` |
+| `@langchain/core` | `1.3.2` | `MIT` | `node_modules/@langchain/core` |
+| `@langchain/openai` | `1.8.0` | `MIT` | `node_modules/@langchain/openai` |
 | `@sqlite.org/sqlite-wasm` | `3.53.0-build1` | `Apache-2.0` | `node_modules/@sqlite.org/sqlite-wasm` |
 | `@standard-schema/spec` | `1.1.0` | `MIT` | `node_modules/@standard-schema/spec` |
 | `@tanstack/react-virtual` | `3.14.21` | `MIT` | `node_modules/@tanstack/react-virtual` |
 | `@tanstack/virtual-core` | `3.19.6` | `MIT` | `node_modules/@tanstack/virtual-core` |
 | `@zumer/snapdom` | `2.23.2` | `MIT` | `node_modules/@zumer/snapdom` |
-| `ansi-styles` | `5.2.0` | `MIT` | `node_modules/@langchain/core/node_modules/ansi-styles` |
 | `argparse` | `1.0.10` | `MIT` | `node_modules/argparse` |
 | `argparse` | `3.0.3` | `PSF-2.0` | `node_modules/markdown-it/node_modules/argparse` |
 | `base64-js` | `1.5.1` | `MIT` | `node_modules/base64-js` |
-| `camelcase` | `6.3.0` | `MIT` | `node_modules/camelcase` |
 | `chart.js` | `4.4.9` | `MIT` | `node_modules/chart.js` |
-| `decamelize` | `1.2.0` | `MIT` | `node_modules/decamelize` |
 | `entities` | `8.1.0` | `BSD-2-Clause` | `node_modules/entities` |
 | `esprima` | `4.0.1` | `BSD-2-Clause` | `node_modules/esprima` |
 | `eventemitter3` | `4.0.7` | `MIT` | `node_modules/eventemitter3` |
@@ -278,7 +275,7 @@ SOFTWARE.
 | `js-tiktoken` | `1.0.21` | `MIT` | `node_modules/js-tiktoken` |
 | `js-tokens` | `4.0.0` | `MIT` | `node_modules/js-tokens` |
 | `js-yaml` | `3.15.2` | `MIT` | `node_modules/js-yaml` |
-| `langsmith` | `0.7.1` | `MIT` | `node_modules/langsmith` |
+| `langsmith` | `0.11.6` | `MIT` | `node_modules/langsmith` |
 | `linkify-it` | `6.1.0` | `MIT` | `node_modules/linkify-it` |
 | `loose-envify` | `1.4.0` | `MIT` | `node_modules/loose-envify` |
 | `markdown-it` | `15.0.3` | `MIT` | `node_modules/markdown-it` |
@@ -287,7 +284,7 @@ SOFTWARE.
 | `nanoid` | `5.1.16` | `MIT` | `node_modules/nanoid` |
 | `obsidian-callout-manager` | `1.0.2-alpha1` | `MIT` | `node_modules/obsidian-callout-manager` |
 | `obsidian-extra` | `0.1.5` | `MIT` | `node_modules/obsidian-extra` |
-| `openai` | `6.35.0` | `Apache-2.0` | `node_modules/openai` |
+| `openai` | `7.47.0` | `Apache-2.0` | `node_modules/openai` |
 | `p-finally` | `1.0.0` | `MIT` | `node_modules/p-finally` |
 | `p-queue` | `6.6.2` | `MIT` | `node_modules/p-queue` |
 | `p-timeout` | `3.2.0` | `MIT` | `node_modules/p-timeout` |
@@ -300,7 +297,6 @@ SOFTWARE.
 | `semver` | `7.8.5` | `ISC` | `node_modules/semver` |
 | `sprintf-js` | `1.0.3` | `BSD-3-Clause` | `node_modules/sprintf-js` |
 | `uc.micro` | `3.0.0` | `MIT` | `node_modules/uc.micro` |
-| `uuid` | `11.1.1` | `MIT` | `node_modules/@langchain/core/node_modules/uuid` |
 | `zod` | `3.25.76` | `MIT` | `node_modules/zod` |
 | `zustand` | `5.0.15` | `MIT` | `node_modules/zustand` |
 
@@ -362,7 +358,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ~~~
 
-### @langchain/core@1.1.41
+### @langchain/core@1.3.2
 
 - License: `MIT`
 - Lockfile path: `node_modules/@langchain/core`
@@ -392,7 +388,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~
 
-### @langchain/openai@1.4.4
+### @langchain/openai@1.8.0
 
 - License: `MIT`
 - Lockfile path: `node_modules/@langchain/openai`
@@ -757,24 +753,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~
 
-### ansi-styles@5.2.0
-
-- License: `MIT`
-- Lockfile path: `node_modules/@langchain/core/node_modules/ansi-styles`
-- Source file: `node_modules/@langchain/core/node_modules/ansi-styles/license`
-
-~~~text
-MIT License
-
-Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-~~~
-
 ### argparse@1.0.10
 
 - License: `MIT`
@@ -891,24 +869,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ~~~
 
-### camelcase@6.3.0
-
-- License: `MIT`
-- Lockfile path: `node_modules/camelcase`
-- Source file: `node_modules/camelcase/license`
-
-~~~text
-MIT License
-
-Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-~~~
-
 ### chart.js@4.4.9
 
 - License: `MIT`
@@ -925,36 +885,6 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-~~~
-
-### decamelize@1.2.0
-
-- License: `MIT`
-- Lockfile path: `node_modules/decamelize`
-- Source file: `node_modules/decamelize/license`
-
-~~~text
-The MIT License (MIT)
-
-Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
 ~~~
 
 ### entities@8.1.0
@@ -1157,10 +1087,22 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ~~~
 
-### langsmith@0.7.1
+### langsmith@0.11.6
 
 - License: `MIT`
 - Lockfile path: `node_modules/langsmith`
+- Source file: `node_modules/langsmith/LICENSE`
+
+~~~text
+Copyright 2026 langChain
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+~~~
+
 - External notice source: <https://github.com/langchain-ai/langsmith-sdk/blob/main/LICENSE>
 
 ~~~text
@@ -1428,7 +1370,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ~~~
 
-### openai@6.35.0
+### openai@7.47.0
 
 - License: `Apache-2.0`
 - Lockfile path: `node_modules/openai`
@@ -1979,24 +1921,6 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
 LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-~~~
-
-### uuid@11.1.1
-
-- License: `MIT`
-- Lockfile path: `node_modules/@langchain/core/node_modules/uuid`
-- Source file: `node_modules/@langchain/core/node_modules/uuid/LICENSE.md`
-
-~~~text
-The MIT License (MIT)
-
-Copyright (c) 2010-2020 Robert Kieffer and other contributors
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ~~~
 
 ### zod@3.25.76

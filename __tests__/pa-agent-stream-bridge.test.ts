@@ -304,7 +304,7 @@ describe("B-135 writing completion across adapter, loop and legacy bridge", () =
     it.each([
         { label: "invalid JSON", raw: envelope.slice(0, -1), reason: "invalid_output" },
         { label: "revoked source", current: false, reason: "source_changed" },
-        { label: "length finish", completion: "length" as const, reason: "incomplete" },
+        { label: "length finish", completion: "length" as const, reason: "provider_incomplete" },
         { label: "missing finish", omitFinish: true, reason: "incomplete" },
     ])("does not promote $label merely because some text was received", async ({ label: _label, reason, ...input }) => {
         const { events } = await runWritingTail(input);

@@ -3,6 +3,7 @@ import { Editor, MarkdownView, Notice, type App } from 'obsidian';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 
 import { AIUtils, type AIUtilsHost } from './ai-utils';
+import { assertProviderCompletion, readProviderText } from './provider-result';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 
 interface SummaryResponse {
@@ -175,7 +176,8 @@ export class AIService {
             new SystemMessage(systemPrompt),
             new HumanMessage(`**文字内容：**${query}`),
         ]);
-        const content = stringifyMessageContent(response.content);
+        assertProviderCompletion(response);
+        const content = readProviderText(response) ?? "";
         this.plugin.log('LLM response received', { contentLength: content.length });
         return content;
     }
@@ -197,16 +199,4 @@ export class AIService {
   "keywords": ["...", "..."]
 }`;
     }
-}
-
-function stringifyMessageContent(content: unknown): string {
-    if (typeof content === 'string') return content;
-    if (Array.isArray(content)) {
-        return content.map(part => {
-            if (typeof part === 'string') return part;
-            if (part && typeof part === 'object' && 'text' in part && typeof part.text === 'string') return part.text;
-            return '';
-        }).join('\n').trim();
-    }
-    return '';
 }

@@ -9,6 +9,7 @@ import type { AgentDebugCallScope, AgentDebugLineage, AgentDebugRunRecorder } fr
 import type { PaAgentRunUsageLedger } from "./agent-usage-ledger";
 import { agentDebugNow, beginAgentDebugResponsePhase, createAgentDebugCall,
     observeAgentDebugCall, observeAgentDebugResponse } from "./agent-debug-observation";
+import { assertProviderCompletion, readProviderCompletion } from "./provider-result";
 
 const PREPARATION_TIMEOUT_MS = 300_000;
 const UNKNOWN_MODEL_PROMPT_CHAR_FALLBACK = 120_000;
@@ -297,6 +298,7 @@ export async function prepareGhostMetadata(
             // Usage belongs to the physical request even if its source was revoked in flight.
             observeDebug(() => observeAgentDebugResponse(debugCall, result, "replace", "provider-usage", "usage_only"));
             assertCurrent();
+            assertProviderCompletion(result);
         } catch {
             assertCurrent();
             throw new GhostMetadataPreparationError("provider_failure");
@@ -307,10 +309,9 @@ export async function prepareGhostMetadata(
         observeDebug(() => observeAgentDebugCall(debugCall, { phase: "provider_content",
             toolOutput: { content: Object.getOwnPropertyDescriptor(result, "content")?.value } }));
         observeDebug(() => {
-            const metadata = Object.getOwnPropertyDescriptor(result, "response_metadata")?.value;
-            const finishReason = metadata && typeof metadata === "object"
-                ? Object.getOwnPropertyDescriptor(metadata, "finish_reason")?.value : undefined;
-            if (["stop", "length", "content_filter", "tool_calls", "function_call"].includes(finishReason)) {
+            const finishReason = readProviderCompletion(result);
+            if (finishReason !== undefined
+                && ["stop", "length", "content_filter", "tool_calls", "function_call"].includes(finishReason)) {
                 observeAgentDebugCall(debugCall, { phase: "provider_completion", outcome: finishReason });
             }
         });

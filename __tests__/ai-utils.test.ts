@@ -72,16 +72,24 @@ describe('native tool calling capability', () => {
         }
     });
 
-    it('keeps other models and OpenAI-compatible endpoints on Chat Completions', async () => {
+    it('uses endpoint-owned legacy identity for OpenAI Responses and Custom Completions', async () => {
         const originalFetch = globalThis.fetch;
         const urls: string[] = [];
         globalThis.fetch = jest.fn<typeof fetch>(async (url, _init) => {
-            urls.push(String(url));
-            return new Response(JSON.stringify({ id: 'offline', object: 'chat.completion', created: 0,
-                model: 'offline', choices: [{ index: 0, finish_reason: 'stop',
-                    message: { role: 'assistant', content: 'ok' } }],
-                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }),
-                { headers: { 'content-type': 'application/json' } });
+            const endpoint = String(url);
+            urls.push(endpoint);
+            return endpoint.endsWith('/responses')
+                ? new Response(JSON.stringify({ id: 'offline', object: 'response', created_at: 0,
+                    status: 'completed', model: 'offline', error: null, incomplete_details: null,
+                    output: [{ id: 'msg', type: 'message', status: 'completed', role: 'assistant',
+                        content: [{ type: 'output_text', text: 'ok', annotations: [] }] }],
+                    usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }, output_text: 'ok' }),
+                    { headers: { 'content-type': 'application/json' } })
+                : new Response(JSON.stringify({ id: 'offline', object: 'chat.completion', created: 0,
+                    model: 'offline', choices: [{ index: 0, finish_reason: 'stop',
+                        message: { role: 'assistant', content: 'ok' } }],
+                    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }),
+                    { headers: { 'content-type': 'application/json' } });
         });
         try {
             const cases = [
@@ -96,7 +104,7 @@ describe('native tool calling capability', () => {
                 await (await aiUtils.createChatModel(0.8, { transport: 'native' })).invoke('offline');
             }
             expect(urls).toEqual([
-                'https://api.openai.com/v1/chat/completions',
+                'https://api.openai.com/v1/responses',
                 'https://unverified.invalid/v1/chat/completions',
             ]);
         } finally {
@@ -506,6 +514,11 @@ describe('Qwen DashScope request options', () => {
             enableThinking: true,
         })).toEqual({
             enable_thinking: true,
+        });
+        expect(buildQwenModelKwargs('dashscope-cn', 'https://dashscope.aliyuncs.com/compatible-mode/v1', {
+            enableThinking: false,
+        })).toEqual({
+            enable_thinking: false,
         });
     });
 

@@ -281,10 +281,22 @@ describe("iOS DashScope chat transport", () => {
 
         const response = JSON.stringify({ id: "chatcmpl-routing", object: "chat.completion", created: 1,
             model: "deepseek-v4-pro", choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }] });
+        const responses = JSON.stringify({
+            id: "resp-routing", object: "response", created_at: 1, status: "completed", model: "gpt-4o",
+            error: null, incomplete_details: null, instructions: null, metadata: {}, parallel_tool_calls: false,
+            output: [{
+                id: "msg-routing", type: "message", status: "completed", role: "assistant",
+                content: [{ type: "output_text", text: "OK", annotations: [] }],
+            }],
+            usage: { input_tokens: 1, input_tokens_details: { cached_tokens: 0 }, output_tokens: 1,
+                output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 2 },
+            output_text: "OK",
+        });
         mockedRequestUrl.mockResolvedValue(responseFixture(response, "application/json"));
-        const nativeFetch = jest.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(response, {
-            status: 200, headers: { "content-type": "application/json" },
-        }));
+        const nativeFetch = jest.spyOn(globalThis, "fetch").mockImplementation(async url => new Response(
+            String(url).includes("api.openai.com") ? responses : response,
+            { status: 200, headers: { "content-type": "application/json" } },
+        ));
         try {
             const iosDashScopeModel = await new AIUtils(makeHost()).createChatModel(0, { transport: "native" });
             await iosDashScopeModel.invoke([new HumanMessage("routing fixture")]);
@@ -1035,7 +1047,7 @@ describe("iOS DashScope chat transport", () => {
         const nativeFetch = jest.spyOn(globalThis, "fetch")
             .mockResolvedValueOnce(new Response(failure, {
                 status: 429,
-                headers: { "content-type": "application/json", "retry-after-ms": "1" },
+                headers: { "content-type": "application/json", "retry-after": "0" },
             }))
             .mockResolvedValueOnce(new Response(success, {
                 status: 200,

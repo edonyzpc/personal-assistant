@@ -8,6 +8,7 @@ import { createAgentDebugPhaseInstanceId, type AgentDebugLog } from './pa-agent-
 import { agentDebugNow } from './agent-debug-observation';
 import { PaAgentContextOverflowError } from "./context/PaAgentContextOverflowError";
 import { getProviderAdmissionError } from "./provider-admission-error";
+import { readProviderErrorStatus, readProviderRetryAfterMs, resolveProviderRetryable } from "./provider-retry-policy";
 import { parseTaskIncompleteOutput, REPORT_TASK_INCOMPLETE } from './pa-agent-task-outcome';
 import type { AgentRunLease } from "./agent-run-coordinator";
 import { createAbortError, isAbortError } from "./chat-utils";
@@ -995,6 +996,7 @@ export class PaAgentLoop {
         let sawThinking = false;
         let sawText = false;
         let sawToolCall = false;
+        let sawProviderCompletion = false;
         let pendingText = "";
         let hasPendingAnswerText = false;
         let pendingTextReclassified = false;
@@ -1227,6 +1229,7 @@ export class PaAgentLoop {
                 continue;
             }
             if (chunk.type === "provider_completion") {
+                sawProviderCompletion = true;
                 if (assistantMessage.providerCompletion !== undefined && assistantMessage.providerCompletion !== chunk.completion) {
                     stopReason = "error";
                     terminalStatus = hasPendingAnswerText ? "completed_with_warning" : "error";
@@ -1433,6 +1436,16 @@ export class PaAgentLoop {
             terminalStatus = "incomplete";
             diagnostics.push({ type: "provider_tool_calls_missing" });
         }
+        if (terminalStatus === undefined) {
+            if (!sawProviderCompletion) {
+                terminalStatus = "incomplete";
+                diagnostics.push({ type: "provider_completion_missing" });
+            } else if (assistantMessage.providerCompletion !== "stop"
+                && assistantMessage.providerCompletion !== "tool_calls") {
+                terminalStatus = "incomplete";
+                diagnostics.push({ type: "provider_incomplete", completion: assistantMessage.providerCompletion });
+            }
+        }
         if (!hasToolCall && hasPendingAnswerText && this.options.isFinalTextCurrent) {
             if (!this.isFinalTextCurrent()) {
                 if (terminalStatus !== "aborted" && terminalStatus !== "error") terminalStatus = "incomplete";
@@ -1459,7 +1472,7 @@ export class PaAgentLoop {
             diagnostics.push({ type: "native_writing_invalid" });
         }
         assistantMessage.stopReason = stopReason ?? (hasToolCall ? "tool_calls" : "stop");
-        assistantMessage.providerCompletion ??= "unknown";
+        if (sawProviderCompletion) assistantMessage.providerCompletion ??= "unknown";
         const modelElapsedMs = elapsedSince(modelStartedAt, this.now());
         this.events.messageEnd(turnId, assistantMessage, {
             transportOutcome,
@@ -2159,11 +2172,11 @@ function providerErrorDiagnostic(error: unknown): Record<string, unknown> {
         return { type: "context_local_overflow", promptChars: error.promptChars, maxPromptChars: error.maxPromptChars };
     }
     if (isProviderContextOverflow(error)) return { type: 'provider_context_overflow' };
-    const retryAfterMs = readRetryAfterMs(error);
+    const retryAfterMs = readProviderRetryAfterMs(error);
     return {
         type: "provider_error",
         message: errorMessage(error),
-        retryable: isRetryableProviderTransportError(error),
+        retryable: resolveProviderRetryable(error),
         category: providerErrorCategory(error),
         ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
     };
@@ -2188,62 +2201,20 @@ export function isProviderContextOverflow(error: unknown): boolean {
 function providerErrorCategory(error: unknown): string {
     if (!error || typeof error !== "object") return "unknown";
     const record = error as Record<string, unknown>;
-    const status = numberValue(record.status) ?? numberValue(record.statusCode);
+    const status = readProviderErrorStatus(error);
     if (status === 408) return "request_timeout";
     if (status === 429) return "rate_limited";
     if (status !== undefined && status >= 500) return "server_error";
-    const code = stringValue(record.code)
-        ?? stringValue((record.cause as Record<string, unknown> | undefined)?.code);
+    const causeCode = (record.cause as Record<string, unknown> | undefined)?.code;
+    const normalizedCode = typeof record.code === "string" ? record.code.trim()
+        : typeof causeCode === "string" ? causeCode.trim() : "";
+    const code = normalizedCode || undefined;
     return code !== undefined && new Set([
         "ECONNRESET", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT",
         "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_SOCKET",
     ]).has(code.toUpperCase()) ? "transport_error" : "unknown";
 }
 
-function readRetryAfterMs(error: unknown): number | undefined {
-    if (!error || typeof error !== "object") return undefined;
-    const record = error as Record<string, unknown>;
-    const direct = numberValue(record.retryAfterMs);
-    if (direct !== undefined && direct >= 0) return direct;
-    const headers = record.headers;
-    let raw: unknown;
-    if (headers && typeof headers === "object") {
-        const getter = (headers as { get?: (name: string) => unknown }).get;
-        if (typeof getter === "function") {
-            try { raw = getter.call(headers, "retry-after"); } catch { /* malformed provider headers */ }
-        }
-        raw ??= (headers as Record<string, unknown>)["retry-after"]
-            ?? (headers as Record<string, unknown>)["Retry-After"];
-    }
-    if (typeof raw !== "string" && typeof raw !== "number") return undefined;
-    const text = String(raw).trim();
-    if (!text) return undefined;
-    const seconds = Number(text);
-    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1_000;
-    const date = Date.parse(text);
-    return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
-}
-
-function isRetryableProviderTransportError(error: unknown): boolean {
-    if (!error || typeof error !== "object") return false;
-    const record = error as Record<string, unknown>;
-    const status = numberValue(record.status) ?? numberValue(record.statusCode);
-    if (status === 408 || status === 429 || (status !== undefined && status >= 500)) return true;
-    const code = stringValue(record.code)
-        ?? stringValue((record.cause as Record<string, unknown> | undefined)?.code);
-    return code !== undefined && new Set([
-        "ECONNRESET", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT",
-        "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_SOCKET",
-    ]).has(code.toUpperCase());
-}
-
-function numberValue(value: unknown): number | undefined {
-    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function stringValue(value: unknown): string | undefined {
-    return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
 
 function isOrdinaryEmptyFinalizationResponse(summary: PaAgentTurnSummary): boolean {
     return summary.status === "incomplete"

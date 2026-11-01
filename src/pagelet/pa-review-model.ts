@@ -41,6 +41,11 @@
  */
 
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import {
+    assertProviderCompletion,
+    ProviderCompletionError,
+    readProviderText,
+} from "../ai-services/provider-result";
 
 import {
     PageletReviewInputSchema,
@@ -96,7 +101,7 @@ export interface PageletChatModelLike {
     /** Present on real ChatOpenAI; may be absent on hand-rolled providers. */
     withStructuredOutput?<TOut>(
         schema: unknown,
-        options?: { name?: string; method?: string; strict?: boolean },
+        options?: { name?: string; method?: string; strict?: boolean; includeRaw?: boolean },
     ): {
         invoke(input: unknown, options?: { signal?: AbortSignal }): Promise<TOut>;
     };
@@ -690,7 +695,7 @@ export class PageletReviewModel {
         // overload signature that may shift between LangChain releases.
         const structured = model.withStructuredOutput!<unknown>(
             PageletStructuredReviewResultSchema as unknown,
-            { name: "pagelet_review", method: "jsonSchema", strict: true },
+            { name: "pagelet_review", method: "jsonSchema", strict: true, includeRaw: true },
         );
 
         let attempt = 0;
@@ -725,6 +730,7 @@ export class PageletReviewModel {
                         ? opts.executeProviderCall(invoke, { signal: deadline.signal })
                         : invoke(),
                 );
+                raw = requireCompletedStructuredResult(raw);
             } catch (err) {
                 if (err instanceof PageletProviderCallControlError) throw err;
                 const elapsedMs = Math.max(0, now() - started);
@@ -736,6 +742,16 @@ export class PageletReviewModel {
                         outcome: "timeout",
                     });
                     return errorOutcome("timeout", diagnostics, opts.userMessageLocale);
+                }
+                if (err instanceof ProviderCompletionError) {
+                    diagnostics.providerError = errorMessage(err);
+                    recordPageletTiming(diagnostics, "llm_attempt", elapsedMs, {
+                        path: diagnostics.path,
+                        attempt: attempt + 1,
+                        outcome: "provider_error",
+                        error: diagnostics.providerError,
+                    });
+                    return errorOutcome("provider_error", diagnostics, opts.userMessageLocale);
                 }
                 // withStructuredOutput throws on schema validation failure;
                 // treat the throw as a schema-invalid signal and either
@@ -834,6 +850,7 @@ export class PageletReviewModel {
                         ? opts.executeProviderCall(invoke, { signal: deadline.signal })
                         : invoke(),
                 );
+                assertProviderCompletion(response);
             } catch (err) {
                 if (err instanceof PageletProviderCallControlError) throw err;
                 const elapsedMs = Math.max(0, now() - started);
@@ -858,7 +875,7 @@ export class PageletReviewModel {
             const elapsedMs = Math.max(0, now() - started);
             diagnostics.elapsedMs += elapsedMs;
 
-            const text = coerceTextContent(response.content);
+            const text = readProviderText(response) ?? coerceTextContent(response.content);
             const payloadStr = extractJsonPayload(text);
             if (!payloadStr) {
                 lastErrorCode = "parse_failed";
@@ -1061,6 +1078,18 @@ function coerceTextContent(content: unknown): string {
     }
     if (content == null) return "";
     return String(content);
+}
+
+function requireCompletedStructuredResult(value: unknown): unknown {
+    const record = value && typeof value === "object" && !Array.isArray(value)
+        ? value as { parsed?: unknown; raw?: unknown }
+        : undefined;
+    if (record && "parsed" in record && "raw" in record) {
+        assertProviderCompletion(record.raw);
+        return record.parsed;
+    }
+    assertProviderCompletion(value);
+    return value;
 }
 
 function isAbortError(err: unknown): boolean {

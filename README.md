@@ -142,7 +142,7 @@ Save reusable AI connections, choose a **Default AI service**, and let Chat, not
 
 Memory keeps separate device-local profiles for retrieval configurations. Changing the embedding model/dimension can require new preparation; compatible existing profiles can be reused, and inactive profiles do not receive paid background maintenance. Switching profiles does not inherently upload or rebuild the whole vault.
 
-OpenAI image generation/editing accepts the official `https://api.openai.com/v1` endpoint; Wan recognizes its supported DashScope endpoints. Custom Chat/embedding compatibility does not provide an image-generation adapter. [Connection setup](./Manual.md#3-configuration) · [Image guide](./docs/guides/multimodal-chat-user-guide.md)
+Custom Chat uses an OpenAI-compatible Chat Completions interface. OpenAI image generation/editing accepts the official `https://api.openai.com/v1` endpoint; Wan recognizes its supported DashScope endpoints. Custom Chat/embedding compatibility does not provide an image-generation adapter. [Connection setup](./Manual.md#3-configuration) · [Image guide](./docs/guides/multimodal-chat-user-guide.md)
 
 ### Mobile VSS validation note
 

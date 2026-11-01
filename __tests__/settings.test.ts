@@ -1825,8 +1825,8 @@ describe('PROVIDER_PRESETS catalog', () => {
         );
     });
 
-    it('uses gpt-4o-mini as the OpenAI default chat model', () => {
-        expect(PROVIDER_PRESETS.openai.chatModelName).toBe('gpt-4o-mini');
+    it('uses gpt-6.1-terra as the OpenAI default chat model', () => {
+        expect(PROVIDER_PRESETS.openai.chatModelName).toBe('gpt-6.1-terra');
         expect(PROVIDER_PRESETS.openai.embeddingModelName).toBe('text-embedding-3-small');
     });
 

@@ -7069,13 +7069,16 @@ describe('Pagelet Discover provider first-use admission', () => {
         let currentContent = 'SAFE CURRENT NOTE';
         let relatedContent = 'SAFE LIVE RELATED NOTE';
         let providerPolicyIdentity = 'provider-policy:test';
-        const invoke = jest.fn(async (_prompt: string) => JSON.stringify({
-            findings: [{
-                text: 'These notes share a release constraint.',
-                sourceFile: relatedFile.path,
-                sourceTitle: 'related',
-                category: 'connection',
-            }],
+        const invoke = jest.fn(async (_prompt: string) => ({
+            content: JSON.stringify({
+                findings: [{
+                    text: 'These notes share a release constraint.',
+                    sourceFile: relatedFile.path,
+                    sourceTitle: 'related',
+                    category: 'connection',
+                }],
+            }),
+            response_metadata: { finish_reason: 'stop' as const },
         }));
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         installPluginShellOwners(plugin);
@@ -7251,12 +7254,12 @@ describe('Pagelet Discover provider first-use admission', () => {
             harness.plugin.settings.aiProvider = 'custom';
             harness.plugin.settings.chatModelName = 'replacement-model';
             harness.setProviderPolicyIdentity('provider-policy:changed');
-            return JSON.stringify({ findings: [{
+            return { content: JSON.stringify({ findings: [{
                 text: 'Stale finding.',
                 sourceFile: harness.relatedFile.path,
                 sourceTitle: 'related',
                 category: 'connection',
-            }] });
+            }] }), response_metadata: { finish_reason: 'stop' as const } };
         });
 
         const result = await harness.plugin.runDiscoveryAnalysis(
@@ -7278,12 +7281,12 @@ describe('Pagelet Discover provider first-use admission', () => {
         const harness = createDiscoveryHarness({ notified: true });
         harness.invoke.mockImplementation(async () => {
             harness.setRelatedAvailable(false);
-            return JSON.stringify({ findings: [{
+            return { content: JSON.stringify({ findings: [{
                 text: 'Stale finding.',
                 sourceFile: harness.relatedFile.path,
                 sourceTitle: 'related',
                 category: 'connection',
-            }] });
+            }] }), response_metadata: { finish_reason: 'stop' as const } };
         });
 
         const result = await harness.plugin.runDiscoveryAnalysis(

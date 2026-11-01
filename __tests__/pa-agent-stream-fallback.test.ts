@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from "@jest/globals";
+import { stampRetryable } from "@langchain/core/errors";
 
 import { streamWithInvokeFallback } from "../src/ai-services/pa-agent-runtime";
 import type { PaAgentModelStreamChunk } from "../src/ai-services/pa-agent-loop";
@@ -55,6 +56,24 @@ describe("streamWithInvokeFallback (P0-D)", () => {
         expect(invoke).toHaveBeenCalledTimes(1);
         expect(invoke).toHaveBeenCalledWith({ evidence: "CURRENT" }, undefined);
         expect(chunks).toEqual([{ type: "text_delta", text: "Current answer" }]);
+    });
+
+    it("does not invoke again after a rate limit or an SDK-marked nonretryable stream failure", async () => {
+        const rateLimit = Object.assign(new Error("rate limited"), { status: 429 });
+        stampRetryable(rateLimit, true);
+        const nonretryable = Object.assign(new Error("provider rejected the request"), { status: 400 });
+        stampRetryable(nonretryable, false);
+        const sdkCorrectedForbidden = Object.assign(new Error("forbidden"), { status: 403 });
+        stampRetryable(sdkCorrectedForbidden, true);
+        for (const failure of [rateLimit, nonretryable, sdkCorrectedForbidden]) {
+            const invoke = jest.fn<ChainInvoke>(async () => ({ content: "must not retry" }));
+            const prepareInvokeInput = jest.fn(async () => ({ refreshed: true }));
+            await expect(drain(streamWithInvokeFallback({ input: {}, prepareInvokeInput, chain: makeChain({
+                stream: async function* () { throw failure; }, invoke,
+            }) }))).rejects.toBe(failure);
+            expect(invoke).not.toHaveBeenCalled();
+            expect(prepareInvokeInput).not.toHaveBeenCalled();
+        }
     });
 
     it.each(["no reprojector", "visible output", "invoke rejected"])("does not repeatedly recover stale input after %s", async scenario => {
