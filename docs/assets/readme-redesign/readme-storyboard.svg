@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1120" width="1280" height="1120" role="img" aria-labelledby="title desc">
+<title id="title">README 阅读路径与素材分镜</title>
+<desc id="desc">文档改版方案，非 PA 实际界面。左侧为首屏、首个任务、三个独立需求、持续使用与完整能力、反馈披露五段阅读路径。右侧为按需选取的真实素材，A5 配置局部图、A4 成果图与 V1 视频均按需要制作。一条默认体验版本贯穿安装、步骤和主图；截图与视频尚待采集。</desc>
+<style>text { font-family: "PingFang SC", "Helvetica Neue", Helvetica, "Arial Unicode MS", Arial, "Microsoft YaHei", sans-serif; }</style>
+<defs><marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="strokeWidth"><polygon points="0 0,10 3.5,0 7" fill="#2563eb"/></marker></defs>
+<rect x="0" y="0" width="1280" height="1120" rx="0" fill="#ffffff" stroke="#ffffff" stroke-width="1.5"/>
+<text x="40" y="55" font-size="32" fill="#111827" font-weight="600">README 阅读路径与素材分镜</text>
+<text x="1070" y="51" font-size="18" fill="#6b7280" font-weight="400">文档改版方案</text>
+<text x="40" y="88" font-size="20" fill="#6b7280" font-weight="400">一个默认体验版本贯穿安装、步骤与主图；其他版本差异另列。</text>
+<rect x="40" y="110" width="1200" height="48" rx="8" fill="#fff7ed" stroke="#fed7aa" stroke-width="1.5"/>
+<text x="60" y="142" font-size="23" fill="#9a3412" font-weight="600">方案示意，非 PA 实际界面 · 截图 / 视频尚待采集</text>
+<text x="40" y="201" font-size="24" fill="#111827" font-weight="600">建议阅读路径</text>
+<text x="40" y="227" font-size="18" fill="#6b7280" font-weight="400">先体验一次，再选择下一步与深入资料</text>
+<text x="660" y="201" font-size="24" fill="#111827" font-weight="600">素材候选与表达焦点</text>
+<text x="660" y="227" font-size="18" fill="#6b7280" font-weight="400">一张图讲清一个收益；按实际需要裁剪或补图</text>
+<rect x="40" y="244" width="580" height="148" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<rect x="60" y="262" width="40" height="32" rx="7" fill="#eff6ff" stroke="#eff6ff" stroke-width="1.5"/>
+<text x="68" y="285" font-size="20" fill="#2563eb" font-weight="600">01</text>
+<text x="114" y="286" font-size="23" fill="#111827" font-weight="600">首屏：Obsidian 开源 AI 助手</text>
+<text x="64" y="318" font-size="19" fill="#4b5563" font-weight="400">面向笔记用户：笔记依据 → 实际所得</text>
+<rect x="64" y="332" width="196" height="32" rx="6" fill="#2563eb" stroke="#2563eb" stroke-width="1.5"/>
+<text x="80" y="355" font-size="18" fill="#ffffff" font-weight="600">用一篇笔记试试</text>
+<text x="284" y="355" font-size="18" fill="#1d4ed8" font-weight="400">看演示</text>
+<text x="64" y="382" font-size="16" fill="#6b7280" font-weight="400">轻导航：完整功能 · English / 中文</text>
+<rect x="40" y="414" width="580" height="156" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<rect x="60" y="432" width="40" height="32" rx="7" fill="#eff6ff" stroke="#eff6ff" stroke-width="1.5"/>
+<text x="68" y="455" font-size="20" fill="#2563eb" font-weight="600">02</text>
+<text x="114" y="456" font-size="23" fill="#111827" font-weight="600">用一篇笔记完成首个任务</text>
+<text x="64" y="488" font-size="19" fill="#4b5563" font-weight="400">先看数据与费用短说明，再选最少配置</text>
+<text x="64" y="516" font-size="19" fill="#4b5563" font-weight="400">复制示例 → 提问 → 对照笔记核对结果</text>
+<text x="64" y="544" font-size="19" fill="#4b5563" font-weight="400">安装、主图和步骤对应同一默认体验版本</text>
+<rect x="40" y="592" width="580" height="178" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<rect x="60" y="610" width="40" height="32" rx="7" fill="#eff6ff" stroke="#eff6ff" stroke-width="1.5"/>
+<text x="68" y="633" font-size="20" fill="#2563eb" font-weight="600">03</text>
+<text x="114" y="634" font-size="23" fill="#111827" font-weight="600">按需要选择，三个独立场景</text>
+<text x="64" y="666" font-size="19" fill="#4b5563" font-weight="400">当前笔记：理解这篇内容，明确下一步</text>
+<text x="64" y="694" font-size="19" fill="#4b5563" font-weight="400">找回旧材料：用过去记录辅助当前判断</text>
+<text x="64" y="722" font-size="19" fill="#4b5563" font-weight="400">发现关联：从拾页继续阅读或主动讨论</text>
+<text x="64" y="752" font-size="17" fill="#6b7280" font-weight="400">每项说明自身依赖；不是逐级解锁或配置阶梯</text>
+<rect x="40" y="792" width="580" height="126" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<rect x="60" y="810" width="40" height="32" rx="7" fill="#eff6ff" stroke="#eff6ff" stroke-width="1.5"/>
+<text x="68" y="833" font-size="20" fill="#2563eb" font-weight="600">04</text>
+<text x="114" y="834" font-size="23" fill="#111827" font-weight="600">下次用什么？找到完整能力</text>
+<text x="64" y="866" font-size="19" fill="#4b5563" font-weight="400">按需求给下一步：记录、分享、发布</text>
+<text x="64" y="894" font-size="19" fill="#4b5563" font-weight="400">完整能力索引：入口、依赖、状态与指南</text>
+<rect x="40" y="940" width="580" height="108" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<rect x="60" y="958" width="40" height="32" rx="7" fill="#eff6ff" stroke="#eff6ff" stroke-width="1.5"/>
+<text x="68" y="981" font-size="20" fill="#2563eb" font-weight="600">05</text>
+<text x="114" y="982" font-size="23" fill="#111827" font-weight="600">反馈、深入阅读与披露</text>
+<text x="64" y="1014" font-size="19" fill="#4b5563" font-weight="400">反馈目标与卡点；手册、隐私、平台与法律</text>
+<text x="64" y="1039" font-size="17" fill="#6b7280" font-weight="400">历史演示单独标版本，不占主路径</text>
+<path d="M 330,392 L 330,414" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#arrow-blue)"/>
+<path d="M 330,570 L 330,592" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#arrow-blue)"/>
+<path d="M 330,770 L 330,792" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#arrow-blue)"/>
+<path d="M 330,918 L 330,940" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#arrow-blue)"/>
+<rect x="660" y="244" width="580" height="132" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<rect x="680" y="259" width="44" height="29" rx="6" fill="#f0fdfa" stroke="#f0fdfa" stroke-width="1.5"/>
+<text x="688" y="280" font-size="18" fill="#0f766e" font-weight="600">A1</text>
+<text x="738" y="281" font-size="22" fill="#111827" font-weight="600">真实 Chat 主图</text>
+<text x="684" y="314" font-size="19" fill="#4b5563" font-weight="400">聚焦：这条笔记依据 → 这次真实所得</text>
+<text x="684" y="342" font-size="19" fill="#4b5563" font-weight="400">首屏与首个场景共用；局部内容保持可读</text>
+<text x="684" y="366" font-size="17" fill="#6b7280" font-weight="400">不靠完整桌面缩略图承载关键文字</text>
+<rect x="660" y="392" width="580" height="112" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<rect x="680" y="407" width="44" height="29" rx="6" fill="#f0fdfa" stroke="#f0fdfa" stroke-width="1.5"/>
+<text x="688" y="428" font-size="18" fill="#0f766e" font-weight="600">A2</text>
+<text x="738" y="429" font-size="22" fill="#111827" font-weight="600">Memory 来源与当前问题</text>
+<text x="684" y="462" font-size="19" fill="#4b5563" font-weight="400">展示：旧笔记如何帮助回答眼前的问题</text>
+<text x="684" y="490" font-size="19" fill="#4b5563" font-weight="400">保留真实来源；正文说明检索准备条件</text>
+<rect x="660" y="520" width="580" height="136" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<rect x="680" y="535" width="44" height="29" rx="6" fill="#f0fdfa" stroke="#f0fdfa" stroke-width="1.5"/>
+<text x="688" y="556" font-size="18" fill="#0f766e" font-weight="600">A3</text>
+<text x="738" y="557" font-size="22" fill="#111827" font-weight="600">Pagelet 发现 → Chat 接续</text>
+<text x="684" y="590" font-size="19" fill="#4b5563" font-weight="400">展示：关联、来源与可继续讨论的材料</text>
+<text x="684" y="618" font-size="19" fill="#4b5563" font-weight="400">交接后由用户主动发送；不暗示自动提问</text>
+<text x="684" y="642" font-size="17" fill="#6b7280" font-weight="400">按需要用一张或两张关键帧，不做长图拼贴</text>
+<rect x="660" y="672" width="580" height="112" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<rect x="680" y="687" width="44" height="29" rx="6" fill="#faf5ff" stroke="#faf5ff" stroke-width="1.5"/>
+<text x="688" y="708" font-size="18" fill="#7c3aed" font-weight="600">A4</text>
+<text x="738" y="709" font-size="22" fill="#111827" font-weight="600">图片 / 分享成果（可选）</text>
+<text x="684" y="742" font-size="19" fill="#4b5563" font-weight="400">区分生图与分享排版；只展示真实产物</text>
+<text x="684" y="770" font-size="19" fill="#4b5563" font-weight="400">仅在增加理解时补图，不做功能拼贴</text>
+<rect x="660" y="800" width="580" height="112" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<rect x="680" y="815" width="44" height="29" rx="6" fill="#faf5ff" stroke="#faf5ff" stroke-width="1.5"/>
+<text x="688" y="836" font-size="18" fill="#7c3aed" font-weight="600">A5</text>
+<text x="738" y="837" font-size="22" fill="#111827" font-weight="600">配置局部图（按需）</text>
+<text x="684" y="870" font-size="19" fill="#4b5563" font-weight="400">仅在入口难找、图片能消除歧义时采集</text>
+<text x="684" y="898" font-size="19" fill="#4b5563" font-weight="400">步骤和限制保留正文；不作为必采素材</text>
+<rect x="660" y="928" width="580" height="120" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<rect x="680" y="943" width="44" height="29" rx="6" fill="#faf5ff" stroke="#faf5ff" stroke-width="1.5"/>
+<text x="688" y="964" font-size="18" fill="#7c3aed" font-weight="600">V1</text>
+<text x="738" y="965" font-size="22" fill="#111827" font-weight="600">短演示（可选）</text>
+<text x="684" y="998" font-size="19" fill="#4b5563" font-weight="400">连续呈现一个目标、实际操作和所得</text>
+<text x="684" y="1026" font-size="19" fill="#4b5563" font-weight="400">说明环境已准备与剪辑；保留静态替代</text>
+<text x="40" y="1082" font-size="18" fill="#6b7280" font-weight="400">蓝色箭头 = 阅读顺序，非功能前置 · A = 截图候选 · V = 视频候选</text>
+<text x="40" y="1107" font-size="16" fill="#6b7280" font-weight="400">先以真实结果说明价值，再按解释需要补图；不限定截图数量。</text>
+</svg>

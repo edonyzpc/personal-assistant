@@ -1,7 +1,7 @@
 # PA Multi-provider Connections Product Spec
 
 Document status: Approved
-Updated: 2026-10-30
+Updated: 2026-11-01
 Work item: B-192
 Decision: [DEC-077](../decisions/dec-077-multi-provider-connections.md)
 Authority: Owner 已确认的多连接、继承、Memory 保留及 OpenAI 图片行为契约；实施验收事实见最终验证记录，不代表版本发布。
@@ -39,6 +39,48 @@ Authority: Owner 已确认的多连接、继承、Memory 保留及 OpenAI 图片
 - 新图片编辑器、蒙版/图层 UI、公共图床、额外 Files API 托管、跨设备图片任务同步。
 - 重写主 Agent、图片任务平台、VSS 后端或凭据系统；更改 Ghost 等非本范围连接。
 - 发布、执行付费模型验证、替用户修改现有真实凭据或迁移私人 vault。
+
+## 2026-10-31 OpenAI 模型与 API 兼容修订
+
+Owner 明确要求当前测试连接和新建 OpenAI 连接的聊天默认使用 `gpt-6.1-terra`，
+并要求依据官方 API 文档修复访问 400。新建连接默认值不覆盖已有连接的模型选择；
+embedding／图片默认值和其它服务不随之改变。
+
+官方 OpenAI 端点的该确切模型使用 Responses API，推理默认值按下述2026-11-01后续修订；省略
+推理模式不支持的采样温度，输出上限使用 max_output_tokens。请求显式 store=false，
+不引入远端会话或额外数据范围。每次请求由现有来源 owner 重建完整、已准入的语义
+历史，函数调用与结果按 call_id 配对；不增加加密推理缓存或声称复用上次内部推理。
+completed、failed、incomplete 及缺少终态必须如实区分，不以流结束推定成功。
+
+此修订只恢复当前模型的协议兼容，不表示其它 OpenAI 模型、Custom 网关或所有
+工具／媒体能力已经验证。工程依据为
+[官方模型说明](https://developers.openai.com/api/docs/models/gpt-6.1-terra)、
+[迁移指南](https://developers.openai.com/api/docs/guides/latest-model) 和
+[流式事件](https://developers.openai.com/api/reference/resources/responses/streaming-events)；
+本次执行与真实验收见 [OpenAI验收记录](../../archive/2026/b193-readme-validation.md#openai-validation)。
+
+## 2026-11-01 OpenAI 默认推理强度调整
+
+Owner另行明确要求OpenAI默认推理强度为 `high`，独立于B-193。现有官方OpenAI
+`gpt-6.1-terra`适配器在SDK最终请求参数未指定effort时发送 `reasoning.effort=high`；
+已有的effort继续保留。沿用现有模型／端点范围和Responses协议，不新增
+设置界面或连接字段，不向不支持该参数的其它模型及自定义端点统一注入。
+
+此次推理调整不修改embedding模型、维度、用途绑定或任何Memory索引；embedding默认值
+由下述同日后续修订更新。其它请求准入、取消、
+工具执行、终态与 `store:false` 约束继续适用。能力依据为上列官方模型说明；本次
+定向验证核对SDK发送的离线请求体，不替代已部署应用或真实provider验收。
+
+## 2026-11-01 OpenAI 默认 embedding 调整
+
+Owner按与DashScope `text-embedding-v4`相近定位的选型讨论，明确要求OpenAI新连接
+默认使用 `text-embedding-3-large`，维度保持1024。此选择不代表两者检索效果已实测
+等价；OpenAI模型支持缩短维度的依据见[官方说明](https://developers.openai.com/api/docs/guides/embeddings)。
+
+只调整当前连接架构的新建默认；显式保存的 `text-embedding-3-small`等模型、旧单连接
+兼容预置、其它服务、Chat与图片默认均保持。既有用途绑定和Memory数据不自动迁移，
+不因默认值调整准备新索引或调用provider；另行选择新模型后仍遵循独立profile和既有
+准备授权。同为1024维不使不同模型的向量可混用。
 
 ## User Flow And States
 

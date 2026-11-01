@@ -1,258 +1,161 @@
-# Obsidian Personal Assistant
+# Personal Assistant for Obsidian
 
-<p align="center">
-    <span>An Obsidian plugin which help you to automatically manage Obsidian.</span>
-    <br/>
-    <a href="/Manual-CN.md">中文手册</a>
-    ·
-    <a href="/Manual.md">Manual</a>
-    <br/>
-    <img alt="Tag" src="https://img.shields.io/github/v/tag/edonyzpc/personal-assistant?color=%23000000&label=Version&logo=tga&logoColor=%23008cff&sort=semver&style=social" />
-    <img alt="Downloads" src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?logo=obsidian&logoColor=%23b300ff&style=social" />
-</p>
-<p align="center" style="font-size:15px;color:gray">
- <mark><b><span style="font-size:18px;">💯</span>Tips</b></mark>: If you are not a developer, please refer to the manual for optimal use.
-</p>
+Understand the note in front of you, find useful material you wrote before, and explore connections between your notes.
 
-> ***NOTE***: **Pagelet** discovers connections across permitted notes and lets you inspect their sources or continue in Chat. See the [current Pagelet guide](./docs/guides/pagelet-user-guide.md). Also supports LLM chat with Memory. When Memory is enabled and an AI provider is configured, the first Chat can prepare Memory in the background without a blocking prompt: eligible note text is sent to the configured embedding provider and may use API credits. You can turn Memory off in Settings; recovery, settings-change, and manual rebuilds still ask before costly work.
+PA is an open-source Obsidian AI assistant for people who want to reuse their reading, learning, and project notes. Keep your notes in Obsidian, ask questions in Chat, check the material used, and choose what to do next.
 
-> ***Historical v2.7 guide***: The archived [v2.7 user guide](./docs/archive/v2.7-user-guide-en.md) and [Chinese version](./docs/archive/v2.7-user-guide.md) describe that release's workflows and video script. Use the [Manual](./Manual.md) and [current guides](./docs/guides/README.md) for repository behavior. Documentation was reconciled with the repository on 2026-10-06; available features in an installed build depend on its actual version and release record.
+**[Try one note](#try-one-note)** · [Explore the workflows](#three-ways-to-use-your-notes)
 
-> ***Project docs***: Use the [documentation index](./docs/index.md) for repo-local requirements, decisions, product/architecture contracts, active development, backlog, and historical records.
+[All capabilities](#all-capabilities) · [Manual](./Manual.md) · [中文](./README-CN.md)
 
-## Personal Assistant demos
+**In the note: the charting tool is still undecided.**
 
-> ***macOS demo***: AI Chat with Memory, note understanding, visual relationships, and Pagelet review workflows.
-<div align="center">
+![A real detail from Learning plan: Still undecided: which charting tool to use.](./docs/assets/readme/chat-note-detail.jpg)
 
-https://github.com/user-attachments/assets/5420fb9a-209c-44c8-b32e-cafb8f2820a7
+**In Chat: the decision stays open, with a source link to check.**
 
-</div>
+![A real detail from the same Chat response: the charting tool is still undecided, followed by a Learning plan source link](./docs/assets/readme/chat-answer-detail.jpg)
 
-> ***iOS demo***: Mobile Chat, Mermaid rendering, featured images, and connection discovery.
-<div align="center">
+[View the note and Chat together](./docs/assets/readme/chat-note-context.jpg)
 
-https://github.com/user-attachments/assets/4832e962-85da-477f-b341-0c3443b718cd
+The two details above come from the same capture. All screenshots on this page are real desktop captures from **master, 31 October 2026**, in Obsidian **1.15.0**, using English UI and [fictional notes](./docs/guides/readme-examples.md). Click an image for full size.
 
-</div>
+This README follows **current `master`**, prepared for the next stable release, and requires Obsidian **1.11.4 or newer**. Until that release is published, use a build from this checkout for the interface described here; [released versions](https://github.com/edonyzpc/personal-assistant/releases) may have older settings.
 
-## AI Chat in 60 seconds
+## Try one note
 
-Three steps to get talking to your notes:
+### Before connecting an AI service
 
-1. Click the Personal Assistant icon on the left ribbon — it opens the AI Chat view directly. (Right-click the same icon for the older plugin controls modal.)
-2. If AI is not configured, the Chat banner lets you choose **Qwen China**, **Qwen International**, or **OpenAI** and add a token without leaving Chat. If only the token is missing, it preserves your existing provider settings and asks only for the token.
-3. Select **Start** to save and continue. Use **Advanced setup** for a custom endpoint or model; the first Settings visit keeps AI Provider open and the other groups folded so the required fields stay in focus.
+- **Data:** Chat can send your question and permitted note/tool context to your configured provider. A local Memory index does not mean all processing is local.
+- **Background calls:** Memory is enabled by default. Once configured, a first Chat may prepare eligible notes in the background and use embedding credits. Pagelet automatic discovery can also make provider calls when its conditions allow.
+- **Control and cost:** Review **Notes & privacy → Notes PA can use** and its exclusions before your first request. They are explicit rules, not automatic detection of all sensitive content. For this first task, turn off **Use memory from my notes** and Pagelet automatic discovery; configure only Chat. Check provider pricing yourself.
 
-See the [AI Chat chapter in the Manual](Manual.md#ai-chat) for prompts, citations, web search, and Memory tips.
+[Full data, network, dependency and legal disclosures](./docs/operations/network-and-dependencies.md)
 
-<div align="center">
+### Install and configure Chat
 
-https://github.com/user-attachments/assets/bbf8021c-9e94-4ba3-8e11-dc95be8b288d
+1. Choose a matching build. Once these changes are released, install **Personal Assistant** by **edonyzpc** through **Settings → Community plugins → Browse** ([official directory](https://obsidian.md/plugins?id=personal-assistant)), or download `main.js`, `manifest.json` and `styles.css` from the [same release](https://github.com/edonyzpc/personal-assistant/releases). During release preparation, build this checkout as described below. Put all three files in `<vault>/<config-dir>/plugins/personal-assistant/`, then enable the plugin; the usual config directory is `.obsidian`.
+2. In PA settings, review the data boundary and disable the background features described above for this exercise.
+3. Open **AI connection → AI connections → Add default service**. Choose OpenAI, DashScope China/International, or a compatible custom Chat service; enter its API Key and save. Check the **Chat** row and, when needed, the model/API address under **Advanced settings**. New OpenAI connections default to `gpt-6.1-terra`; your account still needs access. Use a model with the tool support required for note context. Image questions need a vision-capable Chat model; embedding and image generation are not required for this task.
+4. Open the command palette and run **Personal Assistant: Open PA Agent**. Provider compatibility depends on the endpoint, model and capability; an OpenAI-compatible API label alone is insufficient.
 
-</div>
+<details>
+<summary>Build this checkout before the release is available</summary>
 
----
-> Supporting featured image generation by AI according to the content of the note.
-<div align="center">
-	
-https://github.com/user-attachments/assets/aa246889-0c32-4ce5-bde1-32eba813d034
+With Node.js 22 LTS and npm 10 or 11, run the following from this repository's root:
 
-</div>
+```sh
+npm ci
+npm run build
+```
 
----
-> ***AI Helper to improve your Obsidian notes management***
-<div align="center">
-<img src="./docs/assets/Personal-Assitant-With-AI.gif" alt="personal assistant support AI"/>
-</div>
+Copy `dist/main.js`, `dist/manifest.json` and `dist/styles.css` together into the plugin folder above, then reload or enable PA. Build the checkout containing these changes; an older release or source revision does not provide the same interface. See [development instructions](./DEVELOPEMENT.md) for local testing.
 
-> ***Animation rendering statistics***
-<div align="center">
-<img src="./docs/assets/personal-assistant-v1.3.6.gif" alt="usage video"/>
-</div>
+</details>
 
-<div align="center">
-<img src="./docs/assets/personal-assistant-v1.3.1.gif" alt="usage video"/>
-</div>
+### Copy a small, fictional note
 
-> ***Preview records***
-<div align="center">
-<img src="./docs/assets/personal-assistant-v1.2.4.gif" alt="usage video"/>
-</div>
+Create `Learning plan.md` in an allowed folder and paste:
 
-> ***List callout***
-<div align="center">
-<img src="./docs/assets/personal-assistant-v1.3.2.gif" alt="usage video"/>
-</div>
+```markdown
+# Learning plan (fictional example)
 
-> ***Update metadata***
-<div align="center">
-<img src="./docs/assets/personal-assistant-v1.2.0.gif" alt="usage video"/>
-</div>
+Goal: make one bar chart this week using fictional data.
+Decided: 30 minutes on Wednesday and Saturday; use seven fictional daily
+reading durations; write a 100-word reflection afterwards.
+Hypothesis to test: starting a small project and checking tutorials when
+stuck may suit me.
+Still undecided: which charting tool to use.
+```
 
-> ***Update Plugins and Themes***
-<div align="center">
-<img src="./docs/assets/personal-assistant-v1.1.6.gif" alt="usage video"/>
-</div>
+Keep this note open. In Chat, choose **My notes** as the answer source, then ask:
 
-> ***Basic Usage***
-<div align="center">
-<img src="./docs/assets/personal-assistant-v1.1.1.gif" alt="usage video"/>
-</div>
+> Based on the current note “Learning plan”, what can I do first, and what do I still need to decide? Separate facts in the note, hypotheses to test, and your suggestions. Analyze only; do not modify the note.
 
-## Features
-> ***NOTE***: The currently supported features are all from my personal needs, feature request is welcome by submitting issues.
+Check that the answer uses the note's goal and schedule, keeps the tool choice undecided, and distinguishes suggestions from recorded facts. Your note should remain unchanged. The model may phrase its answer differently from a demonstration.
 
-1. automatically create note in the specified directory with the configured file name
-2. automatically open current note related graph view
-3. automatically open Memos like quick note in macOS
-4. open Personal Assistant controls from the command palette
-5. automatically update plugins with one command
-6. automatically update themes with one command
-7. automatically set color of graph view
-8. list all callouts css configuration for quickly inserting
-9. chat with AI using Memory from your notes, or answer immediately without reading memory
-10. Pagelet — discover connections from the current note, inspect source-backed insights, and continue the discussion in Chat; discovery itself does not modify notes
+If context is missing, keep the Markdown note active, check its exclusions and the Chat source selection. If the request fails, check the saved provider settings, credentials and model tool support. [Chat instructions and troubleshooting](./Manual.md#ai-chat)
 
-## Develop
+**Next time:** keep discussing the current note in Chat; enable and prepare Memory when you need older material; or open Pagelet when you want to explore connections. Each has its own prerequisites—you can choose independently.
 
-Please reference [HERE](./DEVELOPEMENT.md).
+## Three ways to use your notes
 
-### Memory preparation performance note
+### 1. Understand what you are reading — Chat
 
-Since `1.6.4`, rebuilding Memory batches note chunks across files and uses provider-aware embedding limits instead of a fixed per-file delay. Qwen `text-embedding-v4` / `text-embedding-v3` rebuilds send up to 10 chunks per request with token-aware throttling and retry feedback. The long-running Memory notice now reports live progress such as scanning notes, embedding chunks, writing the index, retrying, and ready.
+**Input:** an active note and a concrete question. **PA:** reads permitted note context and helps analyze it. **Result:** a response you can compare with the original. **Continue:** ask a follow-up or return to the note.
 
-Manual "Update memory" keeps the safer per-file refresh path for now, but it also reports file-level progress and still skips unchanged notes before calling the embedding provider. Sharing the global rebuild batching pipeline with refresh is planned as a later large-vault optimization.
+The first task above is a small example. Chat also supports compatible image input and explicitly authorized note actions. An explicit create, append, edit or property-update request can execute directly; request a preview when you want to inspect a proposed change first. [Action and Undo boundaries](./Manual.md#6-web-search-and-note-actions)
 
-### Background memory maintenance note
+### 2. Bring old notes into a new task — Memory
 
-After the first background preparation or an approved recovery/manual preparation succeeds on a device, changed notes can be maintained automatically while Obsidian is open. Chat no longer waits for a refresh when the local SQLite/WASM Memory index is ready; it can answer with the last prepared Memory while a background reconcile/refresh updates changed notes.
+**Input:** a question plus notes that are in scope and already prepared for Memory. **PA:** searches indexed material to inform the answer. **Result:** relevant material with the sources actually returned. **Check:** open those sources and compare them with the answer.
 
-Automatic maintenance writes Memory embedding data to the device-local SQLite/WASM OPFS backend and keeps VSS maintenance state in local Obsidian app storage. It does not create new `vss-index-state/`, `vss-index-state/<deviceId>/manifest.json`, or `vss-cache/dirty.json` files in the vault.
+Using the [fictional example notes](./docs/guides/readme-examples.md), ask:
 
-### Network and privacy note
+> Use Memory to find reading notes and practice records relevant to my learning plan. Compare what supports or challenges the plan, and identify the notes you used. Analyze only; do not modify notes.
 
-Personal Assistant does not upload telemetry or analytics. An optional, default-off capability-usage setting emits local diagnostic events containing only capability/provider IDs, status, and duration; it excludes prompts, note text, paths, URLs, credentials, and model output. See the [local usage-event contract](./docs/operations/pa-agent-telemetry-baseline.md). By default, Statistics history is stored in local Obsidian app storage on the current device and is not uploaded by the plugin. If you enable cross-device Statistics history, the plugin creates vault-visible Statistics history files so your normal vault sync can carry them; Git users will see those files change.
+Memory needs a configured embedding model and preparation on this device. First-use preparation and later background updates can send eligible note text to that provider and incur costs. Turning Memory off cancels preparation; later recovery or manual rebuilds retain their confirmation requirements. [Memory setup and controls](./Manual.md#7-memory-integration)
 
-| Feature | Trigger | Data sent | Destination | Background? | User control |
-| --- | --- | --- | --- | --- | --- |
-| Chat | You send a message | Prompt; selected note/tool context, Memory search query and excerpts when enabled; processed copies of attached images when the Chat model supports images | Configured AI provider | No | Provider, chat, Memory, and attachment controls |
-| AI note tools | You run summary or note AI actions | Current note content and the generated prompt | Configured AI provider | No | User action and AI settings |
-| Memory prepare/update | First Chat while Memory is enabled and the AI provider is configured; or an approved recovery/manual action | Eligible note text and Memory search data | Configured embedding provider | First-use preparation runs in the background; manual actions block on progress; after success, changed notes may update in background | Memory on/off, Data Boundary exclusions, provider settings, and background toggle |
-| Memory changed-note maintenance | Memory has been prepared and background updates are enabled | Changed note text | Configured AI provider | Yes | Memory background setting |
-| Qwen web search | You enable web search for Qwen responses | Question and final prompt context | DashScope/Bailian | No | Qwen response setting |
-| Featured image generation | You run image generation | Current note content for prompt generation, then image prompt and task requests | Configured AI provider and DashScope/Bailian | Polls task status after your request | User action and AI settings |
-| Chat image generation/editing | You explicitly request an image or edit | Image description and authorized reference-image copies; selected note text when used to prepare the description; GET requests to retrieve completed images | Configured Chat/image connections; service-provided Alibaba Cloud OSS image-result URLs | Task status may be polled after submission; completed images are downloaded for local saving | Explicit request, source selection, and image connection settings |
-| Share Card remote images | You open Share Card for content containing remote image references | GET requests to the referenced image URLs; the plugin does not add the note body or AI credentials to these requests | The image hosts referenced by the content, including supported image references within SVG | Resource preparation starts when the Share Card opens | User action and the content's image references |
-| Pagelet discovery | You run discovery or enable its automatic preparation | Permitted anchor/source note text and optional web queries | Configured AI provider; configured supported web search | Automatic preparation may run in background | Pagelet settings and Data Boundary exclusions |
-| Ghost preparation/update | You explicitly use `@blog2ghost` | Selected article and required media to Ghost; note text used for metadata preparation to the configured AI provider | Configured Ghost site and AI provider | No | Explicit workflow, desktop-local key, first publication in Ghost, and exact-candidate update confirmation |
-| Plugin/theme updater | You run the updater/install flow | Plugin or theme IDs and download requests | GitHub and jsDelivr | No | User action |
+![A Memory-assisted answer compares obstacles in earlier practice and reading notes, with links to the three notes used](./docs/assets/readme/memory-sources.jpg)
 
-See [image chat and storage](./docs/guides/multimodal-chat-user-guide.md) and the [Ghost workflow](./skills/blog2ghost/SKILL.md) for their data, storage, and publication boundaries.
+In this example, Memory returned the learning plan, reading notes and practice record. The answer highlights a previous obstacle—choosing software—and keeps the learning method a hypothesis. Open the sources to check the comparison.
 
-Image hosts receive the requested URL, including any query parameters already present in the image reference, and normal request metadata.
+### 3. Discover a connection and keep exploring — Pagelet
 
-The bundled LangChain dependency contains an optional tokenizer-dictionary loader for `https://tiktoken.pages.dev/js/<encoding>.json`. Personal Assistant currently estimates prompt sizes locally and does not invoke that loader in its Chat call paths. If a dependency token-counting path invokes it, it downloads the public encoding dictionary without sending prompts, note text, or AI credentials; the server still receives normal request metadata. A domain appearing in the bundle identifies a potential dependency request, not an observed request on every Chat interaction.
+**Input:** an active Markdown note. **PA:** looks for supported connections within the permitted material. **Result:** an insight and its sources, when a worthwhile connection is found. **Continue:** open the source, select **Discuss in Chat**, inspect the attached material, and send your own question.
 
-### Base64 usage note
+Try **Pagelet: Discover connections**, then ask: “What does this connection suggest for my next practice session? Analyze only; do not change notes.” Opening the Pagelet panel alone does not start discovery. A handoff prepares a conversation and does not send it automatically. Memory can provide leads but is not a universal prerequisite; no new insight can be a normal outcome. [Pagelet guide](./docs/guides/pagelet-user-guide.md)
 
-Personal Assistant and its bundled dependencies use Base64 for binary transport and local asset loading: encoding processed image attachments and reference images as data URLs, reading supported inline raster images in SVG and Share Card resources, carrying bundled fonts as data URLs, and decoding the SQLite WASM binary. A local worker data-URL compatibility path also decodes Base64. Worker code and the WASM module are executable packaged assets; the SQLite integration and its dependency are described below.
+![Excerpt of a Pagelet finding with a practical next step, three source notes and the Discuss in Chat button](./docs/assets/readme/pagelet-insight.jpg)
 
-Memory pagination also uses Base64url to carry JSON query state, a state fingerprint, and an offset between tool calls. These cursors may contain query filters; Base64 is reversible encoding, not encryption or a credential-protection mechanism. Dependency utilities also contain Base64 conversion/validation paths, such as binary embedding-response decoding.
+<details>
+<summary>See what Pagelet prepares in Chat</summary>
 
-### VSS SQLite/WASM dependency note
+![The From Pagelet context card contains the original note and two related sources; an editable question is ready but has not been sent](./docs/assets/readme/pagelet-chat-prepared.jpg)
 
-The local Memory index uses `sqlite3.wasm` from the official [`@sqlite.org/sqlite-wasm`](https://github.com/sqlite/sqlite-wasm) package, pinned to `3.53.0-build1`. SQLite stores local Memory metadata, note chunks, and embeddings. The build embeds the package's WASM binary and JavaScript loader together with PA's SQLite worker code in `main.js`; when needed, the plugin creates local Blob URLs for the worker source and decoded WASM bytes, then starts the worker. It does not download the WASM module from an external server. Preparing or updating Memory can still send note text to the configured AI provider, as disclosed above.
+Inspect the finding and sources, edit the question, then select **Ask**. In the recorded follow-up, Chat analyzed the attached finding and warned that it could not independently reread the notes. Source links let you check the originals yourself; a continuation is not fresh source verification.
 
-The WASM module imports nine functions from `wasi_snapshot_preview1`: `clock_time_get`, `environ_get`, `environ_sizes_get`, `fd_close`, `fd_fdstat_get`, `fd_read`, `fd_seek`, `fd_sync`, and `fd_write`. These provide clock, environment, and file-descriptor support through the bundled Emscripten JavaScript implementations. In PA's worker integration, file descriptors refer to the Emscripten virtual filesystem and streams; environment values are constructed by the runtime. They are not bindings to the host operating system's filesystem, environment variables, or process-launch APIs. SQLite database persistence uses a separate browser OPFS VFS in the worker. This module has no socket or process-launch imports. The WASI import names alone do not establish broader host access or a malware verdict.
+</details>
 
-Raw WASM fingerprint (verified on 2026-10-07):
+## All capabilities
 
-| Field | Value |
-| --- | --- |
-| Package | `@sqlite.org/sqlite-wasm@3.53.0-build1` |
-| File inside the package | `dist/sqlite3.wasm` |
-| Raw byte length | `864752` |
-| SHA-256 of the raw WASM bytes | `02d7e48164395fa68f81c6ec33e9da5461be397dc57602ac0cd89b4bbba1d312` |
+The capabilities below describe current `master`. Features need their own compatible models and connections; a provider's support for Chat does not imply support for vision, embedding, tools or image generation.
 
-The cached npm archive was checked against the SHA-512 integrity recorded in `package-lock.json`. Its WASM file, the installed dependency file, and the sole WASM module decoded from the local `dist/main.js` were byte-for-byte identical and had the fingerprint above. This verifies package-to-bundle byte consistency; it does not prove a reproducible build from upstream C source or identify a Community scan's module without that scan's artifact fingerprint. Recheck the fingerprint when the dependency or binary changes.
+| Your task | Feature / entry | Required setup and status | Details |
+| --- | --- | --- | --- |
+| Think with a note or image | Chat / Open PA Agent | Available; Chat model, tools for note actions, vision for image questions | [Manual](./Manual.md#ai-chat) |
+| Find previous material | Memory from your notes | Available; embedding connection, in-scope notes, device-local preparation; separate profiles retain compatible indexes | [Memory](./Manual.md#7-memory-integration) |
+| Keep useful personal context | Personal Memory / AI Memory Extraction | Available when enabled and consent conditions permit; can learn from your messages using Chat credits; inspect, correct or forget it in Memory settings | [Memory controls](./Manual.md#7-memory-integration) |
+| Explore connections | Pagelet discovery, sources, Chat handoff | Available; suitable Chat/tool capability; automatic discovery has controls and costs | [Guide](./docs/guides/pagelet-user-guide.md) |
+| Generate or edit images | Chat image tasks; featured images | Available with the supported OpenAI or Wan image connection; separate from image input | [Image guide](./docs/guides/multimodal-chat-user-guide.md) |
+| Make a shareable card | Share Card | Available; card layout does not require a generation model; remote images may be fetched | [Share Card](./docs/architecture/share-card-architecture.md) |
+| Capture and revisit records | Quick Capture, Records Preview | Available; local features, with optional AI processing configured separately | [Manual](./Manual.md#records-in-specific-catalog) |
+| Review activity and note structure | Statistics, Callouts, local graph, AI summary | Available; local tools need no model; AI summary needs Chat; desktop graph popovers need Hover Editor | [Manual](./Manual.md) |
+| Prepare a Ghost article | Explicit `@blog2ghost` workflow | Available on desktop with Ghost credentials; preparation can save drafts/upload media; first publish in Ghost; checked updates require confirmation | [Workflow](./skills/blog2ghost/SKILL.md) |
+| Use a voice model | Voice | Planned; no available voice workflow or promised date | Follow [Issues](https://github.com/edonyzpc/personal-assistant/issues) |
 
-See the [SQLite WASM documentation](https://sqlite.org/wasm/doc/trunk/index.md), [Emscripten filesystem overview](https://emscripten.org/docs/porting/files/file_systems_overview.html), and [third-party notices](./THIRD_PARTY_NOTICES.md) for provenance and licensing. Before publishing a release with this backend, review the upstream package license and release terms for your distribution scenario.
+Plugin/theme updates, plugin on/off commands, the old Memos entry and metadata auto-update are not current capabilities. [Historical demonstrations](./docs/guides/historical-demos.md) retain their context.
 
-### License and commercial boundary
+### Choose connections by task
 
-Starting with version `2.8.0`, the Personal Assistant client source is licensed under `AGPL-3.0-only`. Historical releases are not relicensed retroactively; previous tags and artifacts retain the license notices and metadata published with those releases. For the current release, use the exact GitHub tag, source archive, `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md` files as the source and legal reference.
+Save reusable AI connections, choose a **Default AI service**, and let Chat, note retrieval (Memory), and images follow it where supported. Use **Adjust by function** to choose a different saved connection for a task. You can start with Chat and configure the other capabilities when you need them.
 
-Version `2.8.0` is a license and compliance migration release. It does not introduce an account system, license key, checkout flow, feature lock, hosted commercial service, or paid entitlement check. Future hosted services, support, warranty, privacy, or trademark terms may be separate, but they must not restrict AGPL rights to use, modify, and redistribute the client.
+Memory keeps separate device-local profiles for retrieval configurations. Changing the embedding model/dimension can require new preparation; compatible existing profiles can be reused, and inactive profiles do not receive paid background maintenance. Switching profiles does not inherently upload or rebuild the whole vault.
 
-The `Personal Assistant` name, `personal-assistant` plugin ID, icons, logos, and marketplace identity are not licensed to forks by the AGPL client license. See [TRADEMARKS.md](./TRADEMARKS.md), [NOTICE](./NOTICE), and [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+OpenAI image generation/editing accepts the official `https://api.openai.com/v1` endpoint; Wan recognizes its supported DashScope endpoints. Custom Chat/embedding compatibility does not provide an image-generation adapter. [Connection setup](./Manual.md#3-configuration) · [Image guide](./docs/guides/multimodal-chat-user-guide.md)
 
 ### Mobile VSS validation note
 
-The local VSS SQLite/WASM backend has been smoke-tested on Obsidian Desktop and Obsidian iOS with the test vault, including rebuild, refresh, reload persistence, chat, and Memory references. Android has not been fully validated on a physical device yet because no Android test device is currently available, so Android VSS support should be treated as pending verification.
+PA is a desktop/mobile plugin; individual capabilities have platform limits. Ghost is desktop-only. Historical SQLite/WASM Memory smoke covers Desktop and iOS; **Android Memory/VSS has not completed physical-device validation**. This README does not imply every provider or image feature works on every platform.
 
-## Install
-Now Personal Assistant plugin is available in [plugin market](https://obsidian.md/plugins?search=personal%20assistant#), you can install this plugin directly within Obsidian App, please check this [mannual](https://help.obsidian.md/Extending+Obsidian/Community+plugins#Install+a+community+plugin) to get more details.
-![install with plugin market](./docs/assets/install-within-plugin-market.png)
+## Keep using PA and help improve it
 
-### Install
-- Download from the release
+Use Chat while reading, Memory when looking for past work, and Pagelet when exploring connections. Capture new thoughts with Quick Capture; use sharing or publishing when you have an outcome worth distributing.
 
-### Install with BRAT
+[Report an issue or request a feature](https://github.com/edonyzpc/personal-assistant/issues) with **what you wanted to do, where you got stuck, and what would help**. Do not post API keys or private notes.
 
-- Install BRAT from the Community Plugins in Obsidian
-- Open the command palette and run the command BRAT: Add a beta plugin for testing
-- Copy `https://github.com/edonyzpc/personal-assistant` into the modal that opens up
-- Track the latest release, or freeze a specific beta tag if you are testing a targeted build
-- Click on Add Plugin -- wait a few seconds and BRAT will tell you what is going on
-- After BRAT confirms the installation, in Settings go to the **Community plugins ** tab.
-- Refresh the list of plugins
-- Find the beta plugin you just installed and Enable it.
+[Manual](./Manual.md) · [Guides](./docs/guides/README.md) · [BRAT beta testing](./docs/operations/brat-beta-testing.md) · [Development](./DEVELOPEMENT.md) · [Project documentation](./docs/index.md) · [Historical demos](./docs/guides/historical-demos.md)
 
-Maintainers should use the repository BRAT release workflow before inviting beta
-testers: [docs/operations/brat-beta-testing.md](./docs/operations/brat-beta-testing.md).
+Client source uses **AGPL-3.0-only** from 2.8.0; historical releases retain their original terms. PA's name, plugin ID, icons and market identity have separate trademark terms. See [LICENSE](./LICENSE), [NOTICE](./NOTICE), [third-party notices](./THIRD_PARTY_NOTICES.md), [trademarks](./TRADEMARKS.md) and [detailed disclosures](./docs/operations/network-and-dependencies.md).
 
-### Manually Install
-
-- Build with commandline: `npm install && npm run build` or download from [release page](https://github.com/edonyzpc/personal-assistant/releases)
-- Copy over `main.js`, `styles.css`, and `manifest.json` to your vault config folder, usually `{VaultFolder}/.obsidian/plugins/personal-assistant/`. If your vault uses a custom config folder, use that folder instead of `.obsidian`.
-
-## Use
-
-### 1. Create note in specificed directory
-- Open the command palette and find the command
-![command 1](./docs/assets/command-1.png)
-- New note is created and start your recording
-- [***Recommendation***] Use `Folder Templates` of plugin [Templater](https://github.com/SilentVoid13/Templater) to format the created notes by the command above, the example is as following
-![folder templates](./docs/assets/folder-templates.png)
-### 2. Open memos in hover editor
-- Open the command palette and find the command
-![command 2](./docs/assets/command-2.png)
-- Do anything you like in memos
-### 3. Open graph view of current note
-- Open the command palette and find the command
-![command 3](./docs/assets/command-3.png)
-- Open setting tab for more customize
-- Navigate your current note graph view with backlink and outgoing link
-- configure color of graph view
-
-### 4. Enable/Disable plugins for obsidian with one command
-- Open the command palette and find the command
-![command 5](./docs/assets/command-5.png)
-- Select the suggestion to enable/disable plugin(or you can search the plugin by its name)
-- [***Note***] In suggestion tab, the green checkbox means plugin is already enabled and the red uncheckbox means plugin is already disabled
-
-### 5. Update plugins for obsidian with one command
-- Open the command palette and find the command
-![command 6](./docs/assets/command-6.png)
-- Trigger the command to update plugins
-- See the updating result which is displayed in the right corner
-
-## Attribution
-- Best thanks for project [obsidian-advanced-new-file](https://github.com/vanadium23/obsidian-advanced-new-file) for the code of `createNote`, `createDirectory`
-- Best thanks for project [obsidian-callout-manager](https://github.com/eth-p/obsidian-callout-manager) for the `class CalloutPreviewComponent` and `color.ts`
-- Best thanks for project [better-word-count](https://github.com/lukeleppan/better-word-count) for the `package stats`
-
-## Contact
-
-If you've got any kind of feedback or questions, feel free to reach out via [GitHub issues](https://github.com/edonyzpc/personal-assistant/issues).
+Created by [edony](https://github.com/edonyzpc). Thanks to the upstream projects credited in the third-party notices.

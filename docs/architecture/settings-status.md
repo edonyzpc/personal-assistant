@@ -1,6 +1,6 @@
 # Settings Current Status
 
-Updated: 2026-10-30
+Updated: 2026-11-01
 
 ## Status
 
@@ -59,6 +59,20 @@ or delivery status.
 - resolver仅解析非秘密配置，不读Key。AIUtils的Agent、Policy及全部文字辅助消费者使用实际
   Chat连接；笔记准备/查询使用embedding用途。端点、模型、有效选项、连接及凭据版本构成
   用途请求身份，发送与结果交付检查同一身份；改名和不影响独立用途的默认变化不撤销该用途请求。
+- 2026-10-31 Owner 要求新建 OpenAI 连接的 Chat 默认采用 `gpt-6.1-terra`，不覆盖
+  其它已保存连接的模型。该确切模型在官方端点使用窄 Responses adapter，沿用
+  `createOpenAIClientOptions` 的凭据、来源准入与取消钩子；省略不兼容采样参数，
+  按2026-11-01 Owner后续要求默认 `reasoning.effort=high`，保留SDK最终请求参数中已有的
+  effort，显式 `store:false`。各请求仍重建当前准入的 canonical 语义历史，
+  不新增远端会话或加密推理缓存。adapter 保留文字 invoke 的 string content、函数
+  call_id 与已完成终态；failed／incomplete／缺少终态不作为成功工具执行或文字结果。
+  原模型、非官方端点、embedding 与图片接线保持；不据此承诺所有兼容网关或模型可用。
+  权限与范围见 [产品修订](../product/specs/pa-multi-provider-connections-product-spec.md#2026-10-31-openai-模型与-api-兼容修订)，
+  实际验证见 [OpenAI验收记录](../archive/2026/b193-readme-validation.md#openai-validation)。
+- 2026-11-01 Owner后续要求新建OpenAI连接默认embedding使用 `text-embedding-3-large`，
+  维度保持1024。仅修改当前新建连接预置，不改显式保存的small或旧单连接兼容预置，
+  不自动切换用途、迁移Memory或调用provider。选型与边界见
+  [embedding修订](../product/specs/pa-multi-provider-connections-product-spec.md#2026-11-01-openai-默认-embedding-调整)。
 
 下文涉及 vault-scoped token、provider preset 和 tuple 的单连接说明保留为旧 schema
 兼容路径；已迁移配置以以上规则为准，其余 Settings 导航/偏好契约继续适用。

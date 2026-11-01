@@ -1,5 +1,6 @@
 # Operations 文档
 
+- [网络、依赖与法律披露 / Network and dependencies](./network-and-dependencies.md) — 数据外发、后台调用、SQLite/WASM、Base64、许可和平台边界。
 - [Release Process](./release-process.md) — stable release 的本地校验、commit/tag 与 publish 边界。
 - [BRAT Beta Testing](./brat-beta-testing.md) — beta branch、prerelease 与 BRAT 验证流程。
 - [PA Agent Telemetry Baseline](./pa-agent-telemetry-baseline.md) — 已退役的匿名能力事件历史说明；当前调试、运行记录和统计同步保留。

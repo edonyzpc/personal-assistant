@@ -26,6 +26,7 @@
 
 ## Engineering Governance
 
+- [GOV-007 README 图文设计与交付契约](./governance/gov-007-readme-experience.md) — 首次体验、公开示例、真实素材与双语文档验收；[最终验收](../archive/2026/b193-readme-validation.md)。
 - [GOV-006 Lean Delivery And Beta Validation](./governance/gov-006-lean-delivery-and-beta-validation.md) — 验证复用、GLM恢复与beta流水线规则；[最终验证](./governance/gov-006-lean-delivery-and-beta-validation.md#final-validation-and-limits)。
 - [Governance Registry](./governance/README.md) — repo docs lifecycle、Agent workflow、checker、CI/release tooling 与工程授权边界；不定义 PA runtime 或用户产品行为。
 - [GOV-002 Master-First Branch And Beta Packaging](./governance/gov-002-master-first-branch-and-beta-packaging.md) — 所有已接受工作先进入 `master`，BRAT beta 仅从精确 `master` 基线包装。

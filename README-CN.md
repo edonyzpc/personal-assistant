@@ -1,220 +1,160 @@
 # Obsidian Personal Assistant
 
-<p align="center">
-    <span>An Obsidian plugin which help you to automatically manage Obsidian.</span>
-    <br/>
-    <a href="./README-CN.md">简体中文</a>
-    ·
-    <a href="/README.md">English</a>
-    <br/>
-    <img alt="Tag" src="https://img.shields.io/github/v/tag/edonyzpc/personal-assistant?color=%23000000&label=版本&logo=tga&logoColor=%23008cff&sort=semver&style=social" />
-    <img alt="Downloads" src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?label=下载量&logo=obsidian&logoColor=%23b300ff&style=social" />
-</p>
+理解正在看的笔记，找回以前记下的材料，继续探索笔记之间的关联。
 
-> ***功能提示***: 拾页可以从允许范围内的笔记发现关联，供你核对来源或继续到 Chat 讨论，操作见[当前拾页指南](./docs/guides/pagelet-user-guide.md)。聊天助手也可以读取来自你笔记的 Memory。开启 Memory 并配置 AI Provider 后，首次 Chat 可以不弹阻断确认、直接在后台准备 Memory：符合 Data Boundary 的笔记文本会发送给已配置的 embedding provider，并可能消耗 API credits。你可以随时在 Settings 关闭 Memory；索引恢复、设置变更和手动重建等高成本路径仍会先确认。
+PA 是 Obsidian 的开源 AI 助手，适合希望复用阅读、学习和项目笔记的人。笔记留在 Obsidian，用 Chat 提问，核对实际使用的材料，再决定下一步。
 
-> ***历史 v2.7 用户指南***: 归档的[v2.7 中文指南](./docs/archive/v2.7-user-guide.md)及[英文指南](./docs/archive/v2.7-user-guide-en.md)保留当时的工作流和视频脚本。当前仓库行为请参考[使用手册](./Manual-CN.md)与[当前指南](./docs/guides/README.md)。文档于 2026-10-06 对照仓库整理；实际安装构建提供哪些功能，仍以安装版本及发布记录为准。
+**[用一篇笔记试试](#用一篇笔记试试)** · [看看三个工作流](#三种使用笔记的方式)
 
-> ***项目文档***: 项目需求、讨论、决策、产品/架构契约、开发 workflow、Backlog 与历史资料统一从 [项目文档导航](./docs/index.md) 进入。
+[完整能力](#完整能力) · [使用手册](./Manual-CN.md) · [English](./README.md)
 
-## Personal Assistant 演示
+**笔记中：绘图工具尚未决定。**
 
-> ***macOS 演示***: 展示 AI Chat 使用 Memory、理解当前笔记、生成可视化关联，以及 Pagelet 审阅工作流。
-<div align="center">
+![学习计划的真实局部：Still undecided: which charting tool to use.](./docs/assets/readme/chat-note-detail.jpg)
 
-https://github.com/user-attachments/assets/5420fb9a-209c-44c8-b32e-cafb8f2820a7
+**Chat：保留未决事项，并链接原文，方便核对。**
 
-</div>
+![同一次 Chat 回答的真实局部：绘图工具仍未决定，下方有 Learning plan 来源链接](./docs/assets/readme/chat-answer-detail.jpg)
 
-> ***iOS 演示***: 展示移动端 Chat、Mermaid 渲染、Featured Images 和关联发现。
-<div align="center">
+[查看笔记与 Chat 的完整对照画面](./docs/assets/readme/chat-note-context.jpg)
 
-https://github.com/user-attachments/assets/4832e962-85da-477f-b341-0c3443b718cd
+以上两处局部来自同一画面。本文图片均为 **2026 年 10 月 31 日 master** 在 Obsidian **1.15.0** 的真实桌面截图，使用英文界面和[虚构演示笔记](./docs/guides/readme-examples.md)。点击图片可查看原尺寸。
 
-</div>
+本 README 按**当前 `master`** 编写，随下一次正式版交付，需要 Obsidian **1.11.4 或更新版本**。正式版发布前，请使用包含这些改动的当前 checkout 构建；[已发布版本](https://github.com/edonyzpc/personal-assistant/releases)的设置界面可能较旧。
 
-## 60 秒开始 AI Chat
+## 用一篇笔记试试
 
-1. 点击左侧 Personal Assistant 图标，直接打开 AI Chat。
-2. 尚未配置 AI 时，可在 Chat 空态选择 **Qwen 中国**、**Qwen 国际**或 **OpenAI**，按需填写 API Token；若现有 Provider 配置完整、只缺 Token，PA 不会覆盖已有 URL 或模型。
-3. 点击 **Start** 保存并开始。Custom endpoint/model 使用 **Advanced setup** 进入 Settings；首次打开 Settings 时仅展开 AI Provider，其他分组保持折叠，之后以你的展开/折叠选择为准。
+### 连接 AI 服务前
 
-<div align="center">
-<video src="./docs/assets/featured-images-ai-generation.mp4" placeholder="personal assistant support generating featured images by AI" autoplay loop controls muted title="featured image generation"></video>
-</div>
+- **数据**：Chat 可能将问题及允许的笔记／工具上下文发送给配置的服务商。本地 Memory 索引不等于全部在本地处理。
+- **后台调用**：Memory 默认开启。配置完成后的首次 Chat 可能在后台准备允许范围内的笔记，使用 embedding 额度。拾页自动发现满足条件时也可能调用服务。
+- **控制与费用**：首次请求前检查“笔记与隐私 → PA 可以使用的笔记”及排除范围；这是明确规则，不会自动识别全部敏感信息。本次练习先关闭“使用来自笔记的 Memory”和拾页自动发现，只配置 Chat。模型费用以服务商为准。
 
-> ***AI 助手帮助管理 Obsidian***
-<div align="center">
-<img src="./docs/assets/Personal-Assitant-With-AI.gif" alt="personal assistant support AI"/>
-</div>
+[完整数据、网络、依赖与法律披露](./docs/operations/network-and-dependencies.md)
 
-> ***展示 vault 的统计数据***
-<div align="center">
-<img src="./docs/assets/personal-assistant-v1.3.3.gif" alt="usage video"/>
-</div>
+### 安装与最少配置
 
-<div align="center">
-<img src="./docs/assets/personal-assistant-v1.3.1.gif" alt="usage video"/>
-</div>
+1. 取得与本文对应的构建。相关改动发布后，可在 **设置 → 第三方插件 → 浏览** 搜索 **Personal Assistant**（作者 **edonyzpc**）安装（[官方目录](https://obsidian.md/plugins?id=personal-assistant)），或从[同一发布版本](https://github.com/edonyzpc/personal-assistant/releases)下载 `main.js`、`manifest.json` 和 `styles.css`。发布准备期间，按下方说明构建当前 checkout。将三个文件一起放入 `<笔记库>/<配置目录>/plugins/personal-assistant/` 后启用；默认配置目录通常为 `.obsidian`。
+2. 在 PA 设置中检查数据边界，本次练习关闭上面提到的后台能力。
+3. 打开 **AI 连接 → 添加默认服务**，选择 OpenAI、DashScope 中国／国际或兼容的自定义聊天服务，填写 API Key 并保存。核对“聊天”一行；需要时在“高级设置”检查模型和 API 地址。新建 OpenAI 连接默认使用 `gpt-6.1-terra`，账户仍需具备访问权限。笔记上下文需要模型支持相应工具能力；图片提问才需要视觉模型。本次不需要配置 embedding 或图片生成服务。
+4. 打开命令面板，运行 **Personal Assistant：打开PA智能体**。兼容性取决于具体接口、模型与能力；“OpenAI-compatible”标签不能保证所有功能可用。
 
-> ***记录预览***
-<div align="center">
-<img src="./docs/assets/personal-assistant-v1.2.4.gif" alt="usage video"/>
-</div>
+<details>
+<summary>正式版发布前，从当前 checkout 构建</summary>
 
-> ***快速输入 callout***
-<div align="center">
-<img src="./docs/assets/personal-assistant-v1.3.2.gif" alt="usage video"/>
-</div>
+使用 Node.js 22 LTS、npm 10 或 11，在本仓库根目录执行：
 
-> ***自动更新 metadata***
-<div align="center">
-<img src="./docs/assets/personal-assistant-v1.2.0.gif" alt="usage video"/>
-</div>
+```sh
+npm ci
+npm run build
+```
 
-> ***自动更新插件、主题***
-<div align="center">
-<img src="./docs/assets/personal-assistant-v1.1.6.gif" alt="usage video"/>
-</div>
+将 `dist/main.js`、`dist/manifest.json` 和 `dist/styles.css` 一起复制到上述插件目录，再重新加载或启用 PA。请构建包含这些改动的 checkout；旧发布包或旧源码不提供相同界面。测试库操作见[开发说明](./DEVELOPEMENT.md)。
 
-> ***使基本使用方法示例***
-<div align="center">
-<img src="./docs/assets/personal-assistant-v1.1.1.gif" alt="usage video"/>
-</div>
+</details>
 
-## 功能特性
-> ***注意***: 当前支持的特性都是出于我个人使用 Obsdiain 的需求，欢迎提交你们期望的功能特性需求。
+### 复制一篇虚构示例
 
-1. 在指定目录自动创建 note，note 名称可以格式化配置方便管理
-2. 自动打开当前 note 的关系视图
-3. 像 macOS 的快速备忘录一样使用 Memos 做记录
-4. 在命令面板中快速开关插件
-5. 自动更新插件
-6. 自动更新主题
-7. 自动设置关系视图的颜色
-8. 聊天时使用来自笔记的 Memory，也可以选择立刻普通回答
-9. 拾页从当前笔记发现关联，展示有来源的洞察，并可继续到 Chat 讨论；发现过程本身不修改笔记
+在允许的目录新建 `学习计划.md`，复制：
 
-## 研发
+```markdown
+# 学习计划（虚构示例）
 
-请参考[这里](./DEVELOPEMENT.md).
+目标：本周用虚构数据完成一张柱状图。
+已确定：周三和周六各安排 30 分钟；使用七天虚构阅读时长；
+完成后写 100 字复盘。
+待验证：先做小项目、遇到问题再查教程，是否适合我？
+尚未决定：使用哪个绘图工具。
+```
 
-### Memory 准备性能说明
+保持这篇笔记打开。在 Chat 选择“我的笔记”作为回答资料范围，然后提问：
 
-从 `1.6.4` 开始，重建 Memory 会把多个文件的 note chunks 汇入全局 embedding batch，并使用按服务商感知的限速策略，不再使用固定的逐文件等待。Qwen `text-embedding-v4` / `text-embedding-v3` 重建时单次最多发送 10 个 chunks，并带有 token-aware throttle 和重试进度提示。长时间运行的 Memory Notice 会实时显示扫描 notes、生成 embeddings、写入索引、等待重试和 ready 等状态。
+> 根据当前笔记“学习计划”，我可以先做什么，还需要决定什么？请区分笔记中的已知信息、待验证假设和你的建议。只分析，不修改笔记。
 
-手动 `Update memory` 当前仍保留更保守的逐文件 refresh 路径，但也会显示文件级进度，并且仍会先跳过 unchanged notes，避免无变化文件消耗 embedding。让 refresh 共享 rebuild 的全局 batch pipeline 是下一阶段的大 vault 体验优化。
+核对回答是否使用原文的目标与安排、保留工具尚未决定的事实，并区分建议与笔记已有信息。原笔记应保持不变。模型措辞不需要与演示完全相同。
 
-### Memory 后台维护说明
+缺少上下文时，保持 Markdown 笔记处于活动状态，检查排除范围和 Chat 资料选择。请求失败时，检查已保存的连接、凭据和模型工具能力。[Chat 操作与排错](./Manual-CN.md#ai-chat)
 
-在某台设备上首次后台准备成功，或经确认的恢复/手动准备成功后，后续 changed notes 可以在 Obsidian 打开期间由后台自动维护。只要本地 SQLite/WASM Memory index 已 ready，Chat 不再等待 refresh；它会先使用上一版已准备好的 Memory 回答，同时后台 reconcile/refresh 会更新 changed notes。
+**下一次使用**：在 Chat 继续理解当前笔记；需要旧材料时再启用并准备 Memory；阅读时想探索关联就打开拾页。三者各有前提，可以独立选择。
 
-自动维护把 Memory embedding 数据写入设备本地 SQLite/WASM OPFS 后端，并把 VSS 维护状态写入本地 Obsidian app storage。它不会在 vault 中创建新的 `vss-index-state/`、`vss-index-state/<deviceId>/manifest.json` 或 `vss-cache/dirty.json` 文件。如果本地 Memory 暂时不可用或未准备好，助手会提示后台更新不可用，需要在本设备重新准备 Memory 后才能恢复自动维护。
+## 三种使用笔记的方式
 
-### 网络与隐私说明
+### 1. 理解眼前这篇笔记 — Chat
 
-Personal Assistant 不上传 telemetry 或 analytics。可选的能力使用统计设置默认关闭；启用后只生成本地诊断事件，包含能力/服务商 ID、状态和耗时，不包含 prompt、笔记正文、路径、URL、凭据或模型输出，详见[本地使用事件契约](./docs/operations/pa-agent-telemetry-baseline.md)。默认情况下，Statistics history 存储在当前设备的本地 Obsidian app storage 中，插件不会上传这些统计数据。如果你开启跨设备同步 Statistics history，插件会创建 vault-visible 的 Statistics history 文件，让你已有的 vault sync 机制同步这些文件；Git 用户会看到这些文件变化。
+**输入**：活动笔记和一个具体问题。**PA 做什么**：读取允许的笔记上下文，辅助分析。**得到什么**：能与原文对照的回答。**继续**：追问，或回到笔记核对。
 
-| 功能 | 触发条件 | 发送的数据 | 目标位置 | 是否后台 | 用户控制 |
-| --- | --- | --- | --- | --- | --- |
-| Chat | 你发送消息 | Prompt；启用时选中的笔记/工具上下文、Memory 查询及片段；Chat 模型支持图片时附加图片的处理副本 | 配置的 AI provider | 否 | Provider、Chat、Memory 和附件控制 |
-| AI note tools | 你运行 summary 或 note AI 操作 | 当前 note content 和生成的 prompt | 配置的 AI provider | 否 | 用户操作和 AI 设置 |
-| Memory prepare/update | 开启 Memory 且已配置 AI Provider 后的首次 Chat；或经确认的恢复/手动操作 | 符合 Data Boundary 的 note text 和 Memory search 数据 | 配置的 embedding provider | 首次准备在后台运行；手动操作显示阻断进度；成功后 changed notes 可能后台更新 | Memory 开关、Data Boundary 排除规则、Provider 设置和后台开关 |
-| Memory changed-note maintenance | Memory 已准备且后台更新开启 | Changed note text | 配置的 AI provider | 是 | Memory 后台设置 |
-| Qwen web search | 你开启 Qwen web search | 问题和最终 prompt context | DashScope/Bailian | 否 | Qwen response 设置 |
-| Featured image generation | 你运行图片生成 | 用于生成图片 prompt 的当前 note content，以及图片 prompt 和 task 请求 | 配置的 AI provider 和 DashScope/Bailian | 请求后会轮询 task 状态 | 用户操作和 AI 设置 |
-| Chat 图片生成/编辑 | 你明确请求生成或编辑图片 | 图片描述、获授权的参考图片副本；用笔记准备描述时的已选笔记文本；获取已完成图片的 GET 请求 | 配置的 Chat/图片连接；服务返回的阿里云 OSS 图片结果 URL | 提交后可能轮询任务状态；完成后下载图片以保存到本地 | 明确请求、来源选择和图片连接设置 |
-| Share Card 远程图片 | 你为包含远程图片引用的内容打开 Share Card | 对所引用图片 URL 的 GET 请求；插件不向这些请求添加笔记正文或 AI 凭据 | 内容引用的图片服务器，包括 SVG 内受支持的图片引用 | 打开 Share Card 时开始准备资源 | 用户操作与内容中的图片引用 |
-| 拾页发现 | 你运行发现或开启自动准备 | 允许范围内的锚点/来源笔记文本，以及可选网页查询 | 配置的 AI provider；配置且受支持的网页搜索 | 自动准备可在后台运行 | 拾页设置和 Data Boundary 排除规则 |
-| Ghost 准备/更新 | 你明确使用 `@blog2ghost` | 选中文章及所需媒体发送到 Ghost；准备元数据所用的笔记文本发送到配置的 AI provider | 配置的 Ghost 站点与 AI provider | 否 | 显式工作流、本桌面凭据、在 Ghost 首发，以及确切候选版本的更新确认 |
-| Plugin/theme updater | 你运行 updater/install 流程 | Plugin 或 theme ID 以及下载请求 | GitHub 和 jsDelivr | 否 | 用户操作 |
+上面的首次任务就是一个小例子。Chat 也支持兼容的图片输入和明确授权的笔记操作。明确的新建、追加、编辑或属性更新请求可直接执行；希望先检查时，请要求“先给预览”。[操作与撤销边界](./Manual-CN.md#6-网页搜索与笔记操作)
 
-图片的数据、存储与同步边界见[图片聊天指南](./docs/guides/multimodal-chat-user-guide.md)；Ghost 的准备与正式发布边界见[Ghost 工作流](./skills/blog2ghost/SKILL.md)。
+### 2. 让旧笔记参与新任务 — Memory
 
-图片服务器会收到请求的 URL，包括图片引用中已有的查询参数，以及常规请求元数据。
+**输入**：问题，以及允许范围内、已完成 Memory 准备的笔记。**PA 做什么**：检索已索引材料辅助回答。**得到什么**：相关内容及实际返回的来源。**核对**：打开来源，与回答对照。
 
-打包的 LangChain 依赖包含一个可选的 tokenizer 词典加载路径，目标为 `https://tiktoken.pages.dev/js/<encoding>.json`。Personal Assistant 当前在本地估算 prompt 大小，Chat 调用链不调用这个加载路径。如果依赖的 token 计数路径调用它，会下载公开的编码词典，不发送 prompt、笔记文本或 AI 凭据；服务器仍会收到常规请求元数据。打包产物出现该域名表示存在潜在的依赖请求路径，不代表每次 Chat 都实际发起请求。
+使用[虚构演示材料](./docs/guides/readme-examples.md)，可以问：
 
-### Base64 用途说明
+> 使用 Memory 找出与本周学习计划相关的阅读摘记和实践记录，比较它们提供了哪些支持或不同意见，并列出你使用的笔记。只分析，不修改笔记。
 
-Personal Assistant 及其打包依赖使用 Base64 进行二进制传输与本地资源加载：把处理后的图片附件和参考图片编码为 data URL，读取 SVG 与 Share Card 资源中受支持的内嵌位图，把打包字体作为 data URL 使用，以及解码 SQLite WASM 二进制。本地 worker 的 data URL 兼容路径也使用 Base64 解码。Worker 代码与 WASM 模块是随包分发的可执行资源，SQLite 集成与依赖来源见下方说明。
+Memory 需要配置 embedding 模型，并在本设备准备。首次准备与后续后台更新可能向服务商发送允许的笔记正文并产生费用。关闭 Memory 会取消准备；恢复或手动重建等路径仍保留相应确认。[Memory 设置与控制](./Manual-CN.md#7-memory)
 
-Memory 分页还使用 Base64url 在工具调用之间传递 JSON 查询状态、状态指纹和偏移量。这些游标可能包含查询过滤条件；Base64 是可逆编码，不是加密或凭据保护机制。依赖工具中也存在 Base64 转换或校验路径，例如解码二进制 embedding 响应。
+![Memory 回答比较过往练习和阅读摘记中的阻碍，并列出实际使用的三篇笔记链接](./docs/assets/readme/memory-sources.jpg)
 
-### VSS SQLite/WASM 依赖说明
+这次 Memory 检索返回了学习计划、阅读摘记和实践记录。回答指出过往“选择软件”的阻碍，也保留了学习方法仍待验证的前提。可打开来源核对这项比较。
 
-本地 Memory 索引使用官方 [`@sqlite.org/sqlite-wasm`](https://github.com/sqlite/sqlite-wasm) 包中的 `sqlite3.wasm`，固定版本为 `3.53.0-build1`。SQLite 保存本地 Memory 元数据、笔记分块与 embedding。构建时，包中的 WASM 二进制与 JavaScript 加载器连同 PA 的 SQLite worker 代码被内嵌到 `main.js`；需要时，插件为 worker 源码和解码后的 WASM 字节创建本地 Blob URL，再启动 worker，不从外部服务器下载 WASM 模块。准备或更新 Memory 仍可能向配置的 AI provider 发送笔记文本，详见上方披露。
+### 3. 发现关联后继续探索 — 拾页 Pagelet
 
-WASM 模块从 `wasi_snapshot_preview1` 导入九个函数：`clock_time_get`、`environ_get`、`environ_sizes_get`、`fd_close`、`fd_fdstat_get`、`fd_read`、`fd_seek`、`fd_sync` 和 `fd_write`。这些接口通过随包的 Emscripten JavaScript 实现提供时钟、环境信息与文件描述符支持。在 PA 的 worker 集成中，文件描述符对应 Emscripten 虚拟文件系统与流，环境值由运行时构造，并非直接绑定到宿主操作系统的文件系统、环境变量或进程启动接口。SQLite 数据库通过 worker 中独立的浏览器 OPFS VFS 持久化。该模块没有 socket 或进程启动导入；仅凭 WASI 导入名称不能认定它拥有更广的宿主权限，也不能作出恶意软件结论。
+**输入**：一篇活动 Markdown 笔记。**PA 做什么**：在允许材料中寻找有依据的关联。**得到什么**：发现有效关联时的洞察及来源。**继续**：打开来源，选择“在聊天中讨论”，检查附带材料，再主动发送问题。
 
-原始 WASM 指纹（2026-10-07 核对）：
+运行“拾页：发现关联”，随后可以问：“这条关联对我的下一次练习有什么启发？先分析，不修改笔记。”只打开拾页面板不会启动发现，交接也不会自动发送。Memory 可提供线索，但不是统一前提；没有新洞察可能是正常结果。[拾页指南](./docs/guides/pagelet-user-guide.md)
 
-| 字段 | 值 |
-| --- | --- |
-| 依赖包 | `@sqlite.org/sqlite-wasm@3.53.0-build1` |
-| 包内文件 | `dist/sqlite3.wasm` |
-| 原始字节长度 | `864752` |
-| 原始 WASM 字节的 SHA-256 | `02d7e48164395fa68f81c6ec33e9da5461be397dc57602ac0cd89b4bbba1d312` |
+![拾页真实发现的局部：下一步建议、三篇来源笔记及“在聊天中讨论”按钮](./docs/assets/readme/pagelet-insight.jpg)
 
-已按 `package-lock.json` 中记录的 SHA-512 integrity 核对缓存的 npm 发布包；包内 WASM、已安装依赖文件，以及从本地 `dist/main.js` 解码出的唯一 WASM 模块逐字节一致，指纹如上。这证明依赖包到打包产物的字节一致性，不证明从上游 C 源码进行可复现构建；缺少社区扫描产物的指纹时，也不能据此认定该次扫描中的模块身份。依赖或二进制变化后，需要重新核对指纹。
+<details>
+<summary>看看拾页交给 Chat 的材料</summary>
 
-来源与许可信息见 [SQLite WASM 文档](https://sqlite.org/wasm/doc/trunk/index.md)、[Emscripten 文件系统说明](https://emscripten.org/docs/porting/files/file_systems_overview.html)和[第三方声明](./THIRD_PARTY_NOTICES.md)。发布包含该后端的版本前，需要复核上游包的许可证和发布条款是否符合分发场景。
+![From Pagelet 上下文卡包含原笔记和两篇关联来源；可编辑的问题已经准备好，尚未发送](./docs/assets/readme/pagelet-chat-prepared.jpg)
 
-### License 与商业化边界
+检查发现与来源，编辑问题，再点击 **Ask**。这次实际接续中，Chat 根据携带的发现继续分析，并提示未能独立重读原笔记。可从来源链接自行核对原文；继续讨论不等于重新核验来源。
 
-从 `2.8.0` 开始，Personal Assistant 客户端源码使用 `AGPL-3.0-only`。历史版本不会被追溯重新授权；旧 tag 和旧发布包继续保留当时发布时的 license notices 与 metadata。查看当前版本的源码和法律信息时，请以对应 GitHub tag、source archive、`LICENSE`、`NOTICE` 和 `THIRD_PARTY_NOTICES.md` 为准。
+</details>
 
-`2.8.0` 是 license 与合规迁移版本，不引入账号系统、license key、checkout 流程、功能锁、托管商业服务或付费 entitlement 校验。未来托管服务、支持、质保、隐私或商标条款可以单独制定，但不得限制 AGPL 赋予用户对客户端进行使用、修改和再分发的权利。
+## 完整能力
 
-`Personal Assistant` 名称、`personal-assistant` 插件 ID、图标、logo 和市场身份不随 AGPL 客户端许可证授权给 fork 使用。详见 [TRADEMARKS.md](./TRADEMARKS.md)、[NOTICE](./NOTICE) 和 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+下表对应当前 `master`。各能力需要对应的兼容模型与连接；服务商能聊天，不代表支持视觉、embedding、工具或生图。
+
+| 想完成的任务 | 功能／入口 | 配置与状态 | 详细说明 |
+| --- | --- | --- | --- |
+| 围绕笔记或图片思考 | Chat／打开PA智能体 | 已支持；聊天模型，笔记操作所需工具能力，图片提问所需视觉能力 | [手册](./Manual-CN.md#ai-chat) |
+| 找回过去材料 | 使用来自笔记的 Memory | 已支持；embedding 连接、允许范围及本设备准备；不同 profile 保留兼容索引 | [Memory](./Manual-CN.md#7-memory) |
+| 保留有用的个人上下文 | 个人记忆／AI 记忆提取 | 开关与同意条件满足时可用；可从用户消息学习并使用 Chat 额度，在 Memory 设置查看、更正或遗忘 | [Memory 控制](./Manual-CN.md#7-memory) |
+| 探索笔记关联 | 拾页发现、来源、Chat 接续 | 已支持；适用的聊天／工具能力；自动发现另有控制与费用 | [指南](./docs/guides/pagelet-user-guide.md) |
+| 生成或修改图片 | Chat 图片任务、Featured Images | 已支持对应的 OpenAI 或 Wan 图片连接；与图片输入分开 | [图片指南](./docs/guides/multimodal-chat-user-guide.md) |
+| 制作分享卡片 | Share Card | 已支持；卡片排版本身不需要生图模型，远程图片可能联网获取 | [Share Card](./docs/architecture/share-card-architecture.md) |
+| 记录与回看 | Quick Capture、Records Preview | 已支持；本地能力，可选 AI 处理单独配置 | [手册](./Manual-CN.md#fleeting-thoughts-记录功能) |
+| 查看活动与笔记结构 | Statistics、Callout、局部图谱、AI 摘要 | 已支持；本地工具不需要模型，AI 摘要需要 Chat，桌面悬浮图谱需要 Hover Editor | [手册](./Manual-CN.md) |
+| 准备 Ghost 文章 | 明确调用 `@blog2ghost` | 桌面端与 Ghost 凭据；准备可写草稿／上传媒体；首发在 Ghost 完成，已检查更新需确认 | [工作流](./skills/blog2ghost/SKILL.md) |
+| 使用语音模型 | 语音 | 规划中；没有可用语音流程或承诺日期 | 关注 [Issues](https://github.com/edonyzpc/personal-assistant/issues) |
+
+插件／主题更新、插件启停命令、旧 Memos 入口及 metadata 自动更新已不是当前能力。[历史演示](./docs/guides/historical-demos.md)保留其适用背景。
+
+### 按任务选择连接
+
+保存可复用的 AI 连接，选定“默认 AI 服务”，让聊天、笔记检索（Memory）和图片使用它支持的对应能力。需要时通过“按功能调整”为某项任务选择其他已保存连接。可以先配置 Chat，用到其他能力时再补充。
+
+Memory 为不同检索配置保留独立的本设备 profile。更换 embedding 模型／维度可能需要重新准备；兼容的已有索引可复用，未启用的 profile 不执行付费后台维护。切换 profile 并不天然触发整库上传或重建。
+
+OpenAI 图片生成／编辑只接受官方 `https://api.openai.com/v1`；Wan 识别受支持的 DashScope 端点。Custom 的 Chat／embedding 兼容不提供图片生成适配。[连接设置](./Manual-CN.md#3-配置) · [图片指南](./docs/guides/multimodal-chat-user-guide.md)
 
 ### Mobile VSS 验证说明
 
-本地 VSS SQLite/WASM 后端已经在 Obsidian Desktop 和 Obsidian iOS 的测试 vault 上完成 smoke test，覆盖重建、刷新、重载后持久化、聊天和 Memory references 展示。由于当前没有 Android 实机测试设备，Android 尚未完成完整实机验证，因此 Android VSS 支持应视为待验证状态。
+PA 支持桌面与移动端，各能力有独立限制；Ghost 仅桌面。历史 SQLite/WASM Memory smoke 覆盖 Desktop 与 iOS；**Android Memory/VSS 尚未完成实机验证**。本页不据此承诺任意服务商或图片能力跨平台兼容。
 
-## 安装
+## 继续使用与反馈
 
-插件已经在[插件市场](https://obsidian.md/plugins?search=personal%20assistant#)上架了，现在你可以直接在 Obsidian 应用程序中安装这个插件，请查看[手册](https://help.obsidian.md/Extending+Obsidian/Community+plugins#Install+a+community+plugin)获取更多详细信息。
-![install with plugin market](./docs/assets/install-within-plugin-market.png)
+阅读时用 Chat，找旧材料时用 Memory，探索关联时用拾页。新想法可用 Quick Capture 记录，有值得分享的成果后再使用卡片或发布能力。
 
-### 通过 BRAT 安装
+在 [Issues](https://github.com/edonyzpc/personal-assistant/issues) 描述**想完成什么、卡在哪里、希望怎样改善**。请不要公开 API Key 或私人笔记。
 
-- 在 Obsidian 中安装 BRAT 插件；
-- 打开命令面板输入 BRAT 命令：`Add a beta plugin for testing`；
-- 将字符串 `https://github.com/edonyzpc/personal-assistant` 拷贝到对话框中；
-- 点击添加插件，等待 BRAT 自动下载插件文件；
-- BRAT 提示安装完成之后在设置的插件页面查找安装号的插件；
-- 刷新插件列表找到安装的插件；
-- 使能该插件；
+[中文手册](./Manual-CN.md) · [指南](./docs/guides/README.md) · [BRAT 测试版](./docs/operations/brat-beta-testing.md) · [开发](./DEVELOPEMENT.md) · [项目文档](./docs/index.md) · [历史演示](./docs/guides/historical-demos.md)
 
-### 手动安装
+客户端源码自 2.8.0 起使用 **AGPL-3.0-only**；历史版本保留原许可。PA 名称、插件 ID、图标与市场身份另有商标条款。参阅 [LICENSE](./LICENSE)、[NOTICE](./NOTICE)、[第三方声明](./THIRD_PARTY_NOTICES.md)、[商标说明](./TRADEMARKS.md)及[详细披露](./docs/operations/network-and-dependencies.md)。
 
-- 通过源码编译: `npm install && npm run build` 或者直接从 [release page](https://github.com/edonyzpc/personal-assistant/releases) 下载
-- 将这些文件 `main.js`, `styles.css`, `manifest.json` 拷贝到 vault 配置目录下的插件目录，通常是 `{VaultFolder}/.obsidian/plugins/personal-assistant/`。如果你的 vault 使用自定义配置目录，请使用对应配置目录而不是 `.obsidian`。
-
-## 使用
-
-### 1. 在指定目录自动创建 note
-- 打开命令面板找到对应的命令
-![command 1](./docs/assets/command-1.png)
-- note 自动创建并打开，此时可以直接开始你的记录了
-- 【***推荐***】使用 [Templater](https://github.com/SilentVoid13/Templater) 插件的 `Folder Templates` 配置 note 模版，从而实现目录级别的模版自定义
-### 2. 在 hover 打开 memos
-- 打开命令面板找到对应的命令
-![command 2](./docs/assets/command-2.png)
-- 开始你的 memos 之旅
-### 3. 打开当前笔记的关系图
-- 打开命令面板找到对应的命令
-![command 3](./docs/assets/command-3.png)
-- 插件的设置中有更多设置选项，包括深度、展示标签等
-- 查看包括 backlink 和 outgoing-link 关系图
-### 4. 开关插件
-- 打开命令面板找到对应的命令
-![command 4](./docs/assets/command-5.png)
-- 选择你要开关的插件，该命令支持根据插件名检索
-- 【***注意***】插件选择界面中，插件名前面绿色的 checkbox 代表插件已经打开，红色的 uncheckbox 代表插件已经关闭
-### 5. 更新插件
-- 打开命令面板找到对应的命令
-![command 6](./docs/assets/command-6.png)
-- 触发该命令
-- 在右上角的通知窗口查看插件更新状态
+由 [edony](https://github.com/edonyzpc) 创建，感谢第三方声明中列出的上游项目。

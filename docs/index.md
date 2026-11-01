@@ -61,3 +61,6 @@ Tracker / Archive 记录当时的过程与证据；这些记录本身不能证�
 本轮质量优先精简见 [GOV-005](./development/governance/gov-005-quality-first-test-reduction.md) 与 [B-151 最终验证](archive/2026/b151-test-reduction/final-report.md)。
 
 流程与beta验证规则及B-156最终验证见[GOV-006](./development/governance/gov-006-lean-delivery-and-beta-validation.md)。
+README 的图文表达、首次体验、公开示例与文档验收见
+[GOV-007](./development/governance/gov-007-readme-experience.md)，交付证据见
+[B-193 最终验收](./archive/2026/b193-readme-validation.md)。

@@ -1,5 +1,7 @@
 # User Guides
 
+- [README 虚构演示笔记 / Fictional example notes](./readme-examples.md) — 可复制的首次任务与关联阅读材料，不含私人数据。
+- [历史演示 / Historical demonstrations](./historical-demos.md) — 旧视频和 GIF 的集中入口，明确退役功能与版本边界。
 - [图片聊天与图文保存](./multimodal-chat-user-guide.md) — B-129 构建的图片入口、版本保存、风格参考及同步设置。
 - [拾页（Pagelet）使用指南](./pagelet-user-guide.md) — 当前仓库的深度发现、来源核对、Chat 接续及笔记操作边界。
 - [README 中文版](../../README-CN.md) / [README](../../README.md) — 安装、配置与产品总览。
