@@ -45,10 +45,13 @@ function invoke(consumer: Consumer, host: ReturnType<typeof fixture>['host']) {
 }
 
 function response(consumer: Consumer): RequestUrlResponse {
-    const json = { id: 'offline', object: 'chat.completion', created: 0, model: 'gpt-4o-mini',
-        choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: consumer === 'image'
-            ? 'Prepared blue circle' : JSON.stringify({ customExcerpt: 'Prepared excerpt' }) } }],
+    const text = consumer === 'image' ? 'Prepared blue circle' : JSON.stringify({ customExcerpt: 'Prepared excerpt' });
+    const json = { id: 'offline', object: 'response', created_at: 0, status: 'completed', model: 'gpt-6.1-terra',
+        error: null, incomplete_details: null,
+        output: [{ id: 'msg_offline', type: 'message', status: 'completed', role: 'assistant',
+            content: [{ type: 'output_text', text, annotations: [] }] }],
         usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        output_text: text,
     };
     return { status: 200, headers: { 'content-type': 'application/json' },
         text: JSON.stringify(json), json, arrayBuffer: new ArrayBuffer(0) };
@@ -63,9 +66,9 @@ describe.each<Consumer>(['image', 'ghost'])('%s preparation uses the actual conn
         expect(transport).toHaveBeenCalledTimes(1);
         const request = transport.mock.calls[0][0];
         if (typeof request === 'string') throw new Error('Expected structured provider request');
-        expect(request.url).toBe('https://api.openai.com/v1/chat/completions');
+        expect(request.url).toBe('https://api.openai.com/v1/responses');
         expect(request.headers?.Authorization ?? request.headers?.authorization).toBe('Bearer chat-openai-offline-token');
-        expect(JSON.parse(String(request.body)).model).toBe('gpt-4o-mini');
+        expect(JSON.parse(String(request.body)).model).toBe('gpt-6.1-terra');
         expect(host.getAPIToken).not.toHaveBeenCalled();
     });
 

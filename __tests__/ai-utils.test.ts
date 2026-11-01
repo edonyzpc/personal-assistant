@@ -40,6 +40,70 @@ function createPlugin(settings: {
 }
 
 describe('native tool calling capability', () => {
+    it('routes exact official gpt-6.1-terra through the Responses adapter and request guard', async () => {
+        const originalFetch = globalThis.fetch;
+        const offlineFetch = jest.fn<typeof fetch>(async () => new Response(JSON.stringify({
+            id: 'resp_ai_utils', object: 'response', created_at: 0, status: 'completed',
+            model: 'gpt-6.1-terra', error: null, incomplete_details: null,
+            output: [{ id: 'msg_ai_utils', type: 'message', status: 'completed', role: 'assistant',
+                content: [{ type: 'output_text', text: 'ok', annotations: [] }] }],
+            usage: { prompt_tokens: 1, output_tokens: 1, total_tokens: 2 }, output_text: 'ok',
+        }), { headers: { 'content-type': 'application/json' } }));
+        globalThis.fetch = offlineFetch;
+        try {
+            const aiUtils = new AIUtils({
+                settings: { aiProvider: 'openai', chatModelName: 'gpt-6.1-terra',
+                    embeddingModelName: 'text-embedding-3-small', baseURL: 'https://api.openai.com/v1' },
+                getAPIToken: async () => 'offline-token', log: () => undefined,
+            } as never);
+            const model = await aiUtils.createChatModel(0.8, { transport: 'native', maxTokens: 321 });
+            const result = await model.invoke('offline');
+            expect(result.text).toBe('ok');
+            expect(String(offlineFetch.mock.calls[0][0])).toBe('https://api.openai.com/v1/responses');
+            const body = JSON.parse(String(offlineFetch.mock.calls[0][1]?.body)) as Record<string, unknown>;
+            expect(body).toMatchObject({ model: 'gpt-6.1-terra', max_output_tokens: 321, store: false });
+            expect(body).not.toHaveProperty('temperature');
+
+            const guarded = await aiUtils.createChatModel(0.8, { transport: 'native',
+                prepareProviderRequest: () => { throw new Error('source revoked'); } });
+            await expect(guarded.invoke('blocked')).rejects.toThrow('source revoked');
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
+    it('keeps other models and OpenAI-compatible endpoints on Chat Completions', async () => {
+        const originalFetch = globalThis.fetch;
+        const urls: string[] = [];
+        globalThis.fetch = jest.fn<typeof fetch>(async (url, _init) => {
+            urls.push(String(url));
+            return new Response(JSON.stringify({ id: 'offline', object: 'chat.completion', created: 0,
+                model: 'offline', choices: [{ index: 0, finish_reason: 'stop',
+                    message: { role: 'assistant', content: 'ok' } }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }),
+                { headers: { 'content-type': 'application/json' } });
+        });
+        try {
+            const cases = [
+                { aiProvider: 'openai', chatModelName: 'gpt-4o-mini',
+                    embeddingModelName: 'text-embedding-3-small', baseURL: 'https://api.openai.com/v1' },
+                { aiProvider: 'openai', chatModelName: 'gpt-6.1-terra',
+                    embeddingModelName: 'text-embedding-3-small', baseURL: 'https://unverified.invalid/v1' },
+            ];
+            for (const settings of cases) {
+                const aiUtils = new AIUtils({ settings,
+                    getAPIToken: async () => 'offline-token', log: () => undefined } as never);
+                await (await aiUtils.createChatModel(0.8, { transport: 'native' })).invoke('offline');
+            }
+            expect(urls).toEqual([
+                'https://api.openai.com/v1/chat/completions',
+                'https://unverified.invalid/v1/chat/completions',
+            ]);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
     it('serializes the documented reserve and summary output cap into actual SDK HTTP bodies', async () => {
         const originalFetch = globalThis.fetch;
         const bodies: Array<Record<string, unknown>> = [];

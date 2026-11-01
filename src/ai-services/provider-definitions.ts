@@ -41,7 +41,7 @@ const DEFINITIONS: ReadonlyMap<string, ProviderDefinition> = new Map([
         defaults: {
             providerId: "openai",
             endpoints: { chat: OPENAI_BASE_URL, embedding: OPENAI_BASE_URL, image: OPENAI_BASE_URL },
-            models: { chat: "gpt-4o-mini", embedding: "text-embedding-3-small", image: "gpt-image-2.5-flare" },
+            models: { chat: "gpt-6.1-terra", embedding: "text-embedding-3-large", image: "gpt-image-2.5-flare" },
             options: { embeddingDimensions: VSS_DEFAULT_DIMENSIONS },
         },
     }],

@@ -38,9 +38,12 @@ function fixture() {
 
 function mockChatFetch() {
     const fetcher = jest.fn<typeof fetch>(async (_url, _init) => new Response(JSON.stringify({ id: 'offline',
-        object: 'chat.completion', created: 0, model: 'gpt-4o-mini',
-        choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+        object: 'response', created_at: 0, status: 'completed', model: 'gpt-6.1-terra',
+        error: null, incomplete_details: null,
+        output: [{ id: 'msg_offline', type: 'message', status: 'completed', role: 'assistant',
+            content: [{ type: 'output_text', text: 'ok', annotations: [] }] }],
         usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        output_text: 'ok',
     }), { headers: { 'content-type': 'application/json' } }));
     globalThis.fetch = fetcher as typeof fetch;
     return fetcher;
@@ -56,16 +59,40 @@ describe('B-192 connection-bound model factories', () => {
                 model: 'text-embedding-v4', usage: { prompt_tokens: 1, total_tokens: 1 } }) } as never);
         await (await ai.createChatModel(0, { transport: 'native' })).invoke('offline chat');
         await (await ai.createEmbeddings()).embedQuery('offline query');
-        expect(String(chatFetch.mock.calls[0][0])).toBe('https://api.openai.com/v1/chat/completions');
+        expect(String(chatFetch.mock.calls[0][0])).toBe('https://api.openai.com/v1/responses');
         const init = chatFetch.mock.calls[0][1] as RequestInit;
         expect(new Headers(init.headers).get('authorization')).toBe('Bearer openai-offline-token');
-        expect(JSON.parse(String(init.body)).model).toBe('gpt-4o-mini');
+        expect(JSON.parse(String(init.body)).model).toBe('gpt-6.1-terra');
         const request = embeddingRequest.mock.calls[0][0];
         if (typeof request === 'string') throw new Error('Expected a provider request object');
         expect(request.url).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings');
         expect(request.headers?.Authorization ?? request.headers?.authorization).toBe('Bearer dashscope-offline-token');
         expect(JSON.parse(String(request.body))).toMatchObject({ model: 'text-embedding-v4', dimensions: 1024 });
         expect(host.getAPIToken).not.toHaveBeenCalled();
+    });
+
+    it('sends the OpenAI default large embedding and keeps an explicitly saved small model', async () => {
+        const { ai, configuration, openai } = fixture();
+        configuration.bindings.embedding = { mode: 'connection', connectionId: openai.id };
+        const embeddingRequest = jest.mocked(requestUrl);
+        embeddingRequest.mockResolvedValue({ status: 200, headers: { 'content-type': 'application/json' },
+            text: JSON.stringify({ object: 'list', data: [{ object: 'embedding', index: 0, embedding: [0.1, 0.2] }],
+                model: 'text-embedding-3-large', usage: { prompt_tokens: 1, total_tokens: 1 } }) } as never);
+        await (await ai.createEmbeddings()).embedQuery('default query');
+        openai.models.embedding = 'text-embedding-3-small';
+        await (await ai.createEmbeddings()).embedQuery('saved query');
+        const requests = embeddingRequest.mock.calls.map(([request]) => {
+            if (typeof request === 'string') throw new Error('Expected a provider request object');
+            return request;
+        });
+        expect(requests.map(request => request.url))
+            .toEqual(['https://api.openai.com/v1/embeddings', 'https://api.openai.com/v1/embeddings']);
+        expect(requests.map(request => JSON.parse(String(request.body)))).toEqual([
+            { input: 'default query', model: 'text-embedding-3-large', dimensions: 1024,
+                encoding_format: 'base64' },
+            { input: 'saved query', model: 'text-embedding-3-small', dimensions: 1024,
+                encoding_format: 'base64' },
+        ]);
     });
 
     it('keeps a pinned chat live across default changes and rename, but blocks an old Key before dispatch', async () => {
@@ -104,6 +131,7 @@ describe('B-192 connection-bound model factories', () => {
 
     it('declares only the known OpenAI tool protocol on its exact endpoint', () => {
         const { ai, openai } = fixture();
+        openai.models.chat = 'gpt-4o-mini';
         expect(ai.getNativeToolCallingCapability({ internalGate: true }).supported).toBe(true);
         openai.endpoints.chat = 'https://unverified.invalid/v1';
         expect(ai.getNativeToolCallingCapability({ internalGate: true }).supported).toBe(false);

@@ -21,6 +21,7 @@ import type { AgentDebugCallScope } from './agent-debug-port';
 import type { PaAgentModelBudgetFacts } from './context/PaAgentContextBudget';
 import { resolveAIConnection } from './ai-connection-resolver';
 import type { AIPurpose, AIConnectionsSettings, AIConnectionResolution } from './ai-connection-types';
+import { isOfficialOpenAITerraTarget, TerraChatOpenAI } from './openai-responses-adapter';
 
 export type ChatTransport = 'obsidian' | 'native';
 
@@ -567,6 +568,16 @@ export class AIUtils {
             }
 
             case 'openai': {
+                if (isOfficialOpenAITerraTarget({ provider, model: modelName, baseURL })) {
+                    return new TerraChatOpenAI({
+                        onFailedAttempt: onProviderFailedAttempt,
+                        model: modelName,
+                        apiKey: token,
+                        configuration: this.createOpenAIClientOptions(baseURL, transport, requestOptions),
+                        temperature: temperature,
+                        ...(typeof options.maxTokens === "number" ? { maxTokens: options.maxTokens } : {}),
+                    });
+                }
                 return new ChatOpenAI({
                     onFailedAttempt: onProviderFailedAttempt,
                     model: modelName,

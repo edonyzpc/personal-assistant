@@ -2206,7 +2206,7 @@ describe("inline AI setup coordinator", () => {
         expect(config.connections).toEqual([expect.objectContaining({
             providerId: 'openai', secretRef: 'pa-api-token',
             endpoints: expect.objectContaining({ chat: 'https://api.openai.com/v1', embedding: 'https://api.openai.com/v1' }),
-            models: expect.objectContaining({ chat: 'gpt-4o-mini', embedding: 'text-embedding-3-small' }),
+            models: expect.objectContaining({ chat: 'gpt-6.1-terra', embedding: 'text-embedding-3-large' }),
         })]);
         expect(config.defaultConnectionId).toBe(config.connections[0].id);
         expect(readPersisted()?.aiConnections).toEqual(config);

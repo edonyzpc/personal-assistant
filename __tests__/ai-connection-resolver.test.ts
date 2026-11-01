@@ -36,7 +36,7 @@ describe("saved AI connection defaults", () => {
     it("keeps separate service regions, supported image protocols and new-connection model defaults", () => {
         const openai = createConnectionDefaults("openai");
         expect(openai.models).toMatchObject({
-            chat: "gpt-4o-mini", embedding: "text-embedding-3-small", image: "gpt-image-2.5-flare",
+            chat: "gpt-6.1-terra", embedding: "text-embedding-3-large", image: "gpt-image-2.5-flare",
         });
         expect(openai.options.embeddingDimensions).toBe(1024);
         expect(createConnectionDefaults("dashscope-cn").endpoints.chat)
@@ -53,7 +53,7 @@ describe("saved AI connection defaults", () => {
         first.options.embeddingDimensions = 512;
         const next = createConnectionDefaults("openai");
         expect(next.endpoints.chat).toBe("https://api.openai.com/v1");
-        expect(next.models.chat).toBe("gpt-4o-mini");
+        expect(next.models.chat).toBe("gpt-6.1-terra");
         expect(next.options.embeddingDimensions).toBe(1024);
     });
 
@@ -192,7 +192,7 @@ describe("persisted connection boundary", () => {
         const connection = savedConnection("openai", "saved", { options: { embeddingDimensions } });
         expect(resolveAIConnection(settings(connection), "embedding"))
             .toEqual({ ok: false, issue: "configuration_invalid", connectionId: "saved" });
-        expect(resolved(settings(connection), "chat").model).toBe("gpt-4o-mini");
+        expect(resolved(settings(connection), "chat").model).toBe("gpt-6.1-terra");
     });
 
     it("keeps the resolved request snapshot independent of later settings edits", () => {
@@ -204,7 +204,7 @@ describe("persisted connection boundary", () => {
         connection.models.chat = "another-model";
         (connection.options.chat!.thinking as { enabled: boolean }).enabled = true;
         expect(snapshot.endpoint).toBe("https://api.openai.com/v1");
-        expect(snapshot.model).toBe("gpt-4o-mini");
+        expect(snapshot.model).toBe("gpt-6.1-terra");
         expect(snapshot.options.chat).toEqual({ thinking: { enabled: false } });
     });
 });
