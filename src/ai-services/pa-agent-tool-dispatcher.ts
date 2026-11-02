@@ -313,14 +313,12 @@ export class ToolExecutionDispatcher {
         readGuard?: TaskSourceReadGuard,
     ): ParsedBufferedToolCall[] {
         if (toolMode === "final_answer_only") return [];
-        const meaningfulToolCallNames = collectMeaningfulToolCallNames(toolCalls);
         const projectedSeen = new Set(this.seenToolCallKeys);
         let projectedCount = this.toolCallCount;
         const eligible: ParsedBufferedToolCall[] = [];
         for (const toolCall of toolCalls) {
             assertTaskSourceReadCurrent(readGuard);
             if (this.classifyControlSnapshotSkip(toolCall, controlSnapshot)) continue;
-            if (isPlaceholderParsedToolCall(toolCall) && meaningfulToolCallNames.has(toolCall.name)) continue;
             if (projectedCount >= this.config.maxToolCalls || toolCall.parseError) continue;
             const key = this.normalizeToolCallKey(toolCall);
             assertTaskSourceReadCurrent(readGuard);
@@ -439,7 +437,6 @@ export class ToolExecutionDispatcher {
     ): Promise<ToolExecutionSummary> {
         const toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>> = [];
         const diagnostics: Array<Record<string, unknown>> = [];
-        const meaningfulToolCallNames = collectMeaningfulToolCallNames(parsedToolCalls);
         const handledToolCallKeys = new Set<string>();
 
         for (const toolCall of parsedToolCalls) {
@@ -458,7 +455,7 @@ export class ToolExecutionDispatcher {
             const completedOperationsResult = finiteOperationsResult(preparedResult, toolCall.id);
             const toolCallKey = this.normalizeToolCallKey(toolCall);
             const skipResult = completedOperationsResult ? undefined : this.consumeExpiredSourceGuardAttempt(readGuard)
-                ?? this.classifyPreflightSkip(toolCall, meaningfulToolCallNames, turnToolMode, turnControlSnapshot,
+                ?? this.classifyPreflightSkip(toolCall, turnToolMode, turnControlSnapshot,
                     handledToolCallKeys);
             handledToolCallKeys.add(toolCallKey);
             let executionResult: PaAgentToolExecutionResult;
@@ -509,7 +506,6 @@ export class ToolExecutionDispatcher {
             return { toolResults, diagnostics, stoppedBy: "wall_clock_exceeded" };
         }
 
-        const meaningfulToolCallNames = collectMeaningfulToolCallNames(parsedToolCalls);
         const handledToolCallKeys = new Set<string>();
         // Pre-flight pass: classify each tool call in deterministic order so state mutations
         // (seenToolCallKeys, toolCallCount) mirror the sequential path. Only the "real" executes run concurrently.
@@ -517,7 +513,7 @@ export class ToolExecutionDispatcher {
         for (const toolCall of parsedToolCalls) {
             const toolCallKey = this.normalizeToolCallKey(toolCall);
             const skipResult = this.consumeExpiredSourceGuardAttempt(readGuard)
-                ?? this.classifyPreflightSkip(toolCall, meaningfulToolCallNames, turnToolMode, turnControlSnapshot,
+                ?? this.classifyPreflightSkip(toolCall, turnToolMode, turnControlSnapshot,
                     handledToolCallKeys);
             handledToolCallKeys.add(toolCallKey);
             if (skipResult) {
@@ -584,7 +580,6 @@ export class ToolExecutionDispatcher {
 
     private classifyPreflightSkip(
         toolCall: ParsedBufferedToolCall,
-        meaningfulToolCallNames: Set<string>,
         turnToolMode: PaAgentToolMode | undefined,
         turnControlSnapshot: AgentControlSnapshot | undefined,
         handledToolCallKeys: ReadonlySet<string>,
@@ -611,18 +606,6 @@ export class ToolExecutionDispatcher {
         }
         const controlSnapshotSkip = this.classifyControlSnapshotSkip(toolCall, turnControlSnapshot);
         if (controlSnapshotSkip) return controlSnapshotSkip;
-        if (isPlaceholderParsedToolCall(toolCall) && meaningfulToolCallNames.has(toolCall.name)) {
-            return {
-                outcome: "duplicate_skipped",
-                promptText: "",
-                previewText: `Skipped placeholder tool call ${toolCall.name}.`,
-                includeInNextPrompt: false,
-                metadata: {
-                    outcome: "duplicate_skipped",
-                    reason: "placeholder_tool_call",
-                },
-            };
-        }
         if (this.toolCallCount >= this.config.maxToolCalls) {
             return {
                 outcome: "budget_exceeded",
@@ -1296,14 +1279,8 @@ function finalizeParallelToolResultsBeforeEmit(
 
 // ─── exported utility functions ──────────────────────────────────────
 
-export function hasMeaningfulStructuredToolInput(input: unknown): boolean {
-    if (input === null || input === undefined) return false;
-    if (typeof input === "string") return input.trim().length > 0;
-    if (Array.isArray(input)) return input.some(hasMeaningfulStructuredToolInput);
-    if (typeof input === "object") {
-        return Object.values(input as Record<string, unknown>).some(hasMeaningfulStructuredToolInput);
-    }
-    return true;
+export function hasStructuredToolInput(input: unknown): boolean {
+    return input !== null && typeof input === "object" && !Array.isArray(input);
 }
 
 export function defaultIncludeInNextPrompt(outcome: ToolExecutionOutcome): boolean {
@@ -1349,44 +1326,51 @@ interface ParallelToolEntry {
 
 function parseBufferedToolCall(buffer: BufferedToolCall): ParsedBufferedToolCall {
     const rawInputText = buffer.argsText;
-    const trimmed = rawInputText.trim();
-    if (trimmed.length > 0) {
+    const hasRawInputText = rawInputText.length > 0;
+    if (buffer.invalidInput) {
+        return {
+            type: "toolCall",
+            id: buffer.id,
+            name: buffer.name,
+            input: rawInputText,
+            index: buffer.index,
+            rawInputText,
+            parseError: "Tool call arguments are invalid.",
+        };
+    }
+    if (hasRawInputText) {
         try {
-            const parsed = JSON.parse(trimmed) as unknown;
+            const parsed = JSON.parse(rawInputText) as unknown;
             if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-                if (hasMeaningfulStructuredToolInput(parsed) || !buffer.hasStructuredInput) {
-                    return {
-                        type: "toolCall",
-                        id: buffer.id,
-                        name: buffer.name,
-                        input: parsed,
-                        index: buffer.index,
-                        rawInputText,
-                    };
-                }
-            } else if (!buffer.hasStructuredInput) {
                 return {
                     type: "toolCall",
                     id: buffer.id,
                     name: buffer.name,
-                    input: rawInputText,
+                    input: parsed,
                     index: buffer.index,
                     rawInputText,
-                    parseError: "Tool call input JSON must be an object.",
                 };
             }
+            return {
+                type: "toolCall",
+                id: buffer.id,
+                name: buffer.name,
+                input: rawInputText,
+                index: buffer.index,
+                rawInputText,
+                parseError: "Tool call input JSON must be an object.",
+            };
         } catch (error) {
-            if (!buffer.hasStructuredInput) {
-                return {
-                    type: "toolCall",
-                    id: buffer.id,
-                    name: buffer.name,
-                    input: rawInputText,
-                    index: buffer.index,
-                    rawInputText,
-                    parseError: error instanceof Error ? error.message : String(error),
-                };
-            }
+            // Raw provider text is authoritative; a structured mirror cannot rescue it.
+            return {
+                type: "toolCall",
+                id: buffer.id,
+                name: buffer.name,
+                input: rawInputText,
+                index: buffer.index,
+                rawInputText,
+                parseError: error instanceof Error ? error.message : String(error),
+            };
         }
     }
 
@@ -1401,45 +1385,17 @@ function parseBufferedToolCall(buffer: BufferedToolCall): ParsedBufferedToolCall
         };
     }
 
-    if (trimmed.length === 0) {
-        return {
-            type: "toolCall",
-            id: buffer.id,
-            name: buffer.name,
-            input: {},
-            index: buffer.index,
-        };
-    }
-
     return {
         type: "toolCall",
         id: buffer.id,
         name: buffer.name,
-        input: rawInputText,
+        input: {},
         index: buffer.index,
-        rawInputText,
-        parseError: "Tool call input JSON must be an object.",
     };
 }
 
 function compareBufferedToolCallOrder(a: BufferedToolCall, b: BufferedToolCall): number {
     return a.index - b.index || a.partIndex - b.partIndex;
-}
-
-function collectMeaningfulToolCallNames(parsedToolCalls: ParsedBufferedToolCall[]): Set<string> {
-    return new Set(
-        parsedToolCalls
-            .filter(isMeaningfulParsedToolCall)
-            .map((toolCall) => toolCall.name),
-    );
-}
-
-function isMeaningfulParsedToolCall(toolCall: ParsedBufferedToolCall): boolean {
-    return !toolCall.parseError && hasMeaningfulStructuredToolInput(toolCall.input);
-}
-
-function isPlaceholderParsedToolCall(toolCall: ParsedBufferedToolCall): boolean {
-    return !toolCall.parseError && !hasMeaningfulStructuredToolInput(toolCall.input);
 }
 
 function normalizeRawToolCallKey(toolCall: ParsedBufferedToolCall): string {
@@ -1587,7 +1543,6 @@ function knownPreflightReason(value: unknown): string | undefined {
     return value === "final_answer_only_violation"
         || value === "control_snapshot_tool_blocked"
         || value === "control_snapshot_tool_not_allowed"
-        || value === "placeholder_tool_call"
         || value === "invalid_tool_input"
         || value === "duplicate_tool_call"
         || value === "capability_admission_rejected"

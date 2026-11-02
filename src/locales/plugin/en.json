@@ -716,6 +716,8 @@
     "plugin.chat.formatter.warningContextUnavailable": "The context changed before this request could be sent. Please ask again.",
     "plugin.chat.formatter.warningToolRequestIncomplete": "The assistant did not finish its request to access information. Please ask again.",
     "plugin.chat.formatter.warningNoAnswer": "No final answer was produced.",
+    "plugin.chat.formatter.warningProviderRefusal": "Provider declined to answer",
+    "plugin.chat.formatter.warningProviderRefusalDetail": "The provider returned a refusal instead of completing the task.",
     "plugin.chat.formatter.warningContextTooLong": "Request is too long",
     "plugin.chat.formatter.warningContextTooLongDetail": "The current context is too long to continue. Shorten your message or start a new conversation.",
     "plugin.chat.formatter.warningProviderContextTooLongDetail": "The request exceeds the AI provider's context capacity and could not be completed. Reduce the included material or start a new conversation.",

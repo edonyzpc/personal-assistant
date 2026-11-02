@@ -1,9 +1,11 @@
 import {
     ChatOpenAI,
+    ChatOpenAICompletions,
     ChatOpenAIResponses,
     type ChatOpenAICallOptions,
     type ChatOpenAIFields,
 } from '@langchain/openai';
+import type { BaseMessage, BaseMessageChunk } from '@langchain/core/messages';
 import type OpenAI from 'openai';
 import { ProviderCompletionError } from './provider-result';
 
@@ -103,6 +105,32 @@ class PaChatOpenAIResponses extends ChatOpenAIResponses {
     }
 }
 
+function preserveRefusal(message: BaseMessage, refusal: unknown): BaseMessage {
+    if (typeof refusal !== 'string' || refusal.length === 0) return message;
+    message.additional_kwargs = { ...message.additional_kwargs, refusal };
+    return message;
+}
+
+class PaChatOpenAICompletions extends ChatOpenAICompletions {
+    protected override _convertCompletionsDeltaToBaseMessageChunk(
+        delta: Record<string, unknown>,
+        rawResponse: OpenAI.Chat.Completions.ChatCompletionChunk,
+        defaultRole?: OpenAI.Chat.ChatCompletionRole,
+    ): BaseMessageChunk {
+        return preserveRefusal(
+            super._convertCompletionsDeltaToBaseMessageChunk(delta, rawResponse, defaultRole),
+            delta.refusal,
+        ) as BaseMessageChunk;
+    }
+
+    protected override _convertCompletionsMessageToBaseMessage(
+        message: OpenAI.Chat.ChatCompletionMessage,
+        rawResponse: OpenAI.Chat.ChatCompletion,
+    ): BaseMessage {
+        return preserveRefusal(super._convertCompletionsMessageToBaseMessage(message, rawResponse), message.refusal);
+    }
+}
+
 /** Remains a ChatOpenAI so PA's existing action-history and tool binding continue to apply. */
 export class PaChatOpenAI extends ChatOpenAI {
     constructor(
@@ -124,6 +152,7 @@ export class PaChatOpenAI extends ChatOpenAI {
         if (protocolPolicy === 'responses') {
             this.responses = new PaChatOpenAIResponses(this.fields ?? {});
         }
+        this.completions = new PaChatOpenAICompletions(this.fields ?? {});
     }
 
     protected override _useResponsesApi(options: this['ParsedCallOptions'] | undefined): boolean {

@@ -35,7 +35,7 @@ import { cloneActionStates } from './pa-agent-result-facts';
 import {
     ToolExecutionDispatcher,
     defaultIncludeInNextPrompt,
-    hasMeaningfulStructuredToolInput,
+    hasStructuredToolInput,
 } from "./pa-agent-tool-dispatcher";
 import type {
     BufferedToolCall,
@@ -683,6 +683,16 @@ export class PaAgentLoop {
                 return this.createResult("incomplete");
             }
 
+            if (turnSummary.assistantMessage.role === "assistant"
+                && turnSummary.assistantMessage.providerRefusal !== undefined) {
+                this.endAgent("incomplete", {
+                    reason: "provider_refusal",
+                    diagnostics: turnSummary.diagnostics,
+                    warnings: [{ type: "provider_refusal" }],
+                });
+                return this.createResult("incomplete");
+            }
+
             if (turnSummary.agentReportedIncomplete) {
                 if (loopReservedFinalTurn) reportFinalizationReserve("failed");
                 this.endAgent("incomplete", { reason: "agent_reported_incomplete" });
@@ -998,6 +1008,7 @@ export class PaAgentLoop {
         let sawToolCall = false;
         let sawProviderCompletion = false;
         let pendingText = "";
+        let pendingRefusalText = "";
         let hasPendingAnswerText = false;
         let pendingTextReclassified = false;
         const toolCallBuffers: BufferedToolCall[] = [];
@@ -1057,6 +1068,32 @@ export class PaAgentLoop {
                 this.options.nativeWriting.maxTextChars,
             )
             : undefined;
+        const emitToolCallStart = (buffer: BufferedToolCall): void => {
+            buffer.startEmitted = true;
+            this.events.messageUpdate(turnId, assistantMessage.id, {
+                kind: "toolcall_start",
+                toolCallId: buffer.id,
+                name: buffer.name,
+                index: buffer.index,
+            }, pendingTextReclassified ? { reclassifiedPendingText: pendingText } : undefined);
+        };
+        const emitToolCallDelta = (
+            buffer: BufferedToolCall,
+            text: string,
+        ): void => {
+            this.events.messageUpdate(turnId, assistantMessage.id, {
+                kind: "toolcall_delta",
+                text,
+                toolCallId: buffer.id,
+                index: buffer.index,
+            }, nativeCollector?.isCandidate ? {
+                nativeWritingContextHandle: nativeContextHandle,
+                nativeWritingArguments: nativeCollector.rawArguments,
+            } : undefined);
+        };
+        const bufferedArgumentText = (buffer: BufferedToolCall): string => (
+            buffer.argsText || (buffer.hasStructuredInput ? stringifyToolInput(buffer.input) : "")
+        );
 
         let iterator: AsyncIterator<PaAgentModelStreamChunk> | undefined;
         let inputPreparationCompleted = !this.options.prepareModelInput;
@@ -1287,6 +1324,24 @@ export class PaAgentLoop {
                 firstModelChunkElapsedMs = elapsedSince(modelStartedAt, this.now());
             }
             switch (chunk.type) {
+                case "refusal_delta": {
+                    if (!sawText) {
+                        sawText = true;
+                        this.events.messageUpdate(turnId, assistantMessage.id, { kind: "text_start" });
+                    }
+                    pendingRefusalText += chunk.text;
+                    pendingText += chunk.text;
+                    hasPendingAnswerText ||= chunk.text.trim().length > 0;
+                    appendTextPart(assistantMessage.content, "text", chunk.text);
+                    assistantMessage.providerRefusal = pendingRefusalText;
+                    if (!diagnostics.some(diagnostic => diagnostic.type === "provider_refusal")) {
+                        diagnostics.push({ type: "provider_refusal" });
+                    }
+                    this.events.messageUpdate(turnId, assistantMessage.id, {
+                        kind: "text_delta", text: chunk.text,
+                    }, { providerRefusal: true });
+                    break;
+                }
                 case "thinking_delta":
                     if (!sawThinking) {
                         sawThinking = true;
@@ -1321,39 +1376,38 @@ export class PaAgentLoop {
                         for (const listener of providerRequestDeadlineListeners) listener();
                     }
                     sawToolCall = true;
-                    if (pendingText.length > 0 && !nativeCollector) {
+                    if (pendingText.length > 0 && pendingRefusalText.length === 0 && !nativeCollector) {
                         pendingTextReclassified = true;
                         reclassifyTextPartsAsThinking(assistantMessage.content);
                     }
-                    const { buffer, isNew } = upsertToolCallBuffer(
+                    const assembled = upsertToolCallBuffer(
                         toolCallBuffers,
                         assistantMessage.content,
                         chunk,
                         this.createId,
                     );
+                    if (assembled.identityConflict) {
+                        diagnostics.push({ type: "tool_call_identity_conflict" });
+                        if (terminalStatus === undefined) terminalStatus = "incomplete";
+                    }
+                    const { buffer } = assembled;
                     const sourceIndex = nativeCollector?.providerIdentity?.index;
                     if (sourceIndex !== undefined) {
                         buffer.index = sourceIndex;
                         const part = assistantMessage.content[buffer.partIndex];
                         if (part.type === "toolCall") part.index = sourceIndex;
                     }
-                    if (isNew) {
-                        this.events.messageUpdate(turnId, assistantMessage.id, {
-                            kind: "toolcall_start",
-                            toolCallId: buffer.id,
-                            name: buffer.name,
-                            index: buffer.index,
-                        }, pendingTextReclassified ? { reclassifiedPendingText: pendingText } : undefined);
+                    if (buffer.startEmitted) {
+                        emitToolCallDelta(
+                            buffer,
+                            chunk.argsText ?? stringifyToolInput(chunk.input),
+                        );
+                    } else if (buffer.providerId !== undefined && buffer.name) {
+                        emitToolCallStart(buffer);
+                        // Flush arguments received while the stable header was
+                        // pending, then stream subsequent fragments normally.
+                        emitToolCallDelta(buffer, bufferedArgumentText(buffer));
                     }
-                    this.events.messageUpdate(turnId, assistantMessage.id, {
-                        kind: "toolcall_delta",
-                        text: chunk.argsText ?? stringifyToolInput(chunk.input),
-                        toolCallId: buffer.id,
-                        index: buffer.index,
-                    }, nativeCollector?.isCandidate ? {
-                        nativeWritingContextHandle: nativeContextHandle,
-                        nativeWritingArguments: nativeCollector.rawArguments,
-                    } : undefined);
                     break;
                 }
             }
@@ -1416,6 +1470,12 @@ export class PaAgentLoop {
         }
         canonicalizeBufferedToolCallParts(toolCallBuffers, assistantMessage.content);
         for (const buffer of toolCallBuffers) {
+            if (!buffer.startEmitted) {
+                emitToolCallStart(buffer);
+                emitToolCallDelta(buffer, bufferedArgumentText(buffer));
+            }
+        }
+        for (const buffer of toolCallBuffers) {
             this.events.messageUpdate(turnId, assistantMessage.id, {
                 kind: "toolcall_end",
                 toolCallId: buffer.id,
@@ -1446,10 +1506,23 @@ export class PaAgentLoop {
                 diagnostics.push({ type: "provider_incomplete", completion: assistantMessage.providerCompletion });
             }
         }
-        if (!hasToolCall && hasPendingAnswerText && this.options.isFinalTextCurrent) {
+        if (pendingRefusalText.length > 0 && terminalStatus === undefined) {
+            terminalStatus = "incomplete";
+        }
+        if ((!hasToolCall || pendingRefusalText.length > 0) && hasPendingAnswerText
+            && this.options.isFinalTextCurrent) {
             if (!this.isFinalTextCurrent()) {
                 if (terminalStatus !== "aborted" && terminalStatus !== "error") terminalStatus = "incomplete";
                 diagnostics.push({ type: "assistant_source_changed" });
+            }
+        }
+        if (pendingRefusalText.length > 0 && nativeWritingAttempted && !this.isNativeWritingCurrent()) {
+            if (terminalStatus !== "aborted" && terminalStatus !== "error") terminalStatus = "incomplete";
+            if (!diagnostics.some(diagnostic => diagnostic.type === "assistant_source_changed")) {
+                diagnostics.push({
+                    type: "assistant_source_changed",
+                    message: "Writing sources changed before delivery.",
+                });
             }
         }
         const nativeWriting = nativeWritingAttempted ? nativeCollector?.acceptForDelivery({
@@ -1463,7 +1536,8 @@ export class PaAgentLoop {
             toolCalls[0].name = this.options.nativeWriting!.outputName;
             toolCalls[0].input = nativeCollector!.rawArguments;
         }
-        if (nativeCollector && hasToolCall && !nativeWriting && pendingText.length > 0) {
+        if (nativeCollector && hasToolCall && !nativeWriting && pendingText.length > 0
+            && pendingRefusalText.length === 0) {
             pendingTextReclassified = true;
             reclassifyTextPartsAsThinking(assistantMessage.content);
         }
@@ -1548,7 +1622,20 @@ export class PaAgentLoop {
         const status: TurnEndStatus = terminalStatus
             ?? (nativeWriting ? "completed" : hasToolCall ? (toolResults.length > 0 ? "tool_results_ready" : "incomplete") : "completed");
 
+        const refusalHasActualCompletion = sawProviderCompletion
+            && (assistantMessage.providerCompletion === "stop"
+                || assistantMessage.providerCompletion === "tool_calls");
+        const refusalFinalTextIsCurrent = !this.options.isFinalTextCurrent || this.isFinalTextCurrent();
+        const refusalNativeWritingIsCurrent = !nativeWritingAttempted || this.isNativeWritingCurrent();
+        if (pendingRefusalText.length > 0 && status === "incomplete"
+            && refusalHasActualCompletion
+            && refusalFinalTextIsCurrent
+            && refusalNativeWritingIsCurrent) {
+            this.committedFinalText += pendingRefusalText;
+            this.options.onCommittedFinalText?.(this.committedFinalText);
+        }
         if (!hasToolCall && hasPendingAnswerText && status !== "error" && status !== "incomplete"
+            && pendingRefusalText.length === 0
             && !diagnostics.some(diagnostic => diagnostic.type === "assistant_source_changed")) {
             this.committedFinalText += pendingText;
             this.options.onCommittedFinalText?.(this.committedFinalText);
@@ -1858,7 +1945,8 @@ export class PaAgentLoop {
         return summary.diagnostics.some((diagnostic) => diagnostic.type === "provider_error")
             && summary.diagnostics.some((diagnostic) => diagnostic.retryable === true)
             && !summary.diagnostics.some((diagnostic) => diagnostic.type === "provider_admission_rejected"
-                || diagnostic.type === "context_local_overflow");
+                || diagnostic.type === "context_local_overflow"
+                || diagnostic.type === "provider_refusal");
     }
 
     private providerRecoveryInstruction(summary: PaAgentTurnSummary): string | undefined {
@@ -2322,17 +2410,22 @@ function upsertToolCallBuffer(
     parts: AssistantMessagePart[],
     chunk: Extract<PaAgentModelStreamChunk, { type: "toolcall_delta" }>,
     createId: (prefix: string) => string,
-): { buffer: BufferedToolCall; isNew: boolean } {
+): { buffer: BufferedToolCall; identityConflict: boolean } {
     const key = createToolCallBufferKey(chunk, buffers.length);
     let buffer = buffers.find((candidate) => candidate.key === key);
-    // Fallback: match by index when key format differs across stream chunks.
-    // First chunk may use id-based key ("id:call_...") while subsequent chunks
-    // only carry index ("index:0"). Without this fallback, arguments accumulate
-    // in an orphaned buffer and the original buffer stays empty.
+    // A provider index is a real shared coordinate even when one fragment uses
+    // ID-first and the next uses index-only form. It must never merge two IDs.
     if (!buffer && chunk.index !== undefined) {
-        buffer = buffers.find((candidate) => candidate.index === chunk.index);
+        buffer = buffers.find((candidate) => candidate.providerIndex === chunk.index
+            && (chunk.id === undefined || candidate.providerId === undefined
+                || candidate.providerId === chunk.id));
     }
     const isNew = buffer === undefined;
+    let identityConflict = false;
+    if (isNew && chunk.index !== undefined && chunk.id !== undefined) {
+        identityConflict = buffers.some((candidate) => candidate.providerIndex === chunk.index
+            && candidate.providerId !== undefined && candidate.providerId !== chunk.id);
+    }
 
     if (!buffer) {
         const id = chunk.id ?? createId("tool_call");
@@ -2340,10 +2433,13 @@ function upsertToolCallBuffer(
         buffer = {
             key,
             id,
+            ...(chunk.id ? { providerId: chunk.id } : {}),
+            ...(chunk.index !== undefined ? { providerIndex: chunk.index } : {}),
             name: chunk.name,
             index,
             argsText: "",
             hasStructuredInput: false,
+            ...(chunk.invalidInput ? { invalidInput: true as const } : {}),
             partIndex: parts.length,
         };
         buffers.push(buffer);
@@ -2355,19 +2451,39 @@ function upsertToolCallBuffer(
             index: buffer.index,
         });
     }
+    if (buffer.providerId !== undefined && buffer.providerId === chunk.id
+        && buffer.providerIndex !== undefined && chunk.index !== undefined && buffer.providerIndex !== chunk.index) {
+        identityConflict = true;
+    }
+    if (chunk.id !== undefined) {
+        buffer.providerId = chunk.id;
+        buffer.id = chunk.id;
+        buffer.key = `id:${chunk.id}`;
+    }
+    if (chunk.index !== undefined) {
+        buffer.providerIndex = chunk.index;
+        buffer.index = chunk.index;
+    }
+    // Header facts may arrive across provider fragments. Once they identify
+    // this buffered call, mirror them into its canonical assistant part.
+    if (chunk.name && !buffer.name) buffer.name = chunk.name;
 
     if (chunk.argsText !== undefined) {
         buffer.argsText += chunk.argsText;
     }
-    if (chunk.input !== undefined && hasMeaningfulStructuredToolInput(chunk.input)) {
+    if (chunk.input !== undefined && hasStructuredToolInput(chunk.input)) {
         buffer.input = chunk.input;
         buffer.hasStructuredInput = true;
     }
+    if (chunk.invalidInput) buffer.invalidInput = true;
     const part = parts[buffer.partIndex];
     if (part?.type === "toolCall") {
+        part.id = buffer.id;
+        part.name = buffer.name;
+        part.index = buffer.index;
         part.input = buffer.hasStructuredInput ? buffer.input : buffer.argsText;
     }
-    return { buffer, isNew };
+    return { buffer, identityConflict };
 }
 
 function canonicalizeBufferedToolCallParts(
@@ -2402,6 +2518,7 @@ function createToolCallBufferKey(
 ): string {
     if (chunk.id) return `id:${chunk.id}`;
     if (chunk.index !== undefined) return `index:${chunk.index}`;
+    if (chunk.order !== undefined) return `order:${chunk.order}`;
     return `order:${fallbackIndex}`;
 }
 

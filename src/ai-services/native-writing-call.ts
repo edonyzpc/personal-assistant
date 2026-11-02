@@ -66,6 +66,7 @@ export class NativeWritingCallCollector {
     consume(chunk: ToolCallDelta): void {
         try {
             this.observeWritingCall(chunk);
+            if (chunk.invalidInput) return this.reject();
             if (this.rejected) return;
             const identity = chunk.providerIdentity;
             if (!identity || typeof identity !== "object" || Array.isArray(identity)) return this.reject();

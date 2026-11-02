@@ -480,7 +480,12 @@ describe("streamWithInvokeFallback (P0-D)", () => {
         }));
 
         const toolDeltas = chunks.filter((chunk) => chunk.type === "toolcall_delta");
-        expect(toolDeltas.length).toBeGreaterThan(0);
+        expect(toolDeltas).toEqual([{
+            type: "toolcall_delta",
+            id: "call_1",
+            name: "search_memory",
+            argsText: '{"query":"x"}',
+        }]);
         // The map was mutated by getCanonicalToolCallDeltas during fallback — proof that the same
         // accumulator was threaded through rather than being silently reset on retry.
         expect(map.size).toBeGreaterThan(0);

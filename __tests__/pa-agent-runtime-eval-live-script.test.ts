@@ -341,9 +341,13 @@ describe("B-149 live eval script safety seam", () => {
             const body = JSON.parse(String(init?.body));
             bodies.push(body);
             if (bodies.length === 1) return completion(body, "read_note");
-            if (body.stream) return new Response(JSON.stringify({ error: { message: "synthetic stream unavailable" } }), {
-                status: 400, headers: { "content-type": "application/json" },
-            });
+            if (body.stream) {
+                const failingStream = new ReadableStream<Uint8Array>({
+                    start(controller) { controller.error(new Error("synthetic stream transport failure")); },
+                });
+                return new Response(failingStream, { status: 200,
+                    headers: { "content-type": "text/event-stream" } });
+            }
             return completion(body);
         }) as typeof fetch;
         runInNewContext(source, testVault.sandbox);

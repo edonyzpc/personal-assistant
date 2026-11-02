@@ -108,7 +108,8 @@ import {
 } from "./generation-input-snapshot";
 import { CanonicalToLegacyEventAdapter } from "./pa-agent-stream-bridge";
 import { readProviderCompletion, writingOutputInstruction, nativeWritingOutputInstruction, nativeWritingPreparationInstruction, nativeWritingOutputSchema, cloneChatWritingRequest, selectedWritingContext, isValidWritingContextHandle } from "./writing-output";
-import { assertProviderCompletion, ProviderCompletionError } from "./provider-result";
+import { assertProviderCompletion, ProviderCompletionError, readProviderRefusal } from "./provider-result";
+import { normalizeProviderToolCalls, type NormalizedProviderToolCall } from "./provider-tool-call-normalization";
 import { REPORT_TASK_INCOMPLETE, taskIncompleteOutputSchema } from './pa-agent-task-outcome';
 import { NativeWritingCallCollector } from "./native-writing-call";
 import { ChatImageRequestScope, createResolveChatImagesTool, RESOLVE_CHAT_IMAGES } from "./image-request";
@@ -4199,146 +4200,64 @@ function getCanonicalToolCallDeltas(
     chunk: unknown,
     streamedToolNames: Map<string, string>,
     captureToolIdentity = false,
+    source: 'stream' | 'invoke',
 ): PaAgentModelStreamChunk[] {
-    // Prefer tool_call_chunks (LangChain raw streaming format) over tool_calls.
-    // tool_calls includes both LangChain's pre-parsed entries (args already an object)
-    // AND additional_kwargs.tool_calls (raw OpenAI-format string fragments). Combining
-    // both sources causes double-accumulation of argument fragments in the same buffer.
-    const rawChunks = getNativeToolCallArray(chunk, "tool_call_chunks");
-    const toolCallEntries = rawChunks.length > 0
-        ? rawChunks
-        : getNativeToolCallArray(chunk, "tool_calls");
-    return toolCallEntries.flatMap((entry): PaAgentModelStreamChunk[] => {
-        const record = asRecord(entry);
-        const functionRecord = asRecord(record?.function);
-        const rawArgs = record?.args ?? record?.arguments ?? functionRecord?.arguments;
-        const key = getOrCreateStreamingToolCallKey(record, functionRecord, rawArgs, streamedToolNames);
-        const explicitName = readNativeToolCallName(record, functionRecord);
-        if (explicitName && key) {
-            streamedToolNames.set(key, explicitName);
-            // Cross-register under index key so subsequent index-only streaming
-            // deltas can resolve the name (first chunk often has both id + index,
-            // while follow-up chunks only carry index).
-            const recordIndex = record?.index;
-            if (typeof recordIndex === "number") {
-                const indexKey = `index:${recordIndex}`;
-                if (indexKey !== key) {
-                    streamedToolNames.set(indexKey, explicitName);
-                }
-            }
+    const selected = normalizeProviderToolCalls(chunk, source);
+    if (!selected) return [];
+    return selected.calls.flatMap((call): PaAgentModelStreamChunk[] => {
+        const key = getOrCreateStreamingToolCallKey(
+            call,
+            selected.kind === "fragments",
+            streamedToolNames,
+        );
+        if (call.name && key) streamedToolNames.set(key, call.name);
+        if (call.name && call.id && call.index !== undefined) {
+            streamedToolNames.set(`index:${call.index}`, call.name);
         }
-        const name = explicitName || (key ? streamedToolNames.get(key) : undefined);
-        if (!name && !captureToolIdentity) return [];
+        const name = call.name ?? (key ? streamedToolNames.get(key) : undefined);
+        const localOrder = key?.startsWith("order:")
+            ? Number(key.slice(6))
+            : undefined;
         const delta: Extract<PaAgentModelStreamChunk, { type: "toolcall_delta" }> = {
             type: "toolcall_delta",
             name: name ?? "",
-            ...getStreamingToolCallIdentity(record, key),
-            ...(captureToolIdentity && typeof record?.index === "number" ? { index: record.index } : {}),
-            ...(captureToolIdentity ? { providerIdentity: {
-                id: record?.id, index: record?.index, name: record?.name ?? functionRecord?.name,
-            } } : {}),
+            ...(call.id ? { id: call.id } : {}),
+            ...(call.index !== undefined ? { index: call.index } : {}),
+            ...(call.id === undefined && call.index === undefined && Number.isFinite(localOrder)
+                ? { order: localOrder } : {}),
+            ...(captureToolIdentity ? { providerIdentity: call.providerIdentity } : {}),
+            ...(call.invalidInput ? { invalidInput: true } : {}),
         };
-        if (typeof rawArgs === "string") {
-            delta.argsText = rawArgs;
-        } else if (rawArgs !== undefined && rawArgs !== null && rawArgs !== "") {
-            delta.input = rawArgs;
-        }
+        if (typeof call.args === "string") delta.argsText = call.args;
+        else if (call.args !== undefined && call.args !== null) delta.input = call.args;
         return [delta];
     });
 }
 
 const STREAMING_TOOL_CALL_LAST_KEY = "__pa_last_tool_call_key__";
-const STREAMING_TOOL_CALL_NEXT_ORDER = "__pa_next_tool_call_order__";
 
 function getOrCreateStreamingToolCallKey(
-    record: Record<string, unknown> | undefined,
-    functionRecord: Record<string, unknown> | undefined,
-    rawArgs: unknown,
+    call: NormalizedProviderToolCall,
+    isStreamFragment: boolean,
     streamedToolNames: Map<string, string>,
 ): string | undefined {
-    const explicitKey = getStreamingToolCallKey(record);
-    const name = readNativeToolCallName(record, functionRecord);
-    if (explicitKey) {
-        const lastKey = streamedToolNames.get(STREAMING_TOOL_CALL_LAST_KEY);
-        if (
-            name
-            && lastKey
-            && streamedToolNames.get(lastKey) === name
-            && typeof record?.index !== "number"
-            && !hasMeaningfulStreamingToolArgs(rawArgs)
-        ) {
-            streamedToolNames.set(STREAMING_TOOL_CALL_LAST_KEY, lastKey);
-            return lastKey;
-        }
-        streamedToolNames.set(STREAMING_TOOL_CALL_LAST_KEY, explicitKey);
-        return explicitKey;
+    if (call.id) {
+        const key = `id:${call.id}`;
+        streamedToolNames.set(STREAMING_TOOL_CALL_LAST_KEY, key);
+        return key;
     }
-    if (name) {
-        const lastKey = streamedToolNames.get(STREAMING_TOOL_CALL_LAST_KEY);
-        if (lastKey && streamedToolNames.get(lastKey) === name) {
-            streamedToolNames.set(STREAMING_TOOL_CALL_LAST_KEY, lastKey);
-            return lastKey;
-        }
-        const nextOrder = readNextStreamingToolCallOrder(streamedToolNames);
-        const syntheticKey = `order:${nextOrder}`;
-        streamedToolNames.set(STREAMING_TOOL_CALL_NEXT_ORDER, String(nextOrder + 1));
-        streamedToolNames.set(STREAMING_TOOL_CALL_LAST_KEY, syntheticKey);
-        return syntheticKey;
+    if (call.index !== undefined) {
+        const key = `index:${call.index}`;
+        streamedToolNames.set(STREAMING_TOOL_CALL_LAST_KEY, key);
+        return key;
     }
-    return streamedToolNames.get(STREAMING_TOOL_CALL_LAST_KEY);
-}
-
-function hasMeaningfulStreamingToolArgs(value: unknown): boolean {
-    if (value === null || value === undefined || value === "") return false;
-    if (typeof value === "string") return value.trim().length > 0;
-    if (Array.isArray(value)) return value.some(hasMeaningfulStreamingToolArgs);
-    if (typeof value === "object") {
-        return Object.values(value as Record<string, unknown>).some(hasMeaningfulStreamingToolArgs);
+    if (isStreamFragment && !call.name) {
+        return streamedToolNames.get(STREAMING_TOOL_CALL_LAST_KEY);
     }
-    return true;
-}
-
-function readNextStreamingToolCallOrder(streamedToolNames: Map<string, string>): number {
-    const raw = Number(streamedToolNames.get(STREAMING_TOOL_CALL_NEXT_ORDER) ?? "0");
-    return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 0;
-}
-
-function getStreamingToolCallIdentity(
-    record: Record<string, unknown> | undefined,
-    key: string | undefined,
-): Pick<Extract<PaAgentModelStreamChunk, { type: "toolcall_delta" }>, "id" | "index"> {
-    if (key?.startsWith("id:")) return { id: key.slice(3) };
-    if (key?.startsWith("index:")) {
-        const index = Number(key.slice(6));
-        return Number.isFinite(index) ? { index } : {};
-    }
-    if (key?.startsWith("order:")) {
-        const index = Number(key.slice(6));
-        return Number.isFinite(index) ? { index } : {};
-    }
-    const recordId = typeof record?.id === "string" && record.id.trim() ? record.id.trim() : undefined;
-    if (recordId) return { id: recordId };
-    if (typeof record?.index === "number") return { index: record.index };
-    return {};
-}
-
-function getStreamingToolCallKey(record: Record<string, unknown> | undefined): string | undefined {
-    if (!record) return undefined;
-    if (typeof record.id === "string" && record.id.trim()) return `id:${record.id.trim()}`;
-    if (typeof record.index === "number") return `index:${record.index}`;
-    return undefined;
-}
-
-function getNativeToolCallArray(chunk: unknown, key: "tool_calls" | "tool_call_chunks"): unknown[] {
-    if (!chunk || typeof chunk !== "object") return [];
-    const record = chunk as Record<string, unknown>;
-    const direct = Array.isArray(record[key]) ? record[key] : [];
-    const additionalKwargs = record.additional_kwargs;
-    const nested = additionalKwargs && typeof additionalKwargs === "object"
-        && Array.isArray((additionalKwargs as Record<string, unknown>)[key])
-        ? (additionalKwargs as Record<string, unknown>)[key] as unknown[]
-        : [];
-    return [...direct, ...nested];
+    if (call.order === undefined) return undefined;
+    const key = `order:${call.order}`;
+    if (isStreamFragment) streamedToolNames.set(STREAMING_TOOL_CALL_LAST_KEY, key);
+    return key;
 }
 
 function getReasoningContent(chunk: unknown): string {
@@ -4463,11 +4382,18 @@ export async function* streamWithInvokeFallback(args: {
                 receivedAnyVisibleOutput = true;
                 yield { type: "thinking_delta", text: reasoning };
             }
+            const refusal = readProviderRefusal(chunk);
+            if (refusal !== undefined) {
+                receivedAnyVisibleOutput = true;
+                yield { type: "refusal_delta", text: refusal };
+            }
             if (content) {
                 receivedAnyVisibleOutput = true;
                 yield { type: "text_delta", text: content };
             }
-            for (const toolDelta of getCanonicalToolCallDeltas(chunk, streamedToolNames, args.captureToolIdentity)) {
+            for (const toolDelta of getCanonicalToolCallDeltas(
+                chunk, streamedToolNames, args.captureToolIdentity, 'stream',
+            )) {
                 receivedAnyVisibleOutput = true;
                 yield toolDelta;
             }
@@ -4536,7 +4462,13 @@ async function* invokeAsModelChunks(
     if (content) {
         yield { type: "text_delta", text: content };
     }
-    for (const toolDelta of getCanonicalToolCallDeltas(response, streamedToolNames, captureToolIdentity)) {
+    const refusal = readProviderRefusal(response);
+    if (refusal !== undefined) {
+        yield { type: "refusal_delta", text: refusal };
+    }
+    for (const toolDelta of getCanonicalToolCallDeltas(
+        response, streamedToolNames, captureToolIdentity, 'invoke',
+    )) {
         yield toolDelta;
     }
     const completion = readProviderCompletion(response);

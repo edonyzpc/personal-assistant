@@ -405,6 +405,7 @@ export function formatRuntimeWarningType(type: string, locale?: PluginLocale): s
     if (type === 'provider_partial_error') return ft('plugin.chat.formatter.warningStoppedEarly', undefined, locale);
     if (type === 'assistant_idle_timeout') return ft('plugin.chat.formatter.warningIdleTimeout', undefined, locale);
     if (type === 'assistant_empty_response') return ft('plugin.chat.formatter.warningEmptyResponse', undefined, locale);
+    if (type === 'provider_refusal') return ft('plugin.chat.formatter.warningProviderRefusal', undefined, locale);
     if (type === 'wall_clock_exceeded') return ft('plugin.chat.formatter.warningRuntimeLimit', undefined, locale);
     return ft('plugin.chat.formatter.warningGeneric', undefined, locale);
 }
@@ -413,6 +414,7 @@ export function formatRuntimeWarningLabel(warning: ChatRuntimeWarning, locale?: 
     if (warning.type === 'provider_admission_rejected' || warning.type === 'provider_tool_calls_missing') return formatRuntimeWarningType(warning.type, locale);
     if (warning.type === 'assistant_empty_response' || warning.type === 'context_local_overflow'
         || warning.type === 'provider_context_overflow') return formatRuntimeWarningType(warning.type, locale);
+    if (warning.type === 'provider_refusal') return formatRuntimeWarningType(warning.type, locale);
     return warning.message ?? formatRuntimeWarningType(warning.type, locale);
 }
 
@@ -420,6 +422,7 @@ export function formatRuntimeWarningDetail(warning: ChatRuntimeWarning, locale?:
     if (warning.type === 'context_local_overflow') return ft('plugin.chat.formatter.warningContextTooLongDetail', undefined, locale);
     if (warning.type === 'provider_context_overflow') return ft('plugin.chat.formatter.warningProviderContextTooLongDetail', undefined, locale);
     if (warning.type === 'assistant_empty_response') return ft('plugin.chat.formatter.warningNoAnswer', undefined, locale);
+    if (warning.type === 'provider_refusal') return ft('plugin.chat.formatter.warningProviderRefusalDetail', undefined, locale);
     return warning.detail ?? warning.capability;
 }
 

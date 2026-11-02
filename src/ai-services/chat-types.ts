@@ -454,6 +454,8 @@ export type PaAgentMessage =
         content: AssistantMessagePart[];
         stopReason?: "stop" | "tool_calls" | "error" | "aborted" | "idle_timeout" | "wall_clock_exceeded";
         providerCompletion?: ProviderCompletion;
+        /** Provider refusal prose, retained separately from ordinary answer text delivery. */
+        providerRefusal?: string;
         /** Host-only request marker, used to keep raw envelopes out of ordinary history. */
         writingRequestId?: string;
         /** Trusted host evidence used only by provider projection; never model input. */

@@ -34,7 +34,11 @@ export type PaAgentModelStreamChunk =
     | { type: "provider_completion"; completion: ProviderCompletion }
     | { type: "thinking_delta"; text: string }
     | { type: "text_delta"; text: string }
+    | { type: "refusal_delta"; text: string }
     | { type: "toolcall_delta"; id?: string; name: string; input?: unknown; argsText?: string; index?: number;
+        order?: number;
+        /** SDK-reported invalid invoke or boundary-invalid parsed non-object arguments. */
+        invalidInput?: true;
         /** Unnormalized provider fields, available only when the host requests strict output identity. */
         providerIdentity?: { id?: unknown; index?: unknown; name?: unknown } }
     | { type: "diagnostic"; diagnostic: Record<string, unknown> };
@@ -196,12 +200,19 @@ export type PaAgentAfterTurnDecision =
 export interface BufferedToolCall {
     key: string;
     id: string;
+    providerId?: string;
+    /** Actual provider index; `index` alone may be local ordering. */
+    providerIndex?: number;
     name: string;
     index: number;
     argsText: string;
     input?: unknown;
     hasStructuredInput: boolean;
+    /** Boundary-invalid arguments, preserved independently from raw argument text. */
+    invalidInput?: true;
     partIndex: number;
+    /** Streaming lifecycle state; a call is started only after its emitted identity is stable. */
+    startEmitted?: boolean;
 }
 
 export type ParsedBufferedToolCall = PaAgentToolCall & {

@@ -132,6 +132,28 @@ describe("host-enabled native writing loop", () => {
         expect(outcome.execute).not.toHaveBeenCalled();
     });
 
+    it("rejects complete invoke string arguments even when they decode as valid writing output", async () => {
+        const invoke = jest.fn(async () => ({ tool_calls: [{ id: "call-invoke", name: "present_writing",
+            args: trace.rawArguments,
+        }], ...finish() }));
+        const outcome = await run([], {
+            model: { stream: () => streamWithInvokeFallback({
+                captureToolIdentity: true, input: {}, chain: {
+                    stream: () => { throw new Error("stream not supported"); },
+                    invoke,
+                },
+            }) },
+        });
+
+        expect(invoke).toHaveBeenCalled();
+        expect(outcome.result.status).toBe("incomplete");
+        expect(outcome.result.turns[0].nativeWriting).toBeUndefined();
+        expect(outcome.result.turns[0].diagnostics)
+            .toContainEqual({ type: "native_writing_identity_or_batch_invalid" });
+        expect(outcome.prepareBatch).not.toHaveBeenCalled();
+        expect(outcome.execute).not.toHaveBeenCalled();
+    });
+
     it.each(["present_", ""])("keeps explanatory text and resolves the final name after a %j header", async (name) => {
         const outcome = await run([
             { content: "Here is the work." },

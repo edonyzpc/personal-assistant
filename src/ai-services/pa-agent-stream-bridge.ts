@@ -99,7 +99,9 @@ export class CanonicalToLegacyEventAdapter {
     syncCommittedAnswer(snapshot: string): void {
         const writingIncompleteReport = this.writingCandidate?.content.some(part =>
             part.type === "toolCall" && part.name === REPORT_TASK_INCOMPLETE) === true;
-        if ((this.writing && !writingIncompleteReport) || this.ended || snapshot === this.committedLegacySnapshot) return;
+        const providerRefusal = this.writingCandidate?.providerRefusal !== undefined;
+        if ((this.writing && !writingIncompleteReport && !providerRefusal)
+            || this.ended || snapshot === this.committedLegacySnapshot) return;
         if (snapshot && !this.committedLegacySnapshot) this.legacyEvents.answerStarted();
         this.committedLegacySnapshot = snapshot;
         this.legacyEvents.answerSnapshot(snapshot);
@@ -147,7 +149,8 @@ export class CanonicalToLegacyEventAdapter {
                         this.nativeArguments = event.metadata.nativeWritingArguments.slice(0, this.writing.maxTextChars + 1);
                         this.emitWritingPreview(event.runId, event.messageId, this.currentWritingPreview(this.nativeArguments));
                     }
-                    if (event.update.kind === "text_delta" && !this.writingHasTool) {
+                    if (event.update.kind === "text_delta" && !this.writingHasTool
+                        && event.metadata?.providerRefusal !== true) {
                         // Keep one over-budget character so the decoder rejects
                         // this candidate without retaining an unbounded preview buffer.
                         const capacity = Math.max(0, this.writing.maxTextChars + 1 - this.writingText.length);
@@ -166,6 +169,14 @@ export class CanonicalToLegacyEventAdapter {
             case "message_end":
                 this.canonicalMessages.set(event.message.id, event.message);
                 if (event.message.role !== "assistant") return;
+                if (event.message.providerRefusal !== undefined) {
+                    if (this.writing) {
+                        this.writingCandidate = { ...event.message,
+                            content: event.message.content.map((part) => ({ ...part })) };
+                    }
+                    this.emitWritingPreview(event.runId, event.message.id, "");
+                    return;
+                }
                 // A tool phase without any native calls is a protocol failure,
                 // not a plain-text answer. Withdraw provisional text; the Loop
                 // supplies the incomplete status and diagnostic, not an artifact.
@@ -259,6 +270,10 @@ export class CanonicalToLegacyEventAdapter {
         const native = this.usesNativeWriting;
         const calls = candidate?.content.filter((part) => part.type === "toolCall") ?? [];
         if (calls.some(part => part.name === REPORT_TASK_INCOMPLETE)) return;
+        if (candidate?.providerRefusal !== undefined) {
+            this.emitWritingPreview(event.runId, candidate.id, "");
+            return;
+        }
         if (candidate?.providerCompletion === "tool_calls" && calls.length === 0) return;
         const sourceCurrent = this.isWritingPreviewCurrent();
         if (native && (calls.length !== 1 || calls[0].name !== "present_writing")) {

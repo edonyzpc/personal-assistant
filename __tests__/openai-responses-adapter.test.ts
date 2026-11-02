@@ -305,4 +305,73 @@ describe('PA OpenAI Responses model boundary', () => {
             expect(fallbacks).toEqual([]);
         },
     );
+
+    it('keeps real SDK nonzero output-index fragments in one ordinary tool call', async () => {
+        const fetcher = jest.fn<typeof fetch>(async () => sseResponse([
+            { type: 'response.output_item.added', output_index: 1, item: {
+                id: 'fc_offline', type: 'function_call', call_id: 'call_offline',
+                name: 'read_note', arguments: '',
+            } },
+            { type: 'response.function_call_arguments.delta', output_index: 1,
+                delta: '{"path":"' },
+            { type: 'response.function_call_arguments.delta', output_index: 1,
+                delta: 'note.md"}' },
+            { type: 'response.completed', response: completedResponse(functionCallOutput()) },
+        ]));
+        const model = createModel(fetcher);
+        const executions: Array<{ id?: string; name: string; input: unknown; index?: number }> = [];
+        const invoke = jest.fn(async () => {
+            throw new Error('invoke fallback must not run');
+        });
+        const result = await new PaAgentLoop({
+            runId: 'run_nonzero_output_index',
+            userInput: 'read the note',
+            model: {
+                stream: async function* (input) {
+                    yield* streamWithInvokeFallback({
+                        chain: {
+                            stream: (_input: unknown, options?: { signal?: AbortSignal }) =>
+                                model.stream('read the note', options),
+                            invoke: invoke as never,
+                        },
+                        input: 'read the note',
+                        signal: input.signal,
+                        prepareInvokeInput: () => 'read the note',
+                    });
+                },
+            },
+            toolExecutor: {
+                execute: async ({ toolCall }) => {
+                    executions.push({
+                        id: toolCall.id,
+                        name: toolCall.name,
+                        input: toolCall.input,
+                        index: toolCall.index,
+                    });
+                    return { outcome: 'success', promptText: 'note evidence' };
+                },
+            },
+            hostPolicy: {
+                afterTurn: summary => summary.status === 'tool_results_ready'
+                    ? { action: 'stop', status: 'completed', reason: 'done' }
+                    : { action: 'stop', reason: summary.status },
+            },
+            now: () => 1,
+        }).run();
+
+        expect(result.status).toBe('completed');
+        expect(result.turns[0].toolCalls).toEqual([expect.objectContaining({
+            id: 'call_offline',
+            name: 'read_note',
+            index: 1,
+            input: '{"path":"note.md"}',
+        })]);
+        expect(executions).toEqual([{
+            id: 'call_offline',
+            name: 'read_note',
+            index: 1,
+            input: { path: 'note.md' },
+        }]);
+        expect(invoke).not.toHaveBeenCalled();
+    });
 });

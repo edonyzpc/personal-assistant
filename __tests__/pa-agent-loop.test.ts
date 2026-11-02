@@ -18,7 +18,7 @@ import {
 import { streamWithInvokeFallback } from "../src/ai-services/pa-agent-runtime";
 import { PaAgentContextOverflowError } from "../src/ai-services/context";
 import { createPaAgentHostPolicy } from "../src/ai-services/pa-agent-host-policy";
-import type { AgentEvent, PaAgentMessage } from "../src/ai-services/chat-types";
+import type { AgentEvent, AssistantMessagePart, PaAgentMessage } from "../src/ai-services/chat-types";
 import { PageletLeadDrivenPolicy } from "../src/pagelet/agent/lead-driven-policy";
 import { ProviderAdmissionError } from "../src/ai-services/provider-admission-error";
 
@@ -180,6 +180,122 @@ describe("PaAgentLoop", () => {
         expect(result.endPayload).toMatchObject({ reason: 'agent_reported_incomplete' });
         expect(events).toContainEqual(expect.objectContaining({ type: 'turn_end', status: 'incomplete' }));
         expect(executed).toBe(0);
+    });
+
+    it.each([0, 1])('merges provider id and output index %s for fragmented ordinary tool calls', async index => {
+        const result = await new PaAgentLoop({
+            runId: `stream-tool-identity-${index}`,
+            userInput: 'Summarize the excluded note',
+            allowTaskIncompleteReport: true,
+            model: {
+                stream: async function* () {
+                    yield* streamWithInvokeFallback({
+                        input: {},
+                        chain: {
+                            stream: async function* () {
+                                yield {
+                                    tool_call_chunks: [{
+                                        id: 'call_report',
+                                        index,
+                                        name: 'report_task_incomplete',
+                                        args: '',
+                                    }],
+                                };
+                                yield { tool_call_chunks: [{ index, args: '{"ans' }] };
+                                yield { tool_call_chunks: [{ index, args: 'wer":"Cannot ' }] };
+                                yield { tool_call_chunks: [{ index, args: 'finish from the excluded note."}' }] };
+                                yield { response_metadata: { finish_reason: 'tool_calls' } };
+                            },
+                            invoke: async () => {
+                                throw new Error('invoke fallback must not run');
+                            },
+                        },
+                    });
+                },
+            },
+        }).run();
+
+        expect(result.status).toBe('incomplete');
+        expect(result.committedFinalText).toBe('Cannot finish from the excluded note.');
+        expect(result.turns[0].toolCalls).toEqual([expect.objectContaining({
+            id: 'call_report',
+            name: 'report_task_incomplete',
+            index,
+            input: '{"answer":"Cannot finish from the excluded note."}',
+        })]);
+        expect(result.turns[0].agentReportedIncomplete).toBe(true);
+        expect(result.turns[0].diagnostics).not.toContainEqual({ type: 'task_incomplete_report_invalid' });
+    });
+
+    it('keeps interleaved ordinary tool calls distinct when both carry id and output index', async () => {
+        const executions: Array<{ id?: string; name: string; input: unknown; index?: number }> = [];
+        const result = await new PaAgentLoop({
+            runId: 'stream-tool-identity-distinct',
+            userInput: 'Run both searches',
+            model: {
+                stream: async function* () {
+                    yield* streamWithInvokeFallback({
+                        input: {},
+                        chain: {
+                            stream: async function* () {
+                                yield {
+                                    tool_call_chunks: [{
+                                        id: 'call_first',
+                                        index: 1,
+                                        name: 'search_notes',
+                                        args: '',
+                                    }],
+                                };
+                                yield {
+                                    tool_call_chunks: [{
+                                        id: 'call_second',
+                                        index: 2,
+                                        name: 'search_web',
+                                        args: '',
+                                    }],
+                                };
+                                yield { tool_call_chunks: [{ index: 1, args: '{"query":"f' }] };
+                                yield { tool_call_chunks: [{ index: 2, args: '{"query":"s' }] };
+                                yield { tool_call_chunks: [{ index: 1, args: 'irst"}' }] };
+                                yield { tool_call_chunks: [{ index: 2, args: 'econd"}' }] };
+                                yield { response_metadata: { finish_reason: 'tool_calls' } };
+                            },
+                            invoke: async () => {
+                                throw new Error('invoke fallback must not run');
+                            },
+                        },
+                    });
+                },
+            },
+            toolExecutor: {
+                execute: async ({ toolCall }) => {
+                    executions.push({
+                        id: toolCall.id,
+                        name: toolCall.name,
+                        input: toolCall.input,
+                        index: toolCall.index,
+                    });
+                    return { outcome: 'success', promptText: 'evidence' };
+                },
+            },
+        }).run();
+
+        const observedToolCalls = result.turns[0].toolCalls
+            .filter((call): call is Extract<AssistantMessagePart, { type: "toolCall" }> => call.type === "toolCall")
+            .map(call => ({
+                id: call.id,
+                name: call.name,
+                index: call.index,
+                input: call.input,
+            }));
+        expect(observedToolCalls).toEqual([
+            { id: 'call_first', name: 'search_notes', index: 1, input: '{"query":"first"}' },
+            { id: 'call_second', name: 'search_web', index: 2, input: '{"query":"second"}' },
+        ]);
+        expect(executions).toEqual([
+            { id: 'call_first', name: 'search_notes', index: 1, input: { query: 'first' } },
+            { id: 'call_second', name: 'search_web', index: 2, input: { query: 'second' } },
+        ]);
     });
 
     it('lets the Agent correct a malformed incomplete report without executing its mixed batch', async () => {
@@ -3611,15 +3727,15 @@ describe("PaAgentLoop", () => {
         });
     });
 
-    it("executes multiple toolcalls in assistant index order even when deltas arrive out of order", async () => {
+    it("executes multiple toolcalls in sparse assistant index order even when deltas arrive out of order", async () => {
         const executorOrder: string[] = [];
         const loop = new PaAgentLoop({
             runId: "run_1",
             userInput: "ordered tools",
             model: {
                 stream: () => streamChunks([
-                    { type: "toolcall_delta", id: "call_2", name: "webSearch", input: { query: "second" }, index: 1 },
-                    { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "first" }, index: 0 },
+                    { type: "toolcall_delta", id: "call_2", name: "webSearch", input: { query: "second" }, index: 7 },
+                    { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "first" }, index: 2 },
                     { type: "provider_completion", completion: "tool_calls" },
                 ]),
             },
@@ -3643,14 +3759,14 @@ describe("PaAgentLoop", () => {
                 id: "call_1",
                 name: "search_memory",
                 input: { query: "first" },
-                index: 0,
+                index: 2,
             },
             {
                 type: "toolCall",
                 id: "call_2",
                 name: "webSearch",
                 input: { query: "second" },
-                index: 1,
+                index: 7,
             },
         ]);
         expect(result.transcript.find((message) => message.role === "assistant")?.content)

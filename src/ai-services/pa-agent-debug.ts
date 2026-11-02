@@ -20,7 +20,7 @@ const debugCodes = new Set([
     'new_tool_evidence', 'tool_chain_allowed', 'tool_failure',
     'empty_after_observation', 'empty_after_finalization', 'duplicate_tool_call_without_answer',
     'assistant_empty_response', 'assistant_idle_timeout', 'assistant_source_changed', 'context_local_overflow',
-    'provider_context_overflow',
+    'provider_context_overflow', 'provider_refusal', 'tool_call_identity_conflict',
     'final_answer_only_violation', 'finalization_policy_preparation_error',
     'finalization_policy_requested_continuation', 'finalization_reserve_exhausted',
     'finalization_reserve_exhausted_by_buffered_provider', 'finalization_reserve_overrun',
@@ -36,7 +36,7 @@ const debugCodes = new Set([
     'source_decision_requested',
     'needs_follow_up', 'tool_results_ready', 'terminal_idempotent', 'corrective_turn',
     'tool_batch_preflight_rejected', 'batch_preflight_rejected', 'batch_preflight_failed',
-    'placeholder_tool_call', 'invalid_tool_input', 'duplicate_tool_call', 'missing_tool_executor',
+    'invalid_tool_input', 'duplicate_tool_call', 'missing_tool_executor',
     'tool_timeout', 'unknown_tool_runtime_state', 'tool_exception', 'task_source_scope_expired',
 ]);
 const safeCode = (value: unknown): string | undefined => value === undefined ? undefined

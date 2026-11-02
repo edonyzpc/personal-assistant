@@ -1,10 +1,12 @@
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it, jest } from "@jest/globals";
 import { AgentEventEmitter } from "../src/ai-services/agent-runtime-primitives";
 import type { AgentEvent, LegacyAgentEvent, ProviderCompletion } from "../src/ai-services/chat-types";
-import { PaAgentLoop } from "../src/ai-services/pa-agent-loop";
+import { PaAgentLoop, type PaAgentLoopOptions } from "../src/ai-services/pa-agent-loop";
 import { createPaAgentHostPolicy } from "../src/ai-services/pa-agent-host-policy";
 import { streamWithInvokeFallback } from "../src/ai-services/pa-agent-runtime";
 import { CanonicalToLegacyEventAdapter, type WritingDeliveryDiagnostic } from "../src/ai-services/pa-agent-stream-bridge";
+import { NativeWritingCallCollector } from "../src/ai-services/native-writing-call";
+import { isValidWritingContextHandle } from "../src/ai-services/writing-output";
 import type { GenerationInputSnapshot } from "../src/ai-services/generation-input-snapshot";
 
 const request = { requestId: "b135-writing-tail" };
@@ -93,6 +95,59 @@ describe("B-135 writing completion across adapter, loop and legacy bridge", () =
             || event.kind === "writing-recovery")).toEqual([]);
         expect(events.filter(event => event.kind === "writing-preview").map(event => event.text))
             .toEqual(native ? [text, ""] : []);
+    });
+
+    it("delivers a mixed provider refusal explanation without executing writing output", async () => {
+        const events: LegacyAgentEvent[] = [];
+        const adapter = new CanonicalToLegacyEventAdapter(new AgentEventEmitter(event => events.push(event)), undefined, {
+            request,
+            nativeContextHandle: "run:writing:refusal",
+            maxTextChars: 10_000,
+            isCurrent: () => true,
+        });
+        const execute = jest.fn<NonNullable<PaAgentLoopOptions["toolExecutor"]>["execute"]>();
+        const output = {
+            contextHandle: "run:writing:refusal",
+            body: "Must not become an artifact.",
+            explanation: "Must not become an artifact.",
+        };
+        const result = await new PaAgentLoop({
+            runId: "refusal_mixed_writing",
+            userInput: "Write a refused draft.",
+            nativeWriting: {
+                contextHandle: "run:writing:refusal",
+                maxTextChars: 10_000,
+                isCurrent: () => true,
+                isValidContextHandle: isValidWritingContextHandle,
+                createCollector: (contextHandle, maxTextChars) =>
+                    new NativeWritingCallCollector(contextHandle, maxTextChars),
+                outputName: "present_writing",
+                finalizationInstruction: "Produce present_writing.",
+                correctionInstruction: "Correct present_writing.",
+                strategyChangeInstruction: "Change strategy.",
+            },
+            model: { stream: async function* () {
+                yield { type: "refusal_delta", text: "I cannot write that request." };
+                yield {
+                    type: "toolcall_delta", id: "call_writing", index: 0, name: "present_writing",
+                    input: output, providerIdentity: { id: "call_writing", index: 0, name: "present_writing" },
+                };
+                yield { type: "provider_completion", completion: "tool_calls" };
+            } },
+            toolExecutor: { execute },
+            onEvent: event => adapter.handle(event),
+            onCommittedFinalText: snapshot => adapter.syncCommittedAnswer(snapshot),
+        }).run();
+        expect(result.status).toBe("incomplete");
+        expect(result.committedFinalText).toBe("I cannot write that request.");
+        expect(result.turns[0].assistantMessage.content).toContainEqual({
+            type: "text", text: "I cannot write that request.",
+        });
+        expect(execute).not.toHaveBeenCalled();
+        expect(events.filter(event => event.kind === "answer-snapshot").map(event => event.snapshot))
+            .toEqual(["I cannot write that request."]);
+        expect(events.some(event => event.kind === "writing-artifact" || event.kind === "writing-recovery"))
+            .toBe(false);
     });
 
     it("preserves a literal XML example through native ordinary preview and final delivery", async () => {

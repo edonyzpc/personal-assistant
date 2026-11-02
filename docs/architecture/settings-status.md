@@ -61,6 +61,22 @@ incomplete／failed／缺少终态／取消不能执行缓冲工具、交付成�
 重放未知结果。工具 call ID、usage、拒绝与媒体块保留；`streamWithInvokeFallback`
 及文字辅助使用同一完成规则。
 
+SDK→canonical 边界按消息实际表示区分流式片段与完整结果；`stream()` 也可能交付
+完整消息，每次只消费一份调用表示。显式片段载体优先，包括空片段数组；
+SDK 的 parsed／raw 镜像不是额外调用，解析失败的调用也不能静默丢失。调用身份
+只由真实 ID 和共享的 provider index 关联，名称与参数内容不构成身份。缺失坐标时
+生成的本地排列序号不能冒充 provider index；原生 Writing 仍校验未经改写的
+provider identity。参数 `{}` 表示完整的空对象，是否合法由工具 schema／领域
+校验决定；非空原始参数流无效时，不能以 structured 镜像代替它宣布解析成功。
+Dispatcher 不猜测“同名空参数占位调用”，只处理准入、参数校验和已有执行效果去重。
+
+结构化拒绝与普通正文、工具、provider 终态分别保留。SDK 已提供的拒绝信息直接
+复用；仅在 SDK 转换遗漏字段的接缝补齐，不复制请求循环或保存完整原始响应。
+拒绝说明通过既有聊天正文交付，`provider_refusal` 事实通过 runtime warnings
+保留到历史；任务沿既有 incomplete 状态结束，不触发空答复纠正、invoke fallback
+或 provider 恢复，不执行同批工具，也不生成 Writing 成果／恢复稿。取消、来源
+失效及真正的传输失败仍保留各自优先级，provider 的 stop 不等于用户任务完成。
+
 `provider-retry-policy` 先委托 SDK 默认 handler。只有 SDK 明确归为
 `capacity/headerless_429` 且允许重试时才回到既有 AsyncCaller/pRetry，复用原次数、
 指数退避与抖动。SDK 已识别的短等待提示照常处理，过长等待不强行改为 SDK 即时重试。

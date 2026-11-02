@@ -16,6 +16,13 @@ export class ProviderCompletionError extends Error {
     }
 }
 
+export class ProviderRefusalError extends ProviderCompletionError {
+    constructor() {
+        super('stop', 'Provider returned a refusal.');
+        this.name = 'ProviderRefusalError';
+    }
+}
+
 function responsesCompletion(value: Record<string, unknown>): ProviderCompletion | undefined {
     const metadata = asRecord(value.response_metadata);
     const status = metadata?.status;
@@ -66,10 +73,18 @@ export function readProviderText(value: unknown): string | undefined {
     return texts.join("");
 }
 
+/** A separate provider fact; refusal prose is intentionally not ordinary text output. */
+export function readProviderRefusal(value: unknown): string | undefined {
+    const record = asRecord(value);
+    const refusal = asRecord(record?.additional_kwargs)?.refusal;
+    return typeof refusal === 'string' && refusal.length > 0 ? refusal : undefined;
+}
+
 export function assertProviderCompletion(value: unknown): ProviderCompletion {
     const completion = readProviderCompletion(value);
     if (completion !== "stop" && completion !== "tool_calls") {
         throw new ProviderCompletionError(completion ?? "missing_terminal");
     }
+    if (readProviderRefusal(value) !== undefined) throw new ProviderRefusalError();
     return completion;
 }
