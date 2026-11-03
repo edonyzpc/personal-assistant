@@ -8,6 +8,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-079 | Settings AI 配置分层与一致导航 | Accepted | 总览摘要、AI 内部详情、直接模型编辑、去快速跳转及一致图标；六项审查补充见产品／开发设计 | [Record](./dec-079-settings-ai-configuration-ux.md) |
 | DEC-078 | SDK 协议复用与 PA Agent 边界 | Accepted | OpenAI统一Responses、Custom固定Chat Completions；SDK实现协议，PA维护数据与执行契约 | [Record](./dec-078-sdk-protocol-and-agent-boundary.md) |
 | DEC-077 | 多服务连接、默认继承与可复用的 Memory | Accepted | 三用途默认继承/按需独立；切换不自动准备且保留各配置Memory；OpenAI生成/参考/编辑 | [Record](./dec-077-multi-provider-connections.md) |
 | DEC-076 | Settings 按任务分层与图谱初始自适应 | Accepted | 保留有效偏好与 Policy model；仅取消图谱手动宽高，采用已确认预览的分层和双语双端交互 | [Record](./dec-076-settings-ux-and-adaptive-graph.md) |

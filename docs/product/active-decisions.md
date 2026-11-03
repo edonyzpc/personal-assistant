@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-079 | Settings AI 配置分层与一致导航 | 总览与详情分工、直接模型编辑、去快速跳转、统一图标和六项补充；Owner 已授权实施与本地验证，提交／推送另行授权 | [Decision](./decisions/dec-079-settings-ai-configuration-ux.md), [Spec](./specs/pa-settings-ai-configuration-ux-product-spec.md) | 现有 owner 无法实现路径，或必须改变有效能力／数据／成本／权限边界 |
 | DEC-078 | SDK协议复用与Agent边界 | OpenAI统一Responses、Custom固定Chat Completions、其它服务复用SDK；PA拥有结果与harness，无存量模型迁移 | [Decision](./decisions/dec-078-sdk-protocol-and-agent-boundary.md), [Spec](./specs/pa-sdk-protocol-agent-boundary-product-spec.md) | SDK无法兑现已选协议／数据契约，或需要新的provider、Custom Responses及远端会话 |
 | DEC-077 | 多服务连接与Memory保留 | 一项默认、三用途可独立；按需准备、各profile保留；OpenAI三类图片，禁止隐式fallback | [Decision](./decisions/dec-077-multi-provider-connections.md), [Spec](./specs/pa-multi-provider-connections-product-spec.md) | 实际接口迫使能力/数据/费用偏差，或新增自动清理/设备独立选择需求 |
 | DEC-076 | Settings 按任务分层与图谱初始自适应 | 沿用四组，保留 Policy model 和有效偏好；内部详情保护草稿，旧图谱宽高退出，兼顾双语双端；预览认可不等于代码验收 | [Decision](./decisions/dec-076-settings-ux-and-adaptive-graph.md), [Spec](./specs/pa-settings-ux-product-spec.md) | 有效配置不可达、草稿丢失、来源范围漂移，或图谱／窄屏操作越界 |

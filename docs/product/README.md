@@ -92,6 +92,7 @@
 - [Settings UX](./specs/pa-settings-ux-product-spec.md) — B-191：已确认预览的配置分层、真实状态、内部详情、图谱初始自适应及双语双端要求。
 - [Multi-provider Connections](./specs/pa-multi-provider-connections-product-spec.md) — B-192：默认服务与三用途独立选择、连接凭据保留、Memory多配置复用及OpenAI图片。
 - [SDK Protocol And Agent Boundary](./specs/pa-sdk-protocol-agent-boundary-product-spec.md) — B-194：OpenAI统一Responses、Custom固定Chat Completions；SDK协议复用与PA结果／harness边界。
+- [Settings AI Configuration UX](./specs/pa-settings-ai-configuration-ux-product-spec.md) — B-195：总览／AI 详情／连接编辑与六项审查补充；当前行为与验收见关联规格。
 - [Active Vault Indexer](./specs/pa-active-vault-indexer-product-spec.md)
 - [Data Boundary](./specs/pa-data-boundary-product-spec.md)
 - [Eval Harness](./specs/pa-eval-harness-product-spec.md)

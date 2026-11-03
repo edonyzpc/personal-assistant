@@ -5,6 +5,7 @@ import { installObsidianDocumentHelpers } from './helpers/obsidian-dom';
 jest.mock('obsidian', () => ({
     App: class { },
     Notice: jest.fn(),
+    setIcon: jest.fn(),
     TFile: class {
         path: string;
         constructor(path: string) { this.path = path; }
@@ -97,9 +98,10 @@ jest.mock('obsidian', () => ({
             (this as unknown as { onClose?: () => void }).onClose?.();
         }
     },
-	    Setting: class {
+	        Setting: class {
 	        containerEl: unknown;
 	        controlEl: HTMLElement;
+	        settingEl: HTMLElement;
         descEl: HTMLElement;
 	        record: {
 	            name?: string;
@@ -125,6 +127,7 @@ jest.mock('obsidian', () => ({
 	            this.containerEl = containerEl;
 	            this.descEl = document.createElement('div');
 	            this.controlEl = document.createElement('div');
+	            this.settingEl = this.controlEl;
 	            (containerEl as { appendChild?: (child: unknown) => unknown })?.appendChild?.(this.controlEl);
 	            this.record = { toggles: [], dropdowns: [], buttons: [], texts: [], colorPickers: [] };
             Object.assign(this.record, { controlEl: this.controlEl, descEl: this.descEl });
@@ -328,7 +331,11 @@ jest.mock('obsidian', () => ({
                     dropdown.onChange = onChange;
                     return dropdownComponent;
                 },
-                selectEl: { querySelector: (_selector: string) => ({ setAttribute: jest.fn() }) },
+                selectEl: {
+                    querySelector: (_selector: string) => ({ setAttribute: jest.fn() }),
+                    dataset: {} as Record<string, string>,
+                    disabled: false,
+                },
             };
             callback(dropdownComponent);
             return this;
@@ -345,7 +352,11 @@ jest.mock('obsidian', () => ({
             const button: { text?: string; disabled?: boolean; onClick?: () => unknown | Promise<unknown> } = {};
             this.record.buttons.push(button);
             const buttonComponent = {
-                buttonEl: {},
+                buttonEl: {
+                    createSpan: jest.fn(),
+                    dataset: {} as Record<string, string>,
+                    setAttribute: jest.fn(),
+                },
                 setCta: () => buttonComponent,
                 setButtonText: (text: string) => {
                     button.text = text;
@@ -473,7 +484,14 @@ import type { SettingsPermissionPatch } from '../src/plugin/settings-persistence
 import { MOCK_LICENSE_TIER } from '../src/ai-services/capability-types';
 import { buildMemoryControlCenterSnapshot } from '../src/pa/memory-control-center';
 import { createConnectionDefaults } from '../src/ai-services/provider-definitions';
-import type { AIConnectionsSettings } from '../src/ai-services/ai-connection-types';
+import { resolveAIConnection } from '../src/ai-services/ai-connection-resolver';
+import { createSelectionPreview } from '../src/ai-services/ai-connection-selection';
+import type { AIConnection, AIConnectionsSettings } from '../src/ai-services/ai-connection-types';
+import type {
+    AIConnectionSelectionResult,
+    PluginAIConfiguration,
+} from '../src/ai-services/plugin-configuration';
+import { AIConnectionsSettingsView } from '../src/components/ai-connections-settings';
 
 function mockStringifyText(value: unknown): string {
     return value instanceof MockDocumentFragment ? mockDomTextContent(value) : String(value ?? '');
@@ -2010,7 +2028,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             expect(container.querySelector(`#${id}`)?.open).toBe(true);
             expect(container.querySelector(`#${id}`)?.querySelector('summary')?.focus).toHaveBeenCalled();
         }
-        expect(container.findAll('.pa-settings-jump-select')[0].value).toBe('data-privacy');
+        expect(container.findAll('.pa-settings-jump, .pa-settings-toc')).toHaveLength(0);
     });
 
     it.each(['before display', 'before snapshot', 'after snapshot'])('opens pending recovery in system %s and expands every ancestor', async (timing) => {
@@ -2036,7 +2054,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
             if (ancestor.tagName === 'details') expect(ancestor.open).toBe(true);
         }
         expect(target.focus).toHaveBeenCalledWith({ preventScroll: true });
-        expect(container.findAll('.pa-settings-jump-select')[0].value).toBe('system');
         expect(plugin.getMemoryControlCenterSnapshot).toHaveBeenCalledTimes(1);
     });
 
@@ -2141,7 +2158,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect((tab as unknown as { pendingMemoryControlCenterTargetId: unknown }).pendingMemoryControlCenterTargetId).toBeNull();
     });
 
-    it('renders the four product groups with matching accessible navigation', () => {
+    it('renders four native groups without retired navigation controls', () => {
         const plugin = makePlugin();
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         const containerEl = new MockContainerEl('div');
@@ -2156,19 +2173,14 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'pa-settings-group-data-privacy',
             'pa-settings-group-system',
         ]);
-        const tocItems = containerEl.findAll('.pa-settings-toc-item');
         const groupLabels = [
             'AI connection',
             'Preferences',
             'Notes & privacy',
             'Advanced & maintenance',
         ];
-        expect(tocItems.map((node) => node.attrs['aria-label'])).toEqual(groupLabels);
-        expect(containerEl.findAll('.pa-settings-toc-item__label').map((node) => node.textContent))
+        expect(containerEl.findAll('.pa-settings-group-summary__name').map((node) => node.textContent))
             .toEqual(groupLabels);
-        expect(containerEl.findAll('.pa-settings-toc-item__tick')).toHaveLength(4);
-        expect(containerEl.findAll('.pa-settings-toc-item__tick')
-            .every((node) => node.attrs['aria-hidden'] === 'true')).toBe(true);
         expect(containerEl.findAll('.pa-settings-group').every((group) => (
             group.children[0]?.tagName === 'summary'
             && group.children[1]?.classes.includes('pa-settings-group__body')
@@ -2176,16 +2188,13 @@ describe('Phase 3 IA reorder + provider UX', () => {
         const layout = containerEl.findAll('.pa-settings-layout')[0];
         expect(containerEl.findAll('.pa-settings-shell')).toHaveLength(1);
         expect(containerEl.findAll('.pa-settings-shell')[0]?.findAll('.pa-settings-layout')).toHaveLength(1);
-        expect(layout.children[0]?.classes).toContain('pa-settings-toc');
-        expect(layout.children[1]?.classes).toContain('pa-settings-content');
-        const jump = containerEl.findAll('.pa-settings-jump-select')[0];
-        expect(jump.classes).toEqual(expect.arrayContaining(['pa-settings-jump-select', 'dropdown']));
-        expect(jump.attrs['aria-label']).toBeUndefined();
-        expect(jump.findAll('option').map((option) => option.textContent)).toEqual(groupLabels);
-        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('1/4');
-        expect(containerEl.findAll('.pa-settings-jump-progress__segment')).toHaveLength(4);
+        expect(layout.children[0]?.classes).toContain('pa-settings-content');
+        expect(containerEl.findAll('.pa-settings-toc')).toHaveLength(0);
+        expect(containerEl.findAll('.pa-settings-jump')).toHaveLength(0);
+        expect(containerEl.findAll('.pa-settings-group-summary')
+            .every(summary => summary.children[0]?.classes.includes('pa-settings-disclosure-icon'))).toBe(true);
         expect(containerEl.findAll('.pa-settings-group-summary__desc').map((node) => node.textContent)).toEqual([
-            'qwen · API key not saved',
+            'Finish migrating the saved AI configuration',
             'Pagelet: on · Hints: off',
             'Memory is on',
             'Debug diagnostics off',
@@ -2194,103 +2203,373 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(plugin.getMemoryControlCenterSnapshot).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps desktop TOC and compact jump navigation in sync', () => {
-        const plugin = makePlugin();
+    it('opens the lazy AI detail from one saved-state entry and returns to the overview', async () => {
+        const connections: AIConnectionsSettings = {
+            schemaVersion: 1,
+            connections: [
+                { ...createConnectionDefaults('openai'), id: 'work', name: 'OpenAI Work', secretRef: 'work-key', revision: 0 },
+            ],
+            defaultConnectionId: 'work',
+            bindings: { chat: { mode: 'inherit' }, embedding: { mode: 'connection', connectionId: 'work' }, image: { mode: 'inherit' } },
+            memorySelection: { revision: 'saved', cause: 'configuration-change' }, migrationVersion: 1,
+        };
+        const plugin = makePlugin({ aiConnections: connections });
+        (plugin as unknown as { memoryManager: null }).memoryManager = null;
+        (plugin.vss as unknown as {
+            previewEmbeddingConnection: () => Promise<'existing' | 'unprepared' | 'unknown'>;
+        }).previewEmbeddingConnection = async (): Promise<'unknown'> => 'unknown';
+        (plugin as unknown as { getAIConnectionsController: () => unknown }).getAIConnectionsController = () => ({
+            getAIConnections: () => connections,
+            resolveAIConnection: (purpose: 'chat' | 'embedding' | 'image') => resolveAIConnection(connections, purpose),
+            getAIConnectionTokenState: () => 'unknown',
+        }) as never;
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        const containerEl = new MockContainerEl('div');
-        tab.containerEl = containerEl as never;
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
 
         tab.display();
 
-        const groups = containerEl.findAll('.pa-settings-group');
-        const summaries = containerEl.findAll('.pa-settings-group-summary');
-        const tocItems = containerEl.findAll('.pa-settings-toc-item');
-        const jump = containerEl.findAll('.pa-settings-jump-select')[0];
-        expect(tocItems.map((item) => item.attrs['aria-controls'])).toEqual(
-            groups.map((group) => group.attrs.id),
-        );
-        expect(tocItems[0]?.attrs['aria-current']).toBe('location');
-        expect(tocItems.slice(1).every((item) => item.attrs['aria-current'] === 'false')).toBe(true);
-        expect(jump.value).toBe('ai-provider');
-        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('1/4');
-        expect(containerEl.findAll('.pa-settings-jump-progress__segment')[0]?.attrs['data-current'])
-            .toBe('true');
+        const aiEntries = getMockSettingRecords()
+            .filter(record => record.name === pluginT('plugin.settings.connections.detailTitle'));
+        expect(aiEntries).toHaveLength(1);
+        expect(aiEntries[0]?.desc).toContain('OpenAI Work');
+        expect(container.findAll('.pa-ai-connections')).toHaveLength(0);
+        await aiEntries[0]?.buttons[0]?.onClick?.();
+        const detail = container.findAll('.pa-settings-detail-page')[0];
+        const aiPanel = settingsDetailPanel(container, 'ai-connections');
+        expect(detail?.hidden).toBe(false);
+        expect(aiPanel).toBeDefined();
+        expect(container.findAll('.pa-ai-connections')).toHaveLength(1);
+        expect(getMockSettingRecords().some(record => record.name === 'AI Provider')).toBe(false);
 
-        groups[1].open = true;
-        groups[1].dispatchEvent('toggle');
-        expect(tocItems[0]?.attrs['aria-current']).toBe('location');
-        expect(jump.value).toBe('ai-provider');
-
-        groups[3].open = false;
-        groups[3].dispatchEvent('toggle');
-        expect(tocItems[3]?.attrs['aria-expanded']).toBe('false');
-        tocItems[3].dispatchEvent('click');
-
-        expect(groups[3].open).toBe(true);
-        expect(tocItems[3]?.attrs).toMatchObject({
-            'aria-current': 'location',
-            'aria-expanded': 'true',
-        });
-        expect(jump.value).toBe('system');
-        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('4/4');
-        expect(containerEl.findAll('.pa-settings-jump-progress__segment')[3]?.attrs['data-current'])
-            .toBe('true');
-        expect(summaries[3]?.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
-        expect(summaries[3]?.focus).toHaveBeenCalledWith({ preventScroll: true });
-
-        jump.value = 'data-privacy';
-        jump.dispatchEvent('change');
-        expect(groups[2].open).toBe(true);
-        expect(tocItems[2]?.attrs['aria-current']).toBe('location');
-        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('3/4');
-        expect(summaries[2]?.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
-        expect(summaries[2]?.focus).toHaveBeenCalledWith({ preventScroll: true });
+        (container.findAll('.pa-settings-detail-page__back')[0] as unknown as { onclick?: () => void }).onclick?.();
+        expect(container.findAll('.pa-settings-layout')[0]?.hidden).toBe(false);
+        expect(detail?.hidden).toBe(true);
     });
 
-    it('positions a mobile target below the measured sticky selector', () => {
-        const plugin = makePlugin();
-        const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        const containerEl = new MockContainerEl('div');
-        const scrollTo = jest.fn();
-        const scrollRoot = {
-            addEventListener: jest.fn(),
-            removeEventListener: jest.fn(),
-            getBoundingClientRect: jest.fn(() => ({ top: 10 } as DOMRect)),
-            scrollTo,
-            scrollTop: 100,
-            clientHeight: 400,
-            scrollHeight: 1000,
-            ownerDocument: {
-                body: {
-                    classList: { contains: (className: string) => className === 'is-mobile' },
-                },
-                defaultView: {
-                    getComputedStyle: (element: unknown) => (
-                        element === scrollRoot
-                            ? { paddingBlockStart: '48px', paddingTop: '48px' }
-                            : { top: '8px' }
-                    ),
-                },
-            },
+    it('keeps a pending selection and replacement view aligned across hide and display', async () => {
+        const connections: AIConnectionsSettings = {
+            schemaVersion: 1,
+            connections: [
+                { ...createConnectionDefaults('openai'), id: 'work', name: 'OpenAI Work', secretRef: 'work-key', revision: 0 },
+                { ...createConnectionDefaults('openai'), id: 'personal', name: 'OpenAI Personal', secretRef: 'personal-key', revision: 0 },
+                { ...createConnectionDefaults('openai'), id: 'team', name: 'OpenAI Team', secretRef: 'team-key', revision: 0 },
+            ],
+            defaultConnectionId: 'work',
+            bindings: { chat: { mode: 'inherit' }, embedding: { mode: 'inherit' }, image: { mode: 'inherit' } },
+            memorySelection: { revision: 'saved', cause: 'configuration-change' }, migrationVersion: 1,
         };
-        Object.assign(containerEl, { closest: () => scrollRoot });
-        tab.containerEl = containerEl as never;
+        const plugin = makePlugin({ aiConnections: connections });
+        (plugin as unknown as { memoryManager: null }).memoryManager = null;
+        (plugin.vss as unknown as {
+            previewEmbeddingConnection: () => Promise<'existing' | 'unprepared' | 'unknown'>;
+        }).previewEmbeddingConnection = async (): Promise<'unknown'> => 'unknown';
+        let settleSelection!: (result: AIConnectionSelectionResult) => void;
+        const setAIConnectionSelection = jest.fn<PluginAIConfiguration['setAIConnectionSelection']>(
+            () => new Promise(resolve => { settleSelection = resolve; }),
+        );
+        const configuration = {
+            getAIConnections: () => connections,
+            resolveAIConnection: (purpose: 'chat' | 'embedding' | 'image') => resolveAIConnection(connections, purpose),
+            previewAIConnectionSelection: (patch: Parameters<typeof createSelectionPreview>[1]) =>
+                createSelectionPreview(connections, patch),
+            setAIConnectionSelection,
+            getAIConnectionTokenState: () => 'unknown' as const,
+        };
+        (plugin as unknown as {
+            getAIConnectionsController: () => typeof configuration;
+        }).getAIConnectionsController = () => configuration;
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+
+        const openAI = async () => {
+            const entry = getMockSettingRecords()
+                .filter(record => record.name === pluginT('plugin.settings.connections.detailTitle')).at(-1);
+            await entry?.buttons[0]?.onClick?.();
+        };
+        let currentRenderStart = 0;
+        tab.display();
+        currentRenderStart = getMockSettingRecords().length;
+        await openAI();
+        const firstView = (tab as unknown as { aiConnectionsView: unknown }).aiConnectionsView;
+        const firstAIRoot = container.findAll('.pa-ai-connections')[0];
+        const currentRecords = () => getMockSettingRecords().slice(currentRenderStart);
+        const refreshCurrentView = (view: { refreshOverview(): void}) => {
+            currentRenderStart = getMockSettingRecords().length;
+            view.refreshOverview();
+        };
+        const defaultControl = () => currentRecords()
+            .find(record => record.name === pluginT('plugin.settings.connections.default'))?.dropdowns[0];
+        const currentApply = () => currentRecords()
+            .flatMap(record => record.buttons)
+            .find(button => button.text === pluginT('plugin.settings.connections.applySelection'));
+        defaultControl()?.onChange?.('personal');
+        const apply = currentApply();
+        expect(apply).toBeDefined();
+        const applying = apply?.onClick?.() as Promise<void>;
+
+        tab.hide();
+        firstAIRoot.remove();
+        expect(firstAIRoot.isConnected).toBe(false);
+        tab.display();
+        currentRenderStart = getMockSettingRecords().length;
+        await openAI();
+        const replacementView = (tab as unknown as { aiConnectionsView: unknown }).aiConnectionsView;
+        expect(replacementView).not.toBe(firstView);
+        expect(defaultControl()?.value).toBe('personal');
+        expect(currentApply()).toBeDefined();
+
+        settleSelection({ status: 'applied' });
+        connections.defaultConnectionId = 'personal';
+        await applying;
+        await Promise.resolve();
+        await Promise.resolve();
+
+        refreshCurrentView(replacementView as { refreshOverview(): void });
+        expect(defaultControl()?.value).toBe('personal');
+        expect(connections.defaultConnectionId).toBe('personal');
+        expect(setAIConnectionSelection).toHaveBeenCalledTimes(1);
+        expect(currentApply()).toBeUndefined();
+
+        connections.connections = connections.connections.filter(connection => connection.id !== 'personal');
+        connections.defaultConnectionId = 'team';
+        refreshCurrentView(replacementView as { refreshOverview(): void });
+        expect(defaultControl()?.value).toBe('team');
+        expect(currentApply()).toBeUndefined();
+        const currentAIRoot = container.findAll('.pa-ai-connections').at(-1);
+        expect(currentAIRoot?.findAll('p').some(paragraph => paragraph.attrs.role === 'alert')).toBe(false);
+
+        connections.defaultConnectionId = 'work';
+        refreshCurrentView(replacementView as { refreshOverview(): void });
+        expect(defaultControl()?.value).toBe('work');
+        expect(currentApply()).toBeUndefined();
+        const overviewEntry = getMockSettingRecords()
+            .filter(record => record.name === pluginT('plugin.settings.connections.detailTitle')).at(-1);
+        expect(overviewEntry?.desc).toContain('OpenAI Personal');
+    });
+
+    it('reactivates AI Memory checks and action feedback after returning and reopening', async () => {
+        const connections: AIConnectionsSettings = {
+            schemaVersion: 1,
+            connections: [
+                { ...createConnectionDefaults('openai'), id: 'work', name: 'OpenAI Work', secretRef: 'work-key', revision: 0 },
+            ],
+            defaultConnectionId: 'work',
+            bindings: { chat: { mode: 'inherit' }, embedding: { mode: 'inherit' }, image: { mode: 'inherit' } },
+            memorySelection: { revision: 'saved', cause: 'configuration-change' }, migrationVersion: 1,
+        };
+        const needsPrepare = {
+            reason: 'settings-changed',
+            action: 'rebuild',
+            notesToCheck: 1,
+            requiresApproval: true,
+            canAnswerNow: true,
+        } as const;
+        const plugin = makePlugin({ aiConnections: connections });
+        const plans = [
+            new Promise<typeof needsPrepare>(() => undefined),
+            new Promise<typeof needsPrepare>(resolve => { resolve(needsPrepare); }),
+            Promise.resolve(needsPrepare),
+        ];
+        (plugin as unknown as { memoryManager: unknown }).memoryManager = {
+            getMaintenancePlan: jest.fn(() => plans.shift()),
+            getActivePreparationStatus: () => null,
+        };
+        (plugin as unknown as { getAIConnectionsController: () => unknown }).getAIConnectionsController = () => ({
+            getAIConnections: () => connections,
+            resolveAIConnection: (purpose: 'chat' | 'embedding' | 'image') => resolveAIConnection(connections, purpose),
+            getAIConnectionTokenState: () => 'unknown',
+        }) as never;
+        let releaseMemoryAction!: () => void;
+        plugin.runManualMemoryAction.mockImplementationOnce(() => new Promise<void>(resolve => {
+            releaseMemoryAction = resolve;
+        }));
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        const openAI = async () => {
+            const entry = getMockSettingRecords()
+                .filter(record => record.name === pluginT('plugin.settings.connections.detailTitle')).at(-1);
+            await entry?.buttons[0]?.onClick?.();
+        };
+        const backToOverview = () => {
+            (container.findAll('.pa-settings-detail-page__back')[0] as unknown as { onclick?: () => void }).onclick?.();
+        };
+        const memoryText = () => {
+            const memory = container.findAll('.pa-ai-connections-memory')[0];
+            return memory ? mockDomTextContent(memory) : '';
+        };
 
         tab.display();
+        await openAI();
+        expect(container.findAll('.pa-ai-connections-memory')).toHaveLength(1);
+        expect(memoryText()).toContain(pluginT('plugin.settings.connections.checking'));
+        backToOverview();
+        await openAI();
 
-        const jump = containerEl.findAll('.pa-settings-jump')[0];
-        Object.assign(jump, { getBoundingClientRect: () => ({ height: 66 } as DOMRect) });
-        const summaries = containerEl.findAll('.pa-settings-group-summary');
-        Object.assign(summaries[3], {
-            getBoundingClientRect: () => ({ top: 510 } as DOMRect),
+        expect((plugin.memoryManager as unknown as { getMaintenancePlan: jest.Mock }).getMaintenancePlan)
+            .toHaveBeenCalledTimes(2);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(memoryText()).toContain(pluginT('plugin.settings.connections.memoryNeedsPrepare'));
+        const prepareButton = () => container.findAll('button')
+            .find(button => button.textContent === pluginT('plugin.settings.connections.memory.prepare'));
+        prepareButton()?.dispatchEvent('click');
+        expect(prepareButton()?.disabled).toBe(true);
+
+        backToOverview();
+        await openAI();
+        expect((plugin.memoryManager as unknown as { getMaintenancePlan: jest.Mock }).getMaintenancePlan)
+            .toHaveBeenCalledTimes(3);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(prepareButton()?.disabled).toBe(false);
+        releaseMemoryAction();
+        await Promise.resolve();
+        expect(prepareButton()?.disabled).toBe(false);
+    });
+
+    it('consumes a before-display AI target once and lets it replace a group target', () => {
+        const connections: AIConnectionsSettings = {
+            schemaVersion: 1,
+            connections: [
+                { ...createConnectionDefaults('openai'), id: 'work', name: 'OpenAI Work', secretRef: 'work-key', revision: 0 },
+            ],
+            defaultConnectionId: 'work',
+            bindings: { chat: { mode: 'inherit' }, embedding: { mode: 'inherit' }, image: { mode: 'inherit' } },
+            memorySelection: { revision: 'saved', cause: 'configuration-change' }, migrationVersion: 1,
+        };
+        const plugin = makePlugin({ aiConnections: connections });
+        (plugin as unknown as { memoryManager: null }).memoryManager = null;
+        (plugin as unknown as { getAIConnectionsController: () => unknown }).getAIConnectionsController = () => ({
+            getAIConnections: () => connections,
+            resolveAIConnection: (purpose: 'chat' | 'embedding' | 'image') => resolveAIConnection(connections, purpose),
+            getAIConnectionTokenState: () => 'unknown',
+        }) as never;
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        const focusTarget = jest.spyOn(AIConnectionsSettingsView.prototype, 'focusSelectionTarget');
+
+        try {
+            tab.openGroup('system');
+            tab.openAIDetail('embedding');
+            tab.display();
+
+            expect(container.findAll('.pa-settings-detail-page')[0]?.hidden).toBe(false);
+            expect(settingsDetailPanel(container, 'ai-connections')?.hidden).toBe(false);
+            expect(container.querySelector('#pa-settings-group-system')?.open).toBe(false);
+            expect(focusTarget).toHaveBeenLastCalledWith('embedding');
+
+            (container.findAll('.pa-settings-detail-page__back')[0] as unknown as { onclick?: () => void }).onclick?.();
+            focusTarget.mockClear();
+            tab.display();
+            expect(container.findAll('.pa-settings-layout')[0]?.hidden).toBe(false);
+            expect(container.findAll('.pa-settings-detail-page')[0]?.hidden).toBe(true);
+            expect(focusTarget).not.toHaveBeenCalled();
+        } finally {
+            focusTarget.mockRestore();
+        }
+    });
+
+    it('replaces an older pending group target with the latest explicit group request', () => {
+        const tab = new SettingTab(makeMockApp() as never, makePlugin() as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+
+        tab.openGroup('features');
+        tab.openGroup('system');
+        tab.display();
+
+        expect(container.querySelector('#pa-settings-group-features')?.open).toBe(false);
+        expect(container.querySelector('#pa-settings-group-system')?.open).toBe(true);
+        expect(container.findAll('.pa-settings-detail-page')[0]?.hidden).toBe(true);
+    });
+
+    it('returns from Memory management to AI and clears that source on an external deep link', () => {
+        const connections: AIConnectionsSettings = {
+            schemaVersion: 1,
+            connections: [
+                { ...createConnectionDefaults('openai'), id: 'work', name: 'OpenAI Work', secretRef: 'work-key', revision: 0 },
+            ],
+            defaultConnectionId: 'work',
+            bindings: { chat: { mode: 'inherit' }, embedding: { mode: 'inherit' }, image: { mode: 'inherit' } },
+            memorySelection: { revision: 'saved', cause: 'configuration-change' }, migrationVersion: 1,
+        };
+        const plugin = makePlugin({ aiConnections: connections });
+        (plugin as unknown as { memoryManager: null }).memoryManager = null;
+        (plugin as unknown as { getAIConnectionsController: () => unknown }).getAIConnectionsController = () => ({
+            getAIConnections: () => connections,
+            resolveAIConnection: (purpose: 'chat' | 'embedding' | 'image') => resolveAIConnection(connections, purpose),
+            getAIConnectionTokenState: () => 'unknown',
+        }) as never;
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        tab.display();
+        const internals = tab as unknown as {
+            settingsScrollRoot: { scrollTop: number };
+            openMemoryFromAI(): void;
+            aiMemoryReturnContext: unknown;
+        };
+        internals.settingsScrollRoot = { scrollTop: 123 };
+        tab.openAIDetail('embedding');
+        internals.openMemoryFromAI();
+        expect(settingsDetailPanel(container, 'memory-management')?.hidden).toBe(false);
+        expect(settingsDetailPanel(container, 'ai-connections')?.hidden).toBe(true);
+
+        (container.findAll('.pa-settings-detail-page__back')[0] as unknown as { onclick?: () => void }).onclick?.();
+        expect(settingsDetailPanel(container, 'ai-connections')?.hidden).toBe(false);
+        expect(settingsDetailPanel(container, 'memory-management')?.hidden).toBe(true);
+        expect(internals.aiMemoryReturnContext).toBeNull();
+
+        internals.settingsScrollRoot = { scrollTop: 200 };
+        internals.openMemoryFromAI();
+        tab.openGroup('features');
+        expect(internals.aiMemoryReturnContext).toBeNull();
+        expect(container.findAll('.pa-settings-detail-page')[0]?.hidden).toBe(true);
+    });
+
+    it('uses the shared AI back level for Escape from an open connection editor', () => {
+        const connections: AIConnectionsSettings = {
+            schemaVersion: 1,
+            connections: [
+                { ...createConnectionDefaults('openai'), id: 'work', name: 'OpenAI Work', secretRef: 'work-key', revision: 0 },
+            ],
+            defaultConnectionId: 'work',
+            bindings: { chat: { mode: 'inherit' }, embedding: { mode: 'inherit' }, image: { mode: 'inherit' } },
+            memorySelection: { revision: 'saved', cause: 'configuration-change' }, migrationVersion: 1,
+        };
+        const plugin = makePlugin({ aiConnections: connections });
+        (plugin as unknown as { memoryManager: null }).memoryManager = null;
+        (plugin as unknown as { getAIConnectionsController: () => unknown }).getAIConnectionsController = () => ({
+            getAIConnections: () => connections,
+            resolveAIConnection: (purpose: 'chat' | 'embedding' | 'image') => resolveAIConnection(connections, purpose),
+            getAIConnectionTokenState: () => 'unknown',
+        }) as never;
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        tab.display();
+        tab.openAIDetail('default');
+        const aiView = (tab as unknown as {
+            aiConnectionsView: { editor(connection: AIConnection): void };
+        }).aiConnectionsView;
+        Object.assign(container.findAll('.pa-ai-connections')[0], { ownerDocument: document });
+        aiView.editor(connections.connections[0]);
+        expect(container.findAll('.pa-settings-detail-page')[0]?.hidden).toBe(false);
+
+        container.dispatchEvent({
+            type: 'keydown',
+            key: 'Escape',
+            target: container,
+            preventDefault: () => undefined,
         });
-        const select = containerEl.findAll('.pa-settings-jump-select')[0];
-        select.value = 'system';
-        select.dispatchEvent('change');
 
-        expect(scrollTo).toHaveBeenCalledWith({ top: 466, behavior: 'smooth' });
-        expect(summaries[3]?.scrollIntoView).not.toHaveBeenCalled();
-        expect(summaries[3]?.focus).toHaveBeenCalledWith({ preventScroll: true });
+        expect(container.findAll('.pa-settings-detail-page')[0]?.hidden).toBe(false);
+        expect(container.querySelectorAll('h3').map(node => node.textContent))
+            .not.toContain(pluginT('plugin.settings.connections.editTitle', 'en', { name: 'OpenAI Work' }));
     });
 
     it('respects reduced motion and keeps navigation usable when matchMedia throws', () => {
@@ -2312,272 +2591,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
             matchMedia: jest.fn(() => { throw new Error('unsupported'); }),
         };
         expect(scrollBehavior()).toBe('smooth');
-    });
-
-    it('updates the active group while scrolling and selects System at the bottom', () => {
-        const plugin = makePlugin();
-        const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        const containerEl = new MockContainerEl('div');
-        const scrollRoot = {
-            addEventListener: jest.fn(),
-            removeEventListener: jest.fn(),
-            getBoundingClientRect: jest.fn(() => ({ top: 0 } as DOMRect)),
-            scrollTop: 0,
-            clientHeight: 400,
-            scrollHeight: 1000,
-        };
-        Object.assign(containerEl, { closest: () => scrollRoot });
-        tab.containerEl = containerEl as never;
-
-        tab.display();
-
-        const summaries = containerEl.findAll('.pa-settings-group-summary');
-        [-120, -20, 180, 400].forEach((top, index) => {
-            Object.assign(summaries[index], {
-                getBoundingClientRect: () => ({ top } as DOMRect),
-            });
-        });
-        const sync = () => (
-            tab as unknown as { syncActiveSettingsGroupFromScroll: (ids: string[]) => void }
-        ).syncActiveSettingsGroupFromScroll([
-            'ai-provider',
-            'features',
-            'data-privacy',
-            'system',
-        ]);
-
-        sync();
-        let tocItems = containerEl.findAll('.pa-settings-toc-item');
-        expect(tocItems[1]?.attrs['aria-current']).toBe('location');
-        expect(containerEl.findAll('.pa-settings-jump-select')[0]?.value).toBe('features');
-        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('2/4');
-
-        scrollRoot.scrollTop = 600;
-        sync();
-        tocItems = containerEl.findAll('.pa-settings-toc-item');
-        expect(tocItems[3]?.attrs['aria-current']).toBe('location');
-        expect(containerEl.findAll('.pa-settings-jump-select')[0]?.value).toBe('system');
-        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('4/4');
-    });
-
-    it('accounts for the sticky selector height when tracking the active mobile group', () => {
-        const plugin = makePlugin();
-        const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        const containerEl = new MockContainerEl('div');
-        const scrollRoot = {
-            addEventListener: jest.fn(),
-            removeEventListener: jest.fn(),
-            getBoundingClientRect: jest.fn(() => ({ top: 0 } as DOMRect)),
-            scrollTop: 0,
-            clientHeight: 400,
-            scrollHeight: 1000,
-            ownerDocument: {
-                body: {
-                    classList: { contains: (className: string) => className === 'is-mobile' },
-                },
-            },
-        };
-        Object.assign(containerEl, { closest: () => scrollRoot });
-        tab.containerEl = containerEl as never;
-
-        tab.display();
-
-        const jump = containerEl.findAll('.pa-settings-jump')[0];
-        Object.assign(jump, { getBoundingClientRect: () => ({ height: 80 } as DOMRect) });
-        (
-            tab as unknown as { refreshSettingsNavigationMobileOffset: (root: HTMLElement) => number }
-        ).refreshSettingsNavigationMobileOffset(scrollRoot as unknown as HTMLElement);
-        const summaries = containerEl.findAll('.pa-settings-group-summary');
-        [-120, 93, 180, 400].forEach((top, index) => {
-            Object.assign(summaries[index], {
-                getBoundingClientRect: () => ({ top } as DOMRect),
-            });
-        });
-
-        (
-            tab as unknown as { syncActiveSettingsGroupFromScroll: (ids: string[]) => void }
-        ).syncActiveSettingsGroupFromScroll([
-            'ai-provider',
-            'features',
-            'data-privacy',
-            'system',
-        ]);
-
-        expect(containerEl.findAll('.pa-settings-toc-item')[1]?.attrs['aria-current'])
-            .toBe('location');
-        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('2/4');
-    });
-
-    it('shares the measured mobile selector offset with CSS and cleans up its observer', () => {
-        const plugin = makePlugin();
-        const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        const containerEl = new MockContainerEl('div');
-        const setProperty = jest.fn();
-        const removeProperty = jest.fn();
-        const mobileOwnerDocument = {
-            body: {
-                classList: { contains: (className: string) => className === 'is-mobile' },
-            },
-        };
-        Object.assign(containerEl, {
-            ownerDocument: mobileOwnerDocument,
-            style: { setProperty, removeProperty },
-        });
-        tab.containerEl = containerEl as never;
-
-        const observe = jest.fn();
-        const disconnect = jest.fn();
-        class ResizeObserverMock {
-            constructor(_callback: ResizeObserverCallback) { }
-            observe = observe;
-            unobserve = jest.fn();
-            disconnect = disconnect;
-        }
-        const getBoundingClientRect = jest.fn(() => ({ height: 84 } as DOMRect));
-        const jump = {
-            ownerDocument: {
-                defaultView: { ResizeObserver: ResizeObserverMock },
-            },
-            getBoundingClientRect,
-        } as unknown as HTMLElement;
-
-        (
-            tab as unknown as { startSettingsNavigationOffsetTracking: (el: HTMLElement) => void }
-        ).startSettingsNavigationOffsetTracking(jump);
-
-        expect(observe).toHaveBeenCalledWith(jump);
-        expect(setProperty).toHaveBeenCalledWith('--pa-settings-mobile-nav-offset', '96px');
-
-        const activationOffset = (
-            tab as unknown as { settingsNavigationActivationOffset: (root: HTMLElement) => number }
-        ).settingsNavigationActivationOffset({
-            ownerDocument: mobileOwnerDocument,
-        } as unknown as HTMLElement);
-        expect(activationOffset).toBe(96);
-        expect(getBoundingClientRect).toHaveBeenCalledTimes(1);
-        expect(setProperty).toHaveBeenCalledTimes(1);
-
-        (
-            tab as unknown as { stopSettingsNavigation: () => void }
-        ).stopSettingsNavigation();
-        expect(disconnect).toHaveBeenCalledTimes(1);
-        expect(removeProperty).toHaveBeenCalledWith('--pa-settings-mobile-nav-offset');
-    });
-
-    it('resyncs the active mobile group when the sticky selector height changes', () => {
-        const plugin = makePlugin();
-        const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        const containerEl = new MockContainerEl('div');
-        const setProperty = jest.fn();
-        let jumpHeight = 84;
-        let resizeCallback: ResizeObserverCallback = jest.fn();
-        const mobileOwnerDocument = {
-            body: {
-                classList: { contains: (className: string) => className === 'is-mobile' },
-            },
-            defaultView: {
-                getComputedStyle: (element: unknown) => (
-                    element === scrollRoot
-                        ? { paddingBlockStart: '48px', paddingTop: '48px' }
-                        : { top: '8px' }
-                ),
-            },
-        };
-        const scrollRoot = {
-            ownerDocument: mobileOwnerDocument,
-        };
-        Object.assign(containerEl, {
-            ownerDocument: mobileOwnerDocument,
-            style: { setProperty, removeProperty: jest.fn() },
-        });
-        tab.containerEl = containerEl as never;
-
-        class ResizeObserverMock {
-            constructor(callback: ResizeObserverCallback) {
-                resizeCallback = callback;
-            }
-            observe = jest.fn();
-            unobserve = jest.fn();
-            disconnect = jest.fn();
-        }
-        const jump = {
-            ownerDocument: {
-                ...mobileOwnerDocument,
-                defaultView: {
-                    ...mobileOwnerDocument.defaultView,
-                    ResizeObserver: ResizeObserverMock,
-                },
-            },
-            getBoundingClientRect: () => ({ height: jumpHeight } as DOMRect),
-        } as unknown as HTMLElement;
-        const sync = jest.fn();
-        const privateTab = tab as unknown as {
-            settingsScrollRoot: HTMLElement;
-            settingsScrollHandler: () => void;
-            startSettingsNavigationOffsetTracking: (el: HTMLElement) => void;
-        };
-        privateTab.settingsScrollRoot = scrollRoot as unknown as HTMLElement;
-        privateTab.settingsScrollHandler = sync;
-
-        privateTab.startSettingsNavigationOffsetTracking(jump);
-        expect(sync).toHaveBeenCalledTimes(1);
-        expect(setProperty).toHaveBeenLastCalledWith(
-            '--pa-settings-mobile-nav-offset',
-            '152px',
-        );
-
-        jumpHeight = 104;
-        resizeCallback([] as ResizeObserverEntry[], {} as ResizeObserver);
-        expect(sync).toHaveBeenCalledTimes(2);
-        expect(setProperty).toHaveBeenLastCalledWith(
-            '--pa-settings-mobile-nav-offset',
-            '172px',
-        );
-
-        resizeCallback([] as ResizeObserverEntry[], {} as ResizeObserver);
-        expect(sync).toHaveBeenCalledTimes(2);
-    });
-
-    it('removes the scroll listener before redisplay and on hide', () => {
-        const plugin = makePlugin();
-        const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        const containerEl = new MockContainerEl('div');
-        const scrollRoot = {
-            addEventListener: jest.fn(),
-            removeEventListener: jest.fn(),
-            getBoundingClientRect: jest.fn(() => ({ top: 0 } as DOMRect)),
-            scrollTop: 0,
-            clientHeight: 400,
-            scrollHeight: 1000,
-        };
-        const hiddenOuter = {
-            addEventListener: jest.fn(),
-            removeEventListener: jest.fn(),
-            getBoundingClientRect: jest.fn(() => ({ top: 0 } as DOMRect)),
-            scrollTop: 0,
-            clientHeight: 400,
-            scrollHeight: 400,
-            ownerDocument: {
-                defaultView: {
-                    getComputedStyle: () => ({ overflowY: 'hidden' }),
-                },
-            },
-        };
-        Object.assign(containerEl, {
-            closest: (selector: string) => (
-                selector === '.vertical-tab-content' ? scrollRoot : hiddenOuter
-            ),
-        });
-        tab.containerEl = containerEl as never;
-
-        tab.display();
-        expect(scrollRoot.addEventListener).toHaveBeenCalledTimes(1);
-        expect(hiddenOuter.addEventListener).not.toHaveBeenCalled();
-        tab.display();
-        expect(scrollRoot.removeEventListener).toHaveBeenCalledTimes(1);
-        expect(scrollRoot.addEventListener).toHaveBeenCalledTimes(2);
-        tab.hide();
-        expect(scrollRoot.removeEventListener).toHaveBeenCalledTimes(2);
     });
 
     it('renders the canonical overview by default without Debug or preview-only copy', async () => {
@@ -4707,7 +4720,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(providerSummary()).toBe('Current model: committed-model@example');
     });
 
-    it('summarizes the saved default connection and its cached Key independently of legacy and Chat selections', () => {
+    it('summarizes saved semantics and cached Key state without reading secrets', () => {
         const connections: AIConnectionsSettings = {
             schemaVersion: 1,
             connections: [
@@ -4724,11 +4737,40 @@ describe('Phase 3 IA reorder + provider UX', () => {
         const app = makeMockApp();
         const tab = new SettingTab(app as never, plugin as never);
         const summary = () => (tab as unknown as { settingsGroupSummary(id: string): string }).settingsGroupSummary('ai-provider');
-        expect(summary()).toBe(`OpenAI Personal · ${pluginT('plugin.settings.summary.token.unknown')}`);
+        expect(summary()).toBe(`OpenAI Personal · Chat · OpenAI Work · ${
+            pluginT('plugin.settings.summary.token.unknown')}`);
         connections.defaultConnectionId = 'work';
-        expect(summary()).toBe(`OpenAI Work · ${pluginT('plugin.settings.summary.token.present')}`);
+        expect(summary()).toBe(`OpenAI Work · Chat · OpenAI Work · ${
+            pluginT('plugin.settings.summary.token.present')}`);
         expect(getAIConnectionTokenState.mock.calls.map(([id]) => id)).toEqual(['personal', 'work']);
         expect(plugin.getAPITokenCacheState).not.toHaveBeenCalled();
+        expect(app.secretStorage.getSecret).not.toHaveBeenCalled();
+    });
+
+    it('distinguishes explicit unconfigured purposes from all-inherit and guards invalid schemas', () => {
+        const connections: AIConnectionsSettings = {
+            schemaVersion: 1,
+            connections: [
+                { ...createConnectionDefaults('openai'), id: 'work', name: 'OpenAI Work', secretRef: 'work-key', revision: 0 },
+            ],
+            defaultConnectionId: 'work',
+            bindings: { chat: { mode: 'inherit' }, embedding: { mode: 'inherit' }, image: { mode: 'unconfigured' } },
+            memorySelection: { revision: 'saved', cause: 'configuration-change' }, migrationVersion: 1,
+        };
+        const plugin = makePlugin({ aiConnections: connections });
+        const app = makeMockApp();
+        const tab = new SettingTab(app as never, plugin as never);
+        const summary = () => (tab as unknown as { aiConfigurationSummary(): string }).aiConfigurationSummary();
+        expect(summary()).toContain(`${pluginT('plugin.settings.connections.image')} · ${
+            pluginT('plugin.settings.connections.unconfigured')}`);
+        expect(summary()).not.toContain(pluginT(
+            'plugin.settings.connections.summary.allInherit',
+            'en',
+            { name: 'OpenAI Work' },
+        ));
+
+        (plugin.settings as { aiConnections?: unknown }).aiConnections = { schemaVersion: 2 };
+        expect(summary()).toBe(pluginT('plugin.settings.connections.invalid'));
         expect(app.secretStorage.getSecret).not.toHaveBeenCalled();
     });
 
@@ -5010,27 +5052,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(plugin.getConfiguredAPITokenSecret).not.toHaveBeenCalled();
     });
 
-    it.each(['qwen', 'custom'])('keeps %s advanced connection reachable with no secret read on passive expansion', (preset) => {
-        const plugin = makePlugin({ aiProvider: 'qwen', aiProviderPreset: preset,
-            baseURL: preset === 'custom' ? 'https://custom.example/v1' : PROVIDER_PRESETS.qwen.baseURL,
-            showAdvancedMemoryControls: false });
-        plugin.getAPITokenCacheState.mockReturnValue('unknown');
-        const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        const container = new MockContainerEl('div');
-        tab.containerEl = container as never;
-        tab.display();
-        const detail = container.findAll('.pa-settings-detail')
-            .find((node) => node.querySelector('summary')?.textContent === pluginT('plugin.settings.simple.advancedConnection'))!;
-        expect(detail).toBeDefined();
-        expect(detail.open).toBe(preset === 'custom');
-        detail.open = true;
-        detail.dispatchEvent('toggle');
-        expect(getMockSettingRecords().some((row) => row.name === 'Memory model')).toBe(true);
-        expect(plugin.getConfiguredAPITokenSecret).not.toHaveBeenCalled();
-        expect(plugin.refreshAPITokenPresence).not.toHaveBeenCalled();
-        expect(plugin.saveSettings).not.toHaveBeenCalled();
-        expect(plugin.updateAIProviderConfiguration).not.toHaveBeenCalled();
-    });
 
     it('fails closed with visible feedback when an explicit token read throws', async () => {
         const { Notice } = jest.requireMock('obsidian') as { Notice: jest.Mock };

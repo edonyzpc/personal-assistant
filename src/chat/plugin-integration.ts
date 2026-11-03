@@ -66,6 +66,7 @@ export interface ChatHostActions {
     onSettingsChanged(listener: () => void | Promise<void>): () => void;
     scheduleMemoryExtractionAfterChatTurn(conversationId: string, turnCount: number): void;
     openMemorySettings(claimId?: string): void;
+    openAISettings?(target?: "chat" | "embedding" | "image"): void;
     completeAISetup(input: AISetupInput): Promise<AISetupResult>;
 }
 
@@ -470,6 +471,9 @@ export class ChatPluginIntegration {
             scheduleMemoryExtractionAfterChatTurn: (conversationId, turnCount) =>
                 actions.scheduleMemoryExtractionAfterChatTurn(conversationId, turnCount),
             openMemorySettings: (claimId) => actions.openMemorySettings(claimId),
+            ...(actions.openAISettings ? {
+                openAISettings: (target) => actions.openAISettings?.(target),
+            } : {}),
             completeAISetup: (input) => actions.completeAISetup(input),
         };
     }

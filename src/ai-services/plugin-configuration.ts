@@ -26,6 +26,28 @@ import {
 import type {
     AIConnection, AIConnectionsSettings, AIPurpose, PurposeBinding, AIConnectionResolution,
 } from "./ai-connection-types";
+import {
+    applyNormalizedSelectionPatch,
+    createCreationPreview,
+    createSelectionPreview,
+    creationPreviewMatches,
+    normalizeSelectionPatch,
+    selectionChangesSettings,
+    selectionImpactEqual,
+    type AIConnectionCreationPreview,
+    type AIConnectionSelectionPreview,
+    type AIConnectionSelectionResult,
+} from "./ai-connection-selection";
+
+export type {
+    AIConnectionCreationPreview,
+    AIConnectionSelectionEffective,
+    AIConnectionSelectionImpact,
+    AIConnectionSelectionPatch,
+    AIConnectionSelectionPreview,
+    AIConnectionSelectionPurposeImpact,
+    AIConnectionSelectionResult,
+} from "./ai-connection-selection";
 
 export interface AIConnectionInput {
     providerId: string;
@@ -34,6 +56,19 @@ export interface AIConnectionInput {
     endpoints?: AIConnection["endpoints"];
     models?: AIConnection["models"];
     options?: AIConnection["options"];
+}
+
+export interface CreateAIConnectionOptions {
+    initialSetup?: boolean;
+    creationPreview?: AIConnectionCreationPreview;
+}
+
+export class AIConnectionPreviewChangedError extends Error {
+    readonly code = "ai_connection:preview_changed";
+
+    constructor(readonly preview: AIConnectionCreationPreview) {
+        super("ai_connection:preview_changed");
+    }
 }
 
 export type AIConnectionPatch = Pick<AIConnectionInput, "name" | "models" | "options">;
@@ -180,11 +215,28 @@ export class PluginAIConfiguration {
         input: AIConnectionInput,
         key?: string,
         usage?: "default" | AIPurpose,
-        options: { initialSetup?: boolean } = {},
+        options: CreateAIConnectionOptions = {},
     ): Promise<AIConnection> {
         const draft = JSON.parse(JSON.stringify(input)) as AIConnectionInput;
+        const creationPreview = options.creationPreview === undefined
+            ? undefined : JSON.parse(JSON.stringify(options.creationPreview)) as AIConnectionCreationPreview;
         return this.runConnectionTransaction(async () => {
             const previous = this.getAIConnections();
+            if (creationPreview !== undefined) {
+                if (usage === undefined) throw new Error("ai_connection:preview_usage_invalid");
+                if (!creationPreviewMatches(
+                    creationPreview,
+                    previous ?? this.selectionProjectionSettings(),
+                    draft,
+                    usage,
+                )) {
+                    throw new AIConnectionPreviewChangedError(createCreationPreview(
+                        previous ?? this.selectionProjectionSettings(),
+                        draft,
+                        usage,
+                    ));
+                }
+            }
             const next = this.mutableConnections(previous, options.initialSetup === true);
             const defaults = createConnectionDefaults(draft.providerId);
             const definition = getProviderDefinition(draft.providerId)!;
@@ -251,23 +303,65 @@ export class PluginAIConfiguration {
     }
 
     setDefaultAIConnection(id: string | null): Promise<void> {
-        return this.runConnectionTransaction(async () => {
-            const previous = this.requireConnections();
-            const next = cloneConnectionSettings(previous);
-            if (id !== null) this.findConnection(id, next);
-            next.defaultConnectionId = id;
-            await this.commitConnections(previous, next);
-        });
+        return this.commitSelection({ defaultConnectionId: id }).then(() => undefined);
     }
 
     setAIPurposeBinding(purpose: AIPurpose, binding: PurposeBinding): Promise<void> {
-        const draft = { ...binding };
+        return this.commitSelection({ bindings: { [purpose]: binding } }).then(() => undefined);
+    }
+
+    previewAIConnectionSelection(patch: Parameters<typeof createSelectionPreview>[1]): AIConnectionSelectionPreview {
+        return createSelectionPreview(this.requireConnections(), patch);
+    }
+
+    previewAIConnectionCreation(
+        input: AIConnectionInput,
+        usage: "default" | AIPurpose,
+    ): AIConnectionCreationPreview {
+        return createCreationPreview(this.selectionProjectionSettings(), input, usage);
+    }
+
+    setAIConnectionSelection(preview: AIConnectionSelectionPreview): Promise<AIConnectionSelectionResult> {
+        const submitted = JSON.parse(JSON.stringify(preview)) as AIConnectionSelectionPreview;
+        return this.commitSelection(submitted.patch, submitted.impact);
+    }
+
+    private selectionProjectionSettings(): AIConnectionsSettings {
+        return this.getAIConnections() ?? {
+            schemaVersion: 1,
+            connections: [],
+            defaultConnectionId: null,
+            bindings: {
+                chat: { mode: "inherit" },
+                embedding: { mode: "inherit" },
+                image: { mode: "inherit" },
+            },
+            memorySelection: { revision: "", cause: "initial-setup" },
+            migrationVersion: 0,
+        };
+    }
+
+    private commitSelection(
+        patch: Parameters<typeof createSelectionPreview>[1],
+        previewImpact?: Parameters<typeof selectionImpactEqual>[0],
+    ): Promise<AIConnectionSelectionResult> {
+        const submittedPatch = normalizeSelectionPatch(patch);
+        const submittedImpact = previewImpact === undefined
+            ? undefined
+            : JSON.parse(JSON.stringify(previewImpact)) as typeof previewImpact;
         return this.runConnectionTransaction(async () => {
             const previous = this.requireConnections();
-            const next = cloneConnectionSettings(previous);
-            this.validateBinding(draft, next);
-            next.bindings[purpose] = draft;
+            const next = applyNormalizedSelectionPatch(previous, submittedPatch);
+            if (next.defaultConnectionId !== null) this.findConnection(next.defaultConnectionId, next);
+            for (const purpose of AI_PURPOSES) this.validateBinding(next.bindings[purpose], next);
+
+            const currentPreview = createSelectionPreview(previous, submittedPatch);
+            if (submittedImpact !== undefined && !selectionImpactEqual(submittedImpact, currentPreview.impact)) {
+                return { status: "preview-changed", preview: currentPreview };
+            }
+            if (!selectionChangesSettings(previous, submittedPatch)) return { status: "applied" };
             await this.commitConnections(previous, next);
+            return { status: "applied" };
         });
     }
 

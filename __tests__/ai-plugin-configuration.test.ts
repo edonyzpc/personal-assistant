@@ -1,11 +1,16 @@
 import { describe, expect, it, jest } from "@jest/globals";
 
 import {
+    AIConnectionPreviewChangedError,
     PluginAIConfiguration,
     type PluginAIConfigurationDependencies,
 } from "../src/ai-services/plugin-configuration";
 import { DEFAULT_SETTINGS, type PluginManagerSettings } from "../src/settings";
-import type { AIConnectionsSettings } from "../src/ai-services/ai-connection-types";
+import type {
+    AIConnectionsSettings,
+    AIPurpose,
+    PurposeBinding,
+} from "../src/ai-services/ai-connection-types";
 import { KEYCHAIN_API_TOKEN_ID } from "../src/utils";
 
 function cloneSettings(): PluginManagerSettings {
@@ -54,6 +59,7 @@ function createFixture() {
     };
 }
 
+
 describe("B-143 AI plugin configuration owner", () => {
     it("keeps construction and passive readiness checks free of SecretStorage reads", () => {
         const { owner, secretStorage } = createFixture();
@@ -98,6 +104,242 @@ describe("B-143 AI plugin configuration owner", () => {
         expect(secrets.get(secretId)).toBe("previous-image-token");
         expect(owner.getTransactionTailForCompatibility()).toBeNull();
     });
+});
+
+describe("B-195 AI connection selection transactions", () => {
+    it("applies default and purpose selections in one commit while retaining explicit semantics", async () => {
+        const { owner, dependencies, saveSettingsData } = createFixture();
+        const selectionOwner = owner;
+        const cancelActivePreparation = dependencies.cancelActivePreparation as jest.Mock;
+        const a = await owner.createAIConnection({ providerId: "openai" }, "key-a", "default");
+        const b = await owner.createAIConnection({ providerId: "dashscope-cn" }, "key-b");
+        await owner.setAIPurposeBinding("embedding", { mode: "connection", connectionId: a.id });
+        const before = owner.getAIConnections()!;
+        const savesBeforeApply = saveSettingsData.mock.calls.length;
+        const cancelsBeforeApply = cancelActivePreparation.mock.calls.length;
+        const patch = {
+            defaultConnectionId: b.id,
+            bindings: {
+                chat: { mode: "connection" as const, connectionId: b.id },
+                image: { mode: "unconfigured" as const },
+            },
+        };
+
+        const preview = selectionOwner.previewAIConnectionSelection(patch);
+        expect(preview.patch).toEqual(patch);
+        await expect(selectionOwner.setAIConnectionSelection(preview)).resolves.toEqual({ status: "applied" });
+
+        const after = owner.getAIConnections()!;
+        expect(saveSettingsData).toHaveBeenCalledTimes(savesBeforeApply + 1);
+        expect(after.defaultConnectionId).toBe(b.id);
+        expect(after.bindings).toEqual({
+            chat: { mode: "connection", connectionId: b.id },
+            embedding: { mode: "connection", connectionId: a.id },
+            image: { mode: "unconfigured" },
+        });
+        expect(after.connections).toEqual(before.connections);
+        expect(after.memorySelection).toEqual(before.memorySelection);
+        expect(cancelActivePreparation).toHaveBeenCalledTimes(cancelsBeforeApply);
+    });
+
+    it("rechecks an old preview after queued model writes and performs zero selection writes on drift", async () => {
+        const { owner, dependencies, saveSettingsData } = createFixture();
+        const selectionOwner = owner;
+        const a = await owner.createAIConnection({ providerId: "openai" }, "key-a", "default");
+        const b = await owner.createAIConnection({ providerId: "dashscope-cn" }, "key-b");
+        const preview = selectionOwner.previewAIConnectionSelection({ defaultConnectionId: b.id });
+
+        let releaseModelSave!: () => void;
+        let markModelSaveStarted!: () => void;
+        const modelSaveGate = new Promise<void>(resolve => { releaseModelSave = resolve; });
+        const modelSaveStarted = new Promise<void>(resolve => { markModelSaveStarted = resolve; });
+        let queuedWriteCount = 0;
+        dependencies.enqueueSettingsWrite = async operation => {
+            queuedWriteCount += 1;
+            if (queuedWriteCount === 1) {
+                markModelSaveStarted();
+                await modelSaveGate;
+            }
+            return operation();
+        };
+        const cancelActivePreparation = dependencies.cancelActivePreparation as jest.Mock;
+        const savesBeforeQueuedWrites = saveSettingsData.mock.calls.length;
+        const cancelsBeforeSelection = cancelActivePreparation.mock.calls.length;
+        const memoryBeforeSelection = owner.getAIConnections()!.memorySelection;
+
+        const modelSave = owner.updateAIConnection(b.id, { models: { chat: "queued-default-chat" } });
+        await modelSaveStarted;
+        const selection = selectionOwner.setAIConnectionSelection(preview);
+        releaseModelSave();
+        const [savedModel, selectionResult] = await Promise.all([modelSave, selection]);
+
+        expect(savedModel.models.chat).toBe("queued-default-chat");
+        expect(selectionResult.status).toBe("preview-changed");
+        expect(owner.getAIConnections()!.defaultConnectionId).toBe(a.id);
+        expect(saveSettingsData).toHaveBeenCalledTimes(savesBeforeQueuedWrites + 1);
+        expect(cancelActivePreparation).toHaveBeenCalledTimes(cancelsBeforeSelection);
+        expect(owner.getAIConnections()!.memorySelection).toEqual(memoryBeforeSelection);
+    });
+
+    it("rejects a stale usage creation after a queued model write before Key or connection writes", async () => {
+        const { owner, dependencies, saveSettingsData, secretStorage } = createFixture();
+        const a = await owner.createAIConnection({ providerId: "openai" }, "key-a", "default");
+        const input = { providerId: "openai", models: { image: "new-image" } };
+        const preview = owner.previewAIConnectionCreation(input, "image");
+
+        let releaseModelSave!: () => void;
+        let markModelSave!: () => void;
+        const modelSaveGate = new Promise<void>(resolve => { releaseModelSave = resolve; });
+        const modelSaveStarted = new Promise<void>(resolve => { markModelSave = resolve; });
+        let writes = 0;
+        dependencies.enqueueSettingsWrite = async operation => {
+            writes += 1;
+            if (writes === 1) {
+                markModelSave();
+                await modelSaveGate;
+            }
+            return operation();
+        };
+        const savesBeforeQueuedWrites = saveSettingsData.mock.calls.length;
+        const secretWritesBeforeCreation = secretStorage.setSecret.mock.calls.length;
+
+        const modelSave = owner.updateAIConnection(a.id, { models: { image: "queued-image" } });
+        await markModelSave;
+        const creating = owner.createAIConnection(input, "new-key", "image", { creationPreview: preview });
+        releaseModelSave();
+        await modelSave;
+        await expect(creating).rejects.toBeInstanceOf(AIConnectionPreviewChangedError);
+
+        expect(owner.getAIConnections()!.connections).toHaveLength(1);
+        expect(owner.getAIConnections()!.bindings.image).toEqual({ mode: "inherit" });
+        expect(saveSettingsData).toHaveBeenCalledTimes(savesBeforeQueuedWrites + 1);
+        expect(secretStorage.setSecret).toHaveBeenCalledTimes(secretWritesBeforeCreation);
+    });
+
+    it("projects the virtual usage creation as the displayed after state", async () => {
+        const { owner } = createFixture();
+        await owner.createAIConnection({ providerId: "openai" }, "key-a", "default");
+        const input = { providerId: "openai", models: { image: "new-image" }, name: "Displayed name" };
+        const preview = owner.previewAIConnectionCreation(input, "image");
+        const imageImpact = preview.impact.purposes.find(item => item.purpose === "image");
+
+        expect(imageImpact?.after).toMatchObject({
+            ok: true,
+            providerId: "openai",
+            model: "new-image",
+        });
+
+        const saved = await owner.createAIConnection(
+            { ...input, name: "Unrelated rename" },
+            "key-new",
+            "image",
+            { creationPreview: preview },
+        );
+        expect(saved.models.image).toBe("new-image");
+        expect(owner.getAIConnections()!.bindings.image).toEqual({
+            mode: "connection",
+            connectionId: saved.id,
+        });
+    });
+
+    it.each(["default", "binding"] as const)(
+        "validates a missing selection target before manufacturing a %s preview",
+        async target => {
+            const { owner, saveSettingsData } = createFixture();
+            const a = await owner.createAIConnection({ providerId: "openai" }, "key-a", "default");
+            const b = await owner.createAIConnection({ providerId: "openai" }, "key-b");
+            if (target === "binding") {
+                await owner.setAIPurposeBinding("image", { mode: "connection", connectionId: b.id });
+            }
+            const preview = target === "default"
+                ? owner.previewAIConnectionSelection({ defaultConnectionId: b.id })
+                : owner.previewAIConnectionSelection({
+                    bindings: { image: { mode: "connection", connectionId: b.id } },
+                });
+            const savesBeforeDelete = saveSettingsData.mock.calls.length;
+
+            await owner.deleteAIConnection(b.id, target === "binding"
+                ? { bindings: { image: { mode: "unconfigured" } } }
+                : undefined);
+            const savesBeforeInvalidApply = saveSettingsData.mock.calls.length;
+
+            await expect(owner.setAIConnectionSelection(preview))
+                .rejects.toThrow("ai_connection:connection_missing");
+            expect(owner.getAIConnections()!.defaultConnectionId).toBe(a.id);
+            expect(saveSettingsData).toHaveBeenCalledTimes(savesBeforeInvalidApply);
+            expect(savesBeforeInvalidApply).toBeGreaterThan(savesBeforeDelete);
+        },
+    );
+
+    it("snapshots the binding submitted to the legacy purpose setter", async () => {
+        const { owner } = createFixture();
+        const a = await owner.createAIConnection({ providerId: "openai" }, "key-a", "default");
+        const b = await owner.createAIConnection({ providerId: "openai" }, "key-b");
+        const binding = { mode: "connection" as const, connectionId: a.id };
+
+        const saving = owner.setAIPurposeBinding("chat", binding);
+        binding.connectionId = b.id;
+        await saving;
+
+        expect(owner.getAIConnections()!.bindings.chat).toEqual({
+            mode: "connection",
+            connectionId: a.id,
+        });
+    });
+
+    type UnrelatedSelectionChange = (
+        owner: PluginAIConfiguration,
+        defaultId: string,
+        targetId: string,
+        settings: PluginManagerSettings,
+    ) => Promise<void> | void;
+    const unrelatedChanges: Array<{ label: string; change: UnrelatedSelectionChange }> = [
+        {
+            label: "target connection rename",
+            change: (_owner, _defaultId, targetId) =>
+                _owner.updateAIConnection(targetId, { name: "Renamed before apply" }),
+        },
+        {
+            label: "target key rotation",
+            change: (selectionOwner, _defaultId, targetId) =>
+                selectionOwner.updateAIConnection(targetId, {}, "rotated-key"),
+        },
+        {
+            label: "memory state revision",
+            change: (_owner, _defaultId, _targetId, settings) => {
+                settings.aiConnections!.memorySelection.revision = "external-memory-state";
+            },
+        },
+        {
+            label: "unaffected purpose model",
+            change: (selectionOwner, defaultId) =>
+                selectionOwner.updateAIConnection(defaultId, { models: { chat: "unrelated-chat-model" } }),
+        },
+    ];
+
+    it.each(unrelatedChanges)(
+        "applies the preview after an unrelated $label without requiring confirmation again",
+        async ({ change }) => {
+            const { owner, settings, saveSettingsData } = createFixture();
+            const selectionOwner = owner;
+            const a = await owner.createAIConnection({ providerId: "openai" }, "key-a", "default");
+            const b = await owner.createAIConnection({ providerId: "dashscope-cn" }, "key-b");
+            await owner.setAIPurposeBinding("chat", { mode: "connection", connectionId: a.id });
+            const preview = selectionOwner.previewAIConnectionSelection({
+                bindings: { image: { mode: "connection", connectionId: b.id } },
+            });
+
+            await change(owner, a.id, b.id, settings);
+            await expect(selectionOwner.setAIConnectionSelection(preview)).resolves.toEqual({ status: "applied" });
+
+            const snapshot = saveSettingsData.mock.calls.at(-1)![0] as PluginManagerSettings & {
+                aiConnections: AIConnectionsSettings;
+            };
+            expect(owner.getAIConnections()!.bindings.image).toEqual({ mode: "connection", connectionId: b.id });
+            expect(snapshot.aiConnections.bindings.chat).toEqual({ mode: "connection", connectionId: a.id });
+            expect(snapshot.aiConnections.bindings.image).toEqual({ mode: "connection", connectionId: b.id });
+        },
+    );
 });
 
 describe("B-192 saved connection credentials", () => {

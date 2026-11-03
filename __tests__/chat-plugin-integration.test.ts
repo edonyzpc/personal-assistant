@@ -162,6 +162,7 @@ function createHarness() {
             onSettingsChanged: () => () => undefined,
             scheduleMemoryExtractionAfterChatTurn: jest.fn(),
             openMemorySettings: jest.fn(),
+            openAISettings: jest.fn(),
             completeAISetup: jest.fn(),
         },
         writingStyleRuntime: {
@@ -199,6 +200,15 @@ function createHarness() {
 }
 
 describe("ChatPluginIntegration", () => {
+    it("routes explicit AI Settings entry points through the host action", () => {
+        const harness = createHarness();
+        const host = harness.owner.createChatHost();
+        host.openAISettings?.("image");
+        host.openMemorySettings?.("claim");
+        expect(harness.dependencies.hostActions.openAISettings).toHaveBeenCalledWith("image");
+        expect(harness.dependencies.hostActions.openMemorySettings).toHaveBeenCalledWith("claim");
+    });
+
     it.each(['revocation', 'cancel', 'replacement'] as const)(
         'does not bind a natural note source when %s occurs during its read', async failure => {
             const harness = createHarness();

@@ -1202,6 +1202,13 @@ export class LLMView extends ItemView {
             appWithSettings.setting?.open();
             appWithSettings.setting?.openTabById('personal-assistant');
         };
+        const openAIConfigurationSettings = (target: 'chat' | 'embedding' | 'image' = 'chat') => {
+            if (this.host.openAISettings) {
+                this.host.openAISettings(target);
+                return;
+            }
+            openPluginSettings();
+        };
         createChatMenuDivider(composerMenu);
         const clearButton = createChatMenuItem(composerMenu, {
             text: t("plugin.chat.action.clearChat"),
@@ -2447,7 +2454,7 @@ export class LLMView extends ItemView {
             };
             const actions: ImageTaskCardActions = {
                 regenerate: regenerateImageTask,
-                openSettings: openPluginSettings,
+                openSettings: () => openAIConfigurationSettings('image'),
                 stop: () => {
                     void imageGeneration.stop(task.taskId).catch(error => {
                         this.host.log('Could not stop image task', error);
@@ -3185,11 +3192,7 @@ export class LLMView extends ItemView {
                     });
                     advancedLink.onclick = (e) => {
                         e.preventDefault();
-                        const appWithSettings = this.app as typeof this.app & {
-                            setting?: { open: () => void; openTabById: (id: string) => void };
-                        };
-                        appWithSettings.setting?.open();
-                        appWithSettings.setting?.openTabById("personal-assistant");
+                        openAIConfigurationSettings('chat');
                     };
                 } else {
                     emptyStateEl.createDiv({ cls: 'pa-chat-empty-hint', text: setupIssue });
@@ -3200,11 +3203,7 @@ export class LLMView extends ItemView {
                         attr: { type: 'button' },
                     });
                     settingsButton.onclick = () => {
-                        const appWithSettings = this.app as typeof this.app & {
-                            setting?: { open: () => void; openTabById: (id: string) => void };
-                        };
-                        appWithSettings.setting?.open();
-                        appWithSettings.setting?.openTabById('personal-assistant');
+                        openAIConfigurationSettings('chat');
                     };
                 }
                 return;

@@ -1,0 +1,446 @@
+<div id="pa-settings-preview" aria-label="Personal Assistant 设置设计预览">
+  <div class="pa-preview-toolbar"><span class="pa-preview-caption">交互预览</span><label for="pa-demo-scene">示例状态</label><select id="pa-demo-scene"><option value="configured">全部跟随默认</option><option value="separate">图片使用独立服务</option><option value="all-separate">三项均独立设置</option><option value="empty">首次配置</option></select></div>
+  <div class="pa-window">
+    <aside class="pa-host-sidebar" aria-label="Obsidian 设置侧栏示意">
+      <div class="pa-host-brand"><i data-lucide="settings-2" aria-hidden="true"></i><span>设置</span></div>
+      <div class="pa-host-label">Obsidian</div>
+      <div class="pa-host-item">常规</div><div class="pa-host-item">外观</div><div class="pa-host-item">编辑器</div><div class="pa-host-item">文件与链接</div><div class="pa-host-item">快捷键</div>
+      <div class="pa-host-label pa-host-label-spaced">第三方插件</div>
+      <div class="pa-host-item pa-host-selected">Personal Assistant</div>
+      <div class="pa-host-foot">随手记下，<br>需要时自然浮现。</div>
+    </aside>
+    <main class="pa-main">
+      <header class="pa-product-header"><span>Personal Assistant</span><span class="pa-product-context">设置</span></header>
+      <div id="pa-preview-view"></div>
+      <div id="pa-preview-feedback" class="pa-feedback" role="status" aria-live="polite"></div>
+    </main>
+  </div>
+</div>
+<style>
+#pa-settings-preview {
+  --pa-surface: light-dark(#ffffff, #202024);
+  --pa-side: light-dark(#f5f4f7, #19191d);
+  --pa-soft: light-dark(#f6f5f8, #29292f);
+  --pa-hover: light-dark(#eeecf3, #32313a);
+  --pa-text: light-dark(#292630, #eeedf2);
+  --pa-muted: light-dark(#6b6675, #b0aab9);
+  --pa-line: light-dark(#e6e3eb, #38353f);
+  --pa-accent: light-dark(#6a4dbc, #b29aee);
+  --pa-accent-fill: light-dark(#6a4dbc, #8967ce);
+  --pa-accent-text: #ffffff;
+  --pa-selected: light-dark(#ece7f7, #30283f);
+  --pa-danger: light-dark(#ae3847, #ec929d);
+  color: var(--pa-text);
+  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  width: 100%;
+}
+#pa-settings-preview * { box-sizing: border-box; }
+#pa-settings-preview .pa-preview-caption { color: var(--pa-muted); font-size: 12px; }
+#pa-settings-preview .pa-preview-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; margin:0 100px 14px 0; font-size:12px; }
+#pa-settings-preview .pa-preview-toolbar label { color:var(--pa-muted); }
+#pa-settings-preview .pa-preview-toolbar select { width:auto; font-size:12px; min-height:30px; padding:4px 8px; }
+#pa-settings-preview .pa-window { display: grid; grid-template-columns: 172px minmax(0, 1fr); background: var(--pa-surface); border: 1px solid var(--pa-line); border-radius: 12px; min-height: 610px; max-width: 1024px; margin: 0 auto; container: pa-preview / inline-size; }
+#pa-settings-preview .pa-host-sidebar { background: var(--pa-side); border-inline-end: 1px solid var(--pa-line); border-radius: 12px 0 0 12px; padding: 26px 12px 22px; display: flex; flex-direction: column; gap: 3px; }
+#pa-settings-preview .pa-host-brand { display: flex; align-items: center; gap: 9px; padding: 0 12px 28px; font-size: 16px; font-weight: 500; }
+#pa-settings-preview .pa-host-label { padding: 0 12px 6px; font-size: 12px; color: var(--pa-muted); }
+#pa-settings-preview .pa-host-label-spaced { margin-top: 28px; }
+#pa-settings-preview .pa-host-item { padding: 7px 12px; color: var(--pa-muted); font-size: 13px; border-radius: 5px; }
+#pa-settings-preview .pa-host-selected { background: var(--pa-selected); color: var(--pa-text); font-weight: 500; }
+#pa-settings-preview .pa-host-foot { margin-top: auto; padding: 48px 12px 0; color: var(--pa-muted); font-size: 12px; line-height: 1.8; }
+#pa-settings-preview .pa-main { min-width: 0; padding: 30px clamp(20px, 4vw, 42px) 24px; }
+#pa-settings-preview .pa-product-header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin-bottom: 28px; font-size: 21px; font-weight: 500; letter-spacing: -.4px; }
+#pa-settings-preview .pa-product-context { font-size: 12px; letter-spacing: 0; font-weight: 400; color: var(--pa-muted); }
+#pa-settings-preview h2 { font: 500 19px/1.4 inherit; font-family: inherit; font-size: 19px; line-height: 1.4; font-weight: 500; margin: 0; }
+#pa-settings-preview h3 { font: inherit; font-weight: 500; font-size: 14px; margin: 0; }
+#pa-settings-preview p { margin: 0; }
+#pa-settings-preview .pa-page-heading { margin: 14px 0 25px; }
+#pa-settings-preview .pa-page-heading p { margin-top: 5px; color: var(--pa-muted); font-size: 13px; }
+#pa-settings-preview svg { width: 16px; height: 16px; stroke-width: 1.8; flex-shrink: 0; }
+#pa-settings-preview button, #pa-settings-preview input, #pa-settings-preview select { font: inherit; }
+#pa-settings-preview button { color: var(--pa-text); }
+#pa-settings-preview .pa-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; border: 1px solid var(--pa-line); border-radius: 6px; padding: 5px 12px; background: var(--pa-surface); white-space: nowrap; font-size: 13px; }
+#pa-settings-preview .pa-button:hover { background: var(--pa-hover); }
+#pa-settings-preview .pa-button:disabled { opacity: .45; cursor: default; }
+#pa-settings-preview .pa-primary { color: var(--pa-accent-text); background: var(--pa-accent-fill); border-color: var(--pa-accent-fill); }
+#pa-settings-preview .pa-primary:hover { background: var(--pa-accent-fill); filter: brightness(1.08); }
+#pa-settings-preview .pa-text-button { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 0; padding: 5px 0; font-size: 13px; color: var(--pa-muted); min-height: 34px; }
+#pa-settings-preview .pa-text-button:hover { color: var(--pa-text); }
+#pa-settings-preview .pa-link { color: var(--pa-accent); }
+#pa-settings-preview .pa-danger { color: var(--pa-danger); }
+#pa-settings-preview .pa-back { margin-left: -3px; }
+#pa-settings-preview .pa-group { border-bottom: 1px solid var(--pa-line); }
+#pa-settings-preview summary { list-style: none; }
+#pa-settings-preview summary::-webkit-details-marker { display: none; }
+#pa-settings-preview .pa-group > summary { display: flex; align-items: center; gap: 12px; min-height: 79px; padding: 16px 4px; }
+#pa-settings-preview .pa-group > summary:hover { color: var(--pa-accent); }
+#pa-settings-preview .pa-chevron { display: flex; color: var(--pa-muted); transition: transform 140ms ease; }
+#pa-settings-preview details[open] > summary > .pa-chevron { transform: rotate(90deg); }
+#pa-settings-preview .pa-summary-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+#pa-settings-preview .pa-summary-title { font-size: 15px; font-weight: 500; }
+#pa-settings-preview .pa-summary-desc { color: var(--pa-muted); font-size: 12px; font-weight: 400; overflow-wrap: anywhere; }
+#pa-settings-preview .pa-group[open] > summary .pa-summary-desc { display: none; }
+#pa-settings-preview .pa-group-body { padding: 0 4px 19px 32px; }
+#pa-settings-preview .pa-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 0; border-bottom: 1px solid var(--pa-line); }
+#pa-settings-preview .pa-row:last-child { border-bottom: 0; }
+#pa-settings-preview .pa-row:first-child { padding-top: 0; }
+#pa-settings-preview .pa-row-copy { min-width: 0; flex: 1; }
+#pa-settings-preview .pa-row-title { font-weight: 500; }
+#pa-settings-preview .pa-description { font-size: 12px; color: var(--pa-muted); margin-top: 4px; overflow-wrap: anywhere; }
+#pa-settings-preview .pa-quiet-line { color: var(--pa-muted); font-size: 12px; padding-top: 2px; }
+#pa-settings-preview .pa-exception { color: var(--pa-text); display: flex; align-items: flex-start; gap: 7px; margin-top: 8px; font-size: 12px; }
+#pa-settings-preview .pa-exception svg { color: var(--pa-accent); }
+#pa-settings-preview .pa-row-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; flex-shrink: 0; }
+#pa-settings-preview .pa-setting-block { margin: 0 0 25px; }
+#pa-settings-preview .pa-setting-label { display: block; font-weight: 500; margin-bottom: 8px; }
+#pa-settings-preview .pa-input-line { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+#pa-settings-preview .pa-input-line select { flex: 1; }
+#pa-settings-preview input:not([type=checkbox]), #pa-settings-preview select { color: var(--pa-text); background: var(--pa-surface); border: 1px solid var(--pa-line); border-radius: 6px; min-height: 36px; padding: 7px 10px; min-width: 0; width: 100%; max-width: 100%; }
+#pa-settings-preview input::placeholder { color: var(--pa-muted); }
+#pa-settings-preview input[readonly] { background: var(--pa-soft); color: var(--pa-muted); }
+#pa-settings-preview .pa-current-models { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 7px 18px; margin-top: 14px; font-size: 12px; }
+#pa-settings-preview .pa-current-models dt { color: var(--pa-muted); }
+#pa-settings-preview .pa-current-models dd { margin: 0; overflow-wrap: anywhere; }
+#pa-settings-preview .pa-inner-details { margin: 22px 0; border-top: 1px solid var(--pa-line); border-bottom: 1px solid var(--pa-line); }
+#pa-settings-preview .pa-inner-details > summary { min-height: 54px; display: flex; align-items: center; gap: 10px; padding: 12px 0; }
+#pa-settings-preview .pa-inner-details > summary > span:nth-child(2) { flex: 1; font-weight: 500; }
+#pa-settings-preview .pa-disclosure-meta { color: var(--pa-muted); font-size: 12px; }
+#pa-settings-preview .pa-inner-body { padding: 0 0 18px 26px; }
+#pa-settings-preview .pa-purpose-row { padding: 13px 0; border-top: 1px solid var(--pa-line); }
+#pa-settings-preview .pa-purpose-row:first-child { padding-top: 0; border-top: 0; }
+#pa-settings-preview .pa-purpose-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+#pa-settings-preview .pa-purpose-title label { font-weight: 500; }
+#pa-settings-preview .pa-impact { border-left: 2px solid var(--pa-accent); padding: 1px 0 2px 14px; margin: 16px 0 20px; }
+#pa-settings-preview .pa-impact-title { font-weight: 500; font-size: 13px; margin-bottom: 8px; }
+#pa-settings-preview .pa-impact-row { display: flex; justify-content: space-between; gap: 15px; font-size: 12px; margin: 5px 0; }
+#pa-settings-preview .pa-impact-row span:last-child { text-align: right; overflow-wrap: anywhere; }
+#pa-settings-preview .pa-impact p { font-size: 12px; color: var(--pa-muted); margin-top: 9px; }
+#pa-settings-preview .pa-action-bar { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; margin: 16px 0 25px; }
+#pa-settings-preview .pa-section-header { display: flex; justify-content: space-between; gap: 15px; align-items: center; margin: 25px 0 10px; }
+#pa-settings-preview .pa-section-title { font-weight: 500; }
+#pa-settings-preview .pa-connection-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#pa-settings-preview .pa-key-label { font-size: 12px; color: var(--pa-muted); font-weight: 400; }
+#pa-settings-preview .pa-field { margin-bottom: 17px; }
+#pa-settings-preview .pa-field label { display: block; font-size: 13px; margin-bottom: 6px; font-weight: 500; }
+#pa-settings-preview .pa-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+#pa-settings-preview .pa-field-wide { grid-column: 1 / -1; }
+#pa-settings-preview .pa-fields .pa-field { min-width: 0; }
+#pa-settings-preview .pa-readonly { color: var(--pa-muted); overflow-wrap: anywhere; font-size: 12px; }
+#pa-settings-preview .pa-edit-section { border-top: 1px solid var(--pa-line); padding-top: 20px; margin-top: 22px; }
+#pa-settings-preview .pa-edit-section > h3 { margin-bottom: 16px; }
+#pa-settings-preview .pa-switch { appearance: none; width: 32px; height: 19px; flex-shrink: 0; border: 0; border-radius: 12px; background: var(--pa-line); position: relative; margin: 8px 0; }
+#pa-settings-preview .pa-switch::after { content: ""; position: absolute; width: 13px; height: 13px; left: 3px; top: 3px; border-radius: 100%; background: var(--pa-surface); transition: transform 140ms ease; }
+#pa-settings-preview .pa-switch:checked { background: var(--pa-accent-fill); }
+#pa-settings-preview .pa-switch:checked::after { transform: translateX(13px); background: var(--pa-accent-text); }
+#pa-settings-preview .pa-feedback { min-height: 20px; margin-top: 18px; color: var(--pa-muted); font-size: 12px; }
+#pa-settings-preview .pa-empty { padding: 4px 0 10px; }
+#pa-settings-preview .pa-empty p { color: var(--pa-muted); font-size: 13px; margin-bottom: 16px; }
+#pa-settings-preview .pa-inline-note { background: var(--pa-soft); color: var(--pa-muted); border-radius: 6px; padding: 11px 13px; font-size: 12px; margin: 16px 0; }
+#pa-settings-preview .pa-check-line { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 14px 0; }
+#pa-settings-preview .pa-settings-footer { display: flex; gap: 18px; padding-top: 20px; color: var(--pa-muted); font-size: 12px; }
+#pa-settings-preview.pa-phone .pa-window { max-width: 390px; grid-template-columns: minmax(0, 1fr); }
+#pa-settings-preview.pa-phone .pa-host-sidebar { display: none; }
+#pa-settings-preview.pa-phone .pa-main { padding: 22px 18px; }
+#pa-settings-preview.pa-phone .pa-fields { grid-template-columns: 1fr; }
+#pa-settings-preview.pa-phone .pa-row { gap: 12px; }
+#pa-settings-preview.pa-phone input:not([type=checkbox]), #pa-settings-preview.pa-phone select { font-size: 16px; min-height: 44px; }
+#pa-settings-preview.pa-phone .pa-button, #pa-settings-preview.pa-phone .pa-text-button { min-height: 44px; }
+#pa-settings-preview.pa-phone .pa-disclosure-meta { display: none; }
+@media(max-width:680px) {
+  #pa-settings-preview .pa-window { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  #pa-settings-preview .pa-host-sidebar { display: none; }
+  #pa-settings-preview .pa-main { padding: 22px 18px; }
+  #pa-settings-preview .pa-product-header { font-size: 19px; }
+  #pa-settings-preview .pa-fields { grid-template-columns: 1fr; }
+  #pa-settings-preview input:not([type=checkbox]), #pa-settings-preview select { font-size: 16px; min-height: 44px; }
+  #pa-settings-preview .pa-button, #pa-settings-preview .pa-text-button { min-height: 44px; }
+  #pa-settings-preview .pa-row { gap: 12px; }
+  #pa-settings-preview .pa-row-actions { gap: 4px; }
+  #pa-settings-preview .pa-disclosure-meta { display: none; }
+  #pa-settings-preview .pa-group-body { padding-left: 26px; }
+}
+@media(prefers-reduced-motion:reduce) { #pa-settings-preview .pa-chevron, #pa-settings-preview .pa-switch::after { transition: none; } }
+</style>
+<script>
+(() => {
+  const root = document.getElementById('pa-settings-preview');
+  const view = root.querySelector('#pa-preview-view');
+  const feedback = root.querySelector('#pa-preview-feedback');
+  const clone = value => JSON.parse(JSON.stringify(value));
+  const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const icon = name => `<i data-lucide="${name}" aria-hidden="true"></i>`;
+  const button = (label, action, cls = '', attrs = '') => `<button type="button" class="pa-button cursor-interaction ${cls}" data-action="${action}" ${attrs}>${label}</button>`;
+  const textButton = (label, action, cls = '', attrs = '') => `<button type="button" class="pa-text-button cursor-interaction ${cls}" data-action="${action}" ${attrs}>${label}</button>`;
+  const openButton = (action, name, attrs = '') => button(`打开 ${icon('chevron-right')}`, action, '', `aria-label="打开${name}" ${attrs}`);
+  const purposes = ['chat','memory','image'];
+  const labels = {chat:'聊天', memory:'笔记检索', image:'图片'};
+  const initialConnections = [
+    {id:'openai', name:'OpenAI', provider:'OpenAI', key:true, chat:'gpt-6.1-terra', memory:'text-embedding-3-large', image:'gpt-image-2.5-flare', policy:'', sourceImage:'', endpoint:'https://api.openai.com/v1'},
+    {id:'dashscope', name:'DashScope', provider:'DashScope · 北京', key:true, chat:'qwen-plus', memory:'text-embedding-v4', image:'wan2.6-t2i', policy:'', sourceImage:'', endpoint:'https://dashscope.aliyuncs.com/compatible-mode/v1'}
+  ];
+  const design = {scene:'configured', viewport:'desktop', appearance:'system'};
+  let connections = clone(initialConnections);
+  let config = {defaultId:'openai', bindings:{chat:'inherit',memory:'inherit',image:'inherit'}};
+  let selection = clone(config);
+  let route = 'overview';
+  let currentEditor = null;
+  let editorOrigin = 'ai';
+  let editorOriginal = null;
+  let editorDraft = null;
+  let editorDrafts = {};
+  let groupState = {ai:true,preferences:false,notes:false,advanced:false};
+  let independentOpen = false;
+  let genericPage = 'graph';
+  let genericDrafts = {};
+  let returnFocus = 'open-ai';
+  let toggleState = {pagelet:true,capture:true,memory:true,hints:false};
+  let nextId = 1;
+  let lastPublished = '';
+  const find = id => connections.find(c => c.id === id);
+  const resolve = (c,p) => find(c.bindings[p] === 'inherit' ? c.defaultId : c.bindings[p]);
+  const serviceName = c => c ? c.name : '尚未配置';
+  const memorySignature = c => c ? [c.provider,c['endpoint-memory']??c.endpoint,c.memory].join('|') : '';
+  let preparedProfiles = [memorySignature(initialConnections[0])];
+  const memoryReady = () => preparedProfiles.includes(memorySignature(resolve(config,'memory')));
+  const providerPresets = [
+    {...initialConnections[0],id:'',name:'',key:false},
+    {...initialConnections[1],id:'',name:'',key:false,chat:'qwen3.6-plus',image:'wan2.7-image'},
+    {...initialConnections[1],id:'',name:'',key:false,provider:'DashScope · 国际',chat:'qwen3.6-plus',image:'wan2.7-image',endpoint:'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'},
+    {id:'',name:'',key:false,provider:'自定义（OpenAI 兼容）',chat:'',memory:'',image:'',policy:'',sourceImage:'',endpoint:''}
+  ];
+  const hasChanges = () => JSON.stringify(config) !== JSON.stringify(selection);
+  function snapshot() {
+    if (!window.openai?.setWidgetState) return;
+    const saved={modelContent:{proposal:'Settings 总览与独立 AI 详情',scene:design.scene,viewport:design.viewport,appearance:design.appearance,screen:route},privateContent:{design,connections,config,groupState,route:route==='edit'?'ai':route,genericPage,toggleState,preparedProfiles}};
+    lastPublished=JSON.stringify(saved);
+    window.openai.setWidgetState(saved).catch(()=>{});
+  }
+  function restore(saved) {
+    const p = saved?.privateContent;
+    if (!p?.config || !Array.isArray(p.connections)) return;
+    connections = p.connections; config = p.config; selection = clone(config);
+    Object.assign(design,p.design || {}); groupState = p.groupState || groupState;
+    preparedProfiles=p.preparedProfiles??(design.scene==='empty'?[]:[memorySignature(initialConnections[0])]);
+    route = ['overview','ai','generic'].includes(p.route) ? p.route : 'overview';
+    genericPage = p.genericPage || 'graph'; toggleState = p.toggleState || toggleState;
+  }
+  function appearance() {
+    root.classList.toggle('pa-phone',design.viewport==='phone');
+    root.style.colorScheme = design.appearance === 'system' ? '' : design.appearance;
+    root.querySelector('#pa-demo-scene').value=design.scene;
+  }
+  function group(id,title,summary,body) {
+    return `<details class="pa-group" data-group="${id}" ${groupState[id]?'open':''}><summary class="cursor-interaction"><span class="pa-chevron">${icon('chevron-right')}</span><span class="pa-summary-copy"><span class="pa-summary-title">${title}</span><span class="pa-summary-desc">${summary}</span></span></summary><div class="pa-group-body">${body}</div></details>`;
+  }
+  function row(title,description,control) {
+    return `<div class="pa-row"><div class="pa-row-copy"><div class="pa-row-title">${title}</div>${description?`<div class="pa-description">${description}</div>`:''}</div><div class="pa-row-actions">${control}</div></div>`;
+  }
+  function switchControl(name,key) {
+    return `<input class="pa-switch cursor-interaction" type="checkbox" data-toggle="${key}" aria-label="${name}" ${toggleState[key]?'checked':''}>`;
+  }
+  function exceptions() { return purposes.filter(p=>config.bindings[p]!=='inherit'); }
+  function overview() {
+    const def = find(config.defaultId);
+    const exceptionsText = exceptions().map(p=>`${labels[p]}单独使用 ${serviceName(resolve(config,p))}`).join('；');
+    const keyText = def ? def.key?'此设备 Key 已保存':'此设备未配置 Key' : '选择服务后即可开始';
+    const aiBody = def ? row(escape(def.name),keyText,openButton('open-ai','AI 配置')) + `<div class="pa-quiet-line">${exceptions().length===3?'当前三项均独立设置。':exceptions().length ? '其余功能跟随默认服务。' : '聊天、笔记检索与图片均跟随默认服务。'}</div>${exceptionsText?`<div class="pa-exception">${icon('git-branch')}<span>${escape(exceptionsText)}</span></div>`:''}${resolve(config,'image')?.provider.startsWith('自定义')?'<div class="pa-exception">图片：此服务尚未接入图片功能。</div>':''}`
+      : `<div class="pa-empty"><p>配置一个默认服务，聊天、笔记检索和图片即可共用。</p>${button(`添加默认服务 ${icon('chevron-right')}`,'first-setup','pa-primary')}</div>`;
+    return group('ai','AI 连接',def?`${escape(def.name)} · ${keyText}${exceptionsText?' · 有独立用途':''}`:'尚未配置',aiBody)
+      + group('preferences','使用偏好',`Pagelet ${toggleState.pagelet?'已开启':'已关闭'} · 按功能调整`,
+        row('Pagelet','让相关笔记在需要时浮现。',switchControl('启用 Pagelet','pagelet'))
+        +row('快速捕获','记录位置与后处理。',openButton('generic','快速捕获','data-page="capture"'))
+        +row('图谱','打开方式、显示内容与配色。',openButton('generic','图谱设置','data-page="graph"'))
+        +row('图片默认选项','来源型图片的默认模型与数量。',openButton('generic','图片默认选项','data-page="images"'))
+        +row('使用 PA 标签样式','为笔记标签应用柔和配色。',switchControl('使用 PA 标签样式','tags'))
+        +row('建议保存有用的结论','在合适的时候提供保存建议。',switchControl('建议保存有用的结论','suggestions'))
+        +row('笔记库统计','统计口径、动画与历史同步。',openButton('generic','笔记库统计','data-page="statistics"'))
+        +row('Ghost 发布','站点与发布选项。',openButton('generic','Ghost 发布','data-page="ghost"')))
+      +group('notes','笔记与隐私',`Memory ${toggleState.memory?'已开启':'已关闭'} · 来源与保存位置`,
+        row('使用笔记中的 Memory','用于回答的笔记记忆。',switchControl('使用笔记中的 Memory','memory'))
+        +row('Memory 与个性化','当前理解、来源及最近变化。',openButton('generic','Memory 与个性化','data-page="memory"'))
+        +row('PA 可使用的笔记','排除范围与生成笔记策略。',openButton('generic','笔记范围','data-page="scope"'))
+        +row('保存位置与格式','笔记、图片与回顾的保存方式。',openButton('generic','保存位置','data-page="storage"'))
+        +row('聊天图片','原图、存储用量与清理。',openButton('generic','聊天图片','data-page="chat-images"')))
+      +group('advanced','高级与维护','Memory 维护 · 诊断与关于',
+        row('Memory 维护','更新、检查与恢复本地 Memory。',openButton('generic','Memory 维护','data-page="maintenance"'))
+        +row('诊断与关于','诊断设置、隐私及开源许可。',openButton('generic','诊断与关于','data-page="about"')));
+  }
+  function connectionOptions(value,inherit=false) {
+    return `${inherit?`<option value="inherit" ${value==='inherit'?'selected':''}>跟随默认服务</option>`:''}${connections.map(c=>`<option value="${c.id}" ${value===c.id?'selected':''}>${escape(c.name)}</option>`).join('')}`;
+  }
+  function models(c) {
+    if (!c) return '';
+    return `<dl class="pa-current-models">${purposes.map(p=>`<dt>${labels[p]}</dt><dd>${escape(c[p]||'尚未配置模型')}</dd>`).join('')}</dl>`;
+  }
+  function impactContent() {
+    if (!hasChanges()) return '';
+    const affected = purposes.filter(p=>resolve(config,p)?.id !== resolve(selection,p)?.id);
+    const memoryChanged = affected.includes('memory');
+    const changedDefaults = selection.defaultId !== config.defaultId;
+    const bindingChanged = purposes.filter(p=>selection.bindings[p]!==config.bindings[p]);
+    const effects = affected.map(p=>`<div class="pa-impact-row"><span>${labels[p]}</span><span>${escape(serviceName(resolve(config,p)))} → ${escape(serviceName(resolve(selection,p)))}</span></div>`).join('');
+    const sameBinding = bindingChanged.filter(p=>!affected.includes(p)).map(p=>`<div class="pa-impact-row"><span>${labels[p]}</span><span>${selection.bindings[p]==='inherit'?'改为跟随默认':'改为独立指定'} · 当前服务不变</span></div>`).join('');
+    return `<div class="pa-impact"><div class="pa-impact-title">应用后将发生的变化</div>${effects}${sameBinding}${!affected.length&&changedDefaults?'<p>只更改默认服务；现有独立用途保持不变。</p>':''}${memoryChanged?'<p>笔记检索将切换服务。已有 Memory 保留；应用后检查可复用数据，不会自动开始准备。</p>':''}</div><div class="pa-action-bar">${button('取消更改','cancel-selection')}${button('应用更改','apply-selection','pa-primary')}</div>`;
+  }
+  function usageFor(id) {
+    return purposes.filter(p=>resolve(config,p)?.id===id).map(p=>labels[p]).join('、');
+  }
+  function ai() {
+    if (!connections.length) return `${textButton(`${icon('arrow-left')} 返回设置`,'back-overview','pa-back')}<div class="pa-page-heading"><h2>AI 配置</h2></div><div class="pa-empty"><p>保存一个服务连接，作为聊天、笔记检索和图片的默认服务。</p>${button('添加默认服务','first-setup','pa-primary')}</div>`;
+    const current = find(config.defaultId);
+    const chosen = find(selection.defaultId);
+    const bindingRows = purposes.map(p=>{
+      const bound = resolve(selection,p);
+      return `<div class="pa-purpose-row"><div class="pa-purpose-title"><label for="pa-purpose-${p}">${labels[p]}${p==='memory'?'（Memory）':''}</label>${bound?textButton('编辑连接','edit-connection','pa-link',`data-id="${bound.id}" aria-label="编辑${labels[p]}使用的连接"`):''}</div><select id="pa-purpose-${p}" data-binding="${p}">${connectionOptions(selection.bindings[p],true)}</select>${p==='memory'?'<div class="pa-description">仅用于笔记准备和检索；对话中的学习仍使用聊天服务。</div>':''}</div>`;
+    }).join('');
+    return `${textButton(`${icon('arrow-left')} 返回设置`,'back-overview','pa-back')}
+      <div class="pa-page-heading"><h2>AI 配置</h2><p>一个默认服务，按需为个别功能单独选择。</p></div>
+      <div class="pa-setting-block"><label class="pa-setting-label" for="pa-default-service">默认 AI 服务</label><div class="pa-input-line"><select id="pa-default-service">${connectionOptions(selection.defaultId)}</select>${textButton('编辑连接','edit-connection','pa-link',`data-id="${chosen?.id||''}" aria-label="编辑默认服务连接"`)}</div><div class="pa-description" id="pa-default-key">${chosen?.key?'此设备 Key 已保存':'此设备尚未配置 Key'}</div><div id="pa-default-models">${models(chosen)}</div></div>
+      <details class="pa-inner-details" id="pa-independent" ${independentOpen?'open':''}><summary class="cursor-interaction"><span class="pa-chevron">${icon('chevron-right')}</span><span>为个别功能单独选择</span><span class="pa-disclosure-meta">${exceptions().length?`${exceptions().length} 项已独立设置`:'当前全部跟随默认'}</span></summary><div class="pa-inner-body">${bindingRows}</div></details>
+      ${exceptions().length?`<p class="pa-quiet-line">已生效：${exceptions().map(p=>`${labels[p]} → ${escape(serviceName(resolve(config,p)))}（独立）`).join('；')}</p>`:''}
+      <div id="pa-selection-impact" aria-live="polite">${impactContent()}</div>
+      <div class="pa-section-header"><h3>已保存的连接</h3>${textButton(`${icon('plus')} 添加连接`,'add-connection','pa-link')}</div>
+      ${connections.map(c=>row(`<span class="pa-connection-name">${escape(c.name)}<span class="pa-key-label">${c.key?'Key 已保存':'此设备未配置 Key'}</span></span>`,`${usageFor(c.id)?`用于${escape(usageFor(c.id))}`:'当前未使用'}${c.id===current?.id?' · 默认服务':''}`,textButton('编辑','edit-connection','pa-link',`data-id="${c.id}" aria-label="编辑 ${escape(c.name)}"`))).join('')}
+      ${toggleState.memory?`<div class="pa-row"><div class="pa-row-copy"><div class="pa-description">${memoryReady()?'当前笔记检索可复用已有 Memory。':'当前服务的笔记检索尚需准备；已有 Memory 保留。'}</div></div>${textButton('查看 Memory','generic','pa-link','data-page="maintenance" data-from="ai"')}</div>`:''}`;
+  }
+  function field(id,label,value,placeholder='',wide=false,type='text') {
+    return `<div class="pa-field ${wide?'pa-field-wide':''}"><label for="pa-edit-${id}">${label}</label><input id="pa-edit-${id}" data-field="${id}" type="${type}" value="${escape(value)}" placeholder="${escape(placeholder)}" ${type==='password'?'autocomplete="off"':''}></div>`;
+  }
+  function editor() {
+    const d = editorDraft; if (!d) return '';
+    const isNew = !currentEditor;
+    const title = isNew?'添加连接':`编辑 ${escape(editorOriginal.name)}`;
+    const provider = isNew?`<div class="pa-field pa-field-wide"><label for="pa-new-provider">AI 服务</label><select id="pa-new-provider">${providerPresets.map(p=>`<option value="${p.provider}" ${d.provider===p.provider?'selected':''}>${p.provider}</option>`).join('')}</select></div>`
+      : `<div class="pa-field pa-field-wide"><span class="pa-description">${escape(d.provider)} · ${d.key?'此设备 Key 已保存':'此设备尚未配置 Key'}</span></div>`;
+    return `${textButton(`${icon('arrow-left')} ${editorOrigin==='overview'?'返回设置':'返回 AI 配置'}`,'editor-back','pa-back')}
+      <div class="pa-page-heading"><h2>${title}</h2><p>${isNew?'先保存服务与 Key，模型可使用预设。':'修改模型和凭据，不改变功能的连接选择。'}</p></div>
+      <div class="pa-fields">${provider}${isNew?'':field('name','连接名称',d.name,'自动命名',true)}${field('key','API Key','',d.key?'留空保留当前 Key · 仅填写示例值':'仅填写示例值',true,'password')}</div>
+      ${isNew?`<details class="pa-inner-details"><summary class="cursor-interaction"><span class="pa-chevron">${icon('chevron-right')}</span><span>调整模型</span><span class="pa-disclosure-meta">${d.provider.startsWith('自定义')?'按用途填写':'已填入服务预设'}</span></summary><div class="pa-inner-body">`:'<div class="pa-edit-section"><h3>模型</h3>'}<div class="pa-fields">${field('chat','聊天',d.chat,'',true)}${field('memory','笔记检索',d.memory)}${d.provider.startsWith('自定义')?'<p class="pa-description">此服务当前不提供图片功能。</p>':field('image','图片',d.image)}</div>${isNew?'</div></details>':'</div>'}
+      <details class="pa-inner-details" id="pa-editor-advanced"><summary class="cursor-interaction"><span class="pa-chevron">${icon('chevron-right')}</span><span>高级选项</span><span class="pa-disclosure-meta">API 地址与专用模型</span></summary><div class="pa-inner-body">
+      ${isNew?field('name','连接名称（可选）',d.name,'自动命名',true):''}
+      ${purposes.filter(p=>p!=='image'||!d.provider.startsWith('自定义')).map(p=>{const endpoint=d['endpoint-'+p]??(p==='image'&&d.provider.startsWith('DashScope')?d.endpoint.replace('/compatible-mode/v1','/api/v1'):d.endpoint);return isNew?field('endpoint-'+p,`${labels[p]} API 地址`,endpoint,'https://…',true):`<div class="pa-field"><div class="pa-setting-label">${labels[p]} API 地址</div><p class="pa-readonly">${escape(endpoint)}</p></div>`;}).join('')}
+      ${!isNew?'<p class="pa-description">更换服务、地区或地址，请添加新连接。</p><br>':''}
+      ${field('policy','Policy 模型',d.policy,'留空跟随聊天模型',true)}${d.provider.startsWith('自定义')?'':field('sourceImage','来源型图片模型',d.sourceImage,'留空跟随图片模型',true)}${d.provider.startsWith('DashScope')?`<label class="pa-check-line">思考模式<input type="checkbox" class="pa-switch cursor-interaction" data-option="thinking" ${d.thinking?'checked':''}></label><label class="pa-check-line">内置网络搜索<input type="checkbox" class="pa-switch cursor-interaction" data-option="search" ${d.search?'checked':''}></label>`:''}</div></details>
+      ${currentEditor?`<div class="pa-description">${usageFor(currentEditor)?`当前用于：${escape(usageFor(currentEditor))}`:'当前未用于任何功能'}。模型修改会影响使用此连接的相应用途。</div>`:''}
+      <div id="pa-editor-impact" aria-live="polite"></div>
+      <div class="pa-action-bar">${button('取消','editor-cancel')}${button(isNew&&editorOrigin==='overview'?'保存并设为默认':'保存连接','save-connection','pa-primary')}</div>
+      ${currentEditor?`<details class="pa-inner-details"><summary class="cursor-interaction"><span class="pa-chevron">${icon('chevron-right')}</span><span>移除与删除</span></summary><div class="pa-inner-body"><p class="pa-description">笔记、已准备的 Memory 与已保存图片保留。</p><div class="pa-input-line">${textButton('移除 API Key','key-removal','pa-danger')}${textButton('删除连接','delete-connection','pa-danger')}</div><div id="pa-destructive-preview" aria-live="polite"></div></div></details>`:''}`;
+  }
+  const pageNames = {graph:'图谱设置',capture:'快速捕获',images:'图片默认选项',statistics:'笔记库统计',ghost:'Ghost 发布','chat-images':'聊天图片',memory:'Memory 与个性化',scope:'PA 可使用的笔记',storage:'保存位置与格式',maintenance:'Memory 维护',about:'诊断与关于'};
+  function generic() {
+    const g = genericPage;
+    const back = genericDrafts.from==='ai'?'back-ai':'back-overview';
+    const header = `${textButton(`${icon('arrow-left')} ${back==='back-ai'?'返回 AI 配置':'返回设置'}`,back,'pa-back')}<div class="pa-page-heading"><h2>${pageNames[g]}</h2></div>`;
+    if (g==='graph') return header + `<div class="pa-field"><label for="pa-graph-depth">显示深度</label><select id="pa-graph-depth"><option>1 层</option><option selected>2 层</option><option>3 层</option></select></div>${row('显示标签','',`<input type="checkbox" class="pa-switch cursor-interaction" aria-label="显示标签" checked>`)}${row('显示附件','',`<input type="checkbox" class="pa-switch cursor-interaction" aria-label="显示附件" checked>`)}<details class="pa-inner-details"><summary class="cursor-interaction"><span class="pa-chevron">${icon('chevron-right')}</span><span>配色与打开方式</span></summary><div class="pa-inner-body"><div class="pa-field"><label for="pa-graph-open">打开方式</label><select id="pa-graph-open"><option>标签页</option><option>悬浮窗口</option></select></div><p class="pa-description">悬浮窗口初始尺寸自动适配。</p></div></details><div class="pa-action-bar">${button('取消',back)}${button('保存','save-generic','pa-primary')}</div>`;
+    if (g==='maintenance'||g==='memory') return header+row('当前笔记检索服务',escape(serviceName(resolve(config,'memory'))),'')+`<div class="pa-inline-note">${!toggleState.memory?'Memory 已关闭。':memoryReady()?'当前配置可复用已有 Memory。':'此服务的 Memory 尚需准备，已有 Memory 会保留。'}</div><p class="pa-description">准备时可能向配置的 AI 服务发送笔记文本并使用额度；不会修改或删除笔记。</p><div class="pa-action-bar">${button('返回',back)}${toggleState.memory&&!memoryReady()?button('准备 Memory','prepare-demo'):''}</div>`;
+    return header+`<div class="pa-inline-note">此处展示统一详情页与返回路径。该功能的现有配置和操作在实施时保留。</div>${textButton(`${icon('arrow-left')} 返回设置`,'back-overview','pa-link')}`;
+  }
+  function render(focusAction) {
+    appearance(); feedback.textContent='';
+    view.innerHTML = route==='overview'?overview():route==='ai'?ai():route==='edit'?editor():generic();
+    if (globalThis.lucide) globalThis.lucide.createIcons({attrs:{width:16,height:16}});
+    if (focusAction) view.querySelector(`[data-action="${focusAction}"]`)?.focus({preventScroll:true});
+  }
+  function updateImpact() {
+    const target = view.querySelector('#pa-selection-impact');
+    if (target) target.innerHTML=impactContent();
+    const chosen = find(selection.defaultId);
+    const modelTarget = view.querySelector('#pa-default-models');
+    if (modelTarget) modelTarget.innerHTML=models(chosen);
+    const keyTarget = view.querySelector('#pa-default-key');
+    if (keyTarget) keyTarget.textContent=chosen?.key?'此设备 Key 已保存':'此设备尚未配置 Key';
+    const defaultEdit = view.querySelector('[aria-label="编辑默认服务连接"]');
+    if (defaultEdit) defaultEdit.dataset.id=chosen?.id||'';
+    for (const p of purposes) {
+      const edit = view.querySelector(`[aria-label="编辑${labels[p]}使用的连接"]`);
+      if (edit) edit.dataset.id=resolve(selection,p)?.id||'';
+    }
+  }
+  function enterEditor(id,origin='ai') {
+    currentEditor=id||null; editorOrigin=origin; editorOriginal=id?clone(find(id)):null;
+    const draftKey=id||'new';
+    editorDraft=clone(editorDrafts[draftKey] || editorOriginal || {...initialConnections[0],id:'',name:'',key:false});
+    route='edit'; render('editor-back'); snapshot();
+  }
+  function leaveEditor(cancel=false) {
+    if (cancel) delete editorDrafts[currentEditor||'new'];
+    else editorDrafts[currentEditor||'new']=clone(editorDraft);
+    route=editorOrigin==='overview'?'overview':'ai'; editorDraft=null; render(route==='ai'?'back-overview':'open-ai'); snapshot();
+  }
+  root.addEventListener('toggle', e=>{
+    if (e.target.dataset.group) groupState[e.target.dataset.group]=e.target.open;
+    if (e.target.id==='pa-independent') independentOpen=e.target.open;
+  },true);
+  root.addEventListener('change',e=>{
+    const el=e.target;
+    if (el.id==='pa-default-service') {selection.defaultId=el.value;updateImpact();}
+    if (el.dataset.binding) {selection.bindings[el.dataset.binding]=el.value;updateImpact();}
+    if (el.dataset.toggle) {toggleState[el.dataset.toggle]=el.checked;snapshot();}
+    if (el.id==='pa-new-provider') {
+      const preset=providerPresets.find(c=>c.provider===el.value);
+      editorDraft={...clone(preset),id:'',name:editorDraft.name,key:false};render('editor-back');
+    }
+    if (el.dataset.option&&editorDraft)editorDraft[el.dataset.option]=el.checked;
+    if (el.id==='pa-demo-scene'){design.scene=el.value;changeDesign();}
+  });
+  root.addEventListener('input',e=>{
+    const f=e.target.dataset.field;
+    if (!f||!editorDraft||f==='key') return;
+    editorDraft[f]=e.target.value;
+    const changed=currentEditor && resolve(config,'memory')?.id===currentEditor && editorDraft.memory!==editorOriginal.memory;
+    view.querySelector('#pa-editor-impact').innerHTML=changed?'<div class="pa-impact"><div class="pa-impact-title">笔记检索模型将改变</div><p>保存后检查兼容的 Memory；保留已有数据，不会自动准备。</p></div>':'';
+  });
+  root.addEventListener('click',e=>{
+    const el=e.target.closest('[data-action]'); if(!el)return;
+    const action=el.dataset.action;
+    if(action==='open-ai'){route='ai';selection=clone(config);render('back-overview');snapshot();}
+    if(action==='back-overview'){route='overview';selection=clone(config);render(returnFocus);snapshot();}
+    if(action==='back-ai'){route='ai';render('back-overview');snapshot();}
+    if(action==='first-setup')enterEditor(null,'overview');
+    if(action==='add-connection')enterEditor(null,'ai');
+    if(action==='edit-connection')enterEditor(el.dataset.id,'ai');
+    if(action==='editor-back')leaveEditor(false);
+    if(action==='editor-cancel')leaveEditor(true);
+    if(action==='cancel-selection'){selection=clone(config);render();view.querySelector('#pa-default-service')?.focus();}
+    if(action==='apply-selection'){
+      const changedMemory=resolve(config,'memory')?.id!==resolve(selection,'memory')?.id;
+      config=clone(selection);render();view.querySelector('#pa-default-service')?.focus();feedback.textContent='已应用选择。'+(changedMemory?(memoryReady()?'已找到可复用的 Memory。':'未开始准备 Memory。'):'');snapshot();
+    }
+    if(action==='save-connection'){
+      const keyFilled=Boolean(view.querySelector('#pa-edit-key').value.trim());
+      const saved={...editorDraft,name:editorDraft.name.trim()||editorDraft.provider.split(' · ')[0],key:keyFilled||editorDraft.key};
+      if(currentEditor){
+        connections=connections.map(c=>c.id===currentEditor?saved:c);
+      }else{const baseName=saved.name;let suffix=2;while(connections.some(c=>c.name===saved.name))saved.name=`${baseName} ${suffix++}`;while(find(`sample-${nextId}`))nextId++;saved.id=`sample-${nextId++}`;connections.push(saved);if(editorOrigin==='overview'){config.defaultId=saved.id;selection=clone(config);}}
+      delete editorDrafts[currentEditor||'new'];route='ai';editorDraft=null;render('back-overview');feedback.textContent='示例连接已保存。'+(saved.key?'Key 已保存不代表已验证连接。':'此设备尚未配置 Key。');snapshot();
+    }
+    if(action==='key-removal'||action==='delete-connection'){
+      const t=view.querySelector('#pa-destructive-preview');
+      t.innerHTML=`<div class="pa-inline-note">${action==='key-removal'?'移除前将说明连接需要重新填写 Key；其他连接、笔记和已有 Memory 不受影响。':'删除前将列出受影响用途与未完成任务，并提供替代连接选择。'}<br>此预览只展示操作位置，不执行移除或删除。</div>`;
+    }
+    if(action==='generic'){
+      genericPage=el.dataset.page;genericDrafts.from=el.dataset.from||'overview';route='generic';returnFocus='generic';render(genericDrafts.from==='ai'?'back-ai':'back-overview');snapshot();
+    }
+    if(action==='save-generic'){route='overview';render('generic');feedback.textContent='已保存示例偏好。';snapshot();}
+    if(action==='prepare-demo')feedback.textContent='预览未调用 AI 服务，也未准备或修改任何 Memory。';
+  });
+  function changeDesign() {
+    if (design.scene!==root.dataset.scene) {
+      root.dataset.scene=design.scene;connections=design.scene==='empty'?[]:clone(initialConnections);
+      preparedProfiles=design.scene==='empty'?[]:[memorySignature(initialConnections[0])];
+      config={defaultId:design.scene==='empty'?null:'openai',bindings:design.scene==='all-separate'?{chat:'openai',memory:'openai',image:'dashscope'}:{chat:'inherit',memory:'inherit',image:design.scene==='separate'?'dashscope':'inherit'}};
+      selection=clone(config);route='overview';editorDraft=null;editorDrafts={};independentOpen=design.scene==='separate'||design.scene==='all-separate';groupState.ai=true;
+    }
+    render();snapshot();
+  }
+  restore(window.openai?.widgetState);root.dataset.scene=design.scene;render();
+  window.addEventListener('openai:set_globals',event=>{
+    const saved=event.detail?.globals?.widgetState;
+    if(saved&&JSON.stringify(saved)!==lastPublished){restore(saved);root.dataset.scene=design.scene;render();}
+  });
+  if(globalThis.Tweak){
+    const tweak=new Tweak({container:root,onChange:changeDesign});
+    tweak.addSelect(design,'viewport',{label:'预览宽度',options:[{label:'桌面设置',value:'desktop'},{label:'手机窄屏',value:'phone'}]});
+    tweak.addSelect(design,'appearance',{label:'外观',options:[{label:'跟随系统',value:'system'},{label:'浅色',value:'light'},{label:'深色',value:'dark'}]});
+  }
+})();
+</script>

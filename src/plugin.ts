@@ -1177,6 +1177,7 @@ export class PluginManager extends Plugin {
             scheduleMemoryExtractionAfterChatTurn: (conversationId, turnCount) =>
                 this.scheduleMemoryExtractionAfterChatTurn(conversationId, turnCount),
             openMemorySettings: (claimId) => this.openMemorySettings(claimId),
+            openAISettings: (target) => this.openAISettings(target),
             completeAISetup: (input) => this.completeAISetup(input),
         },
         writingStyleRuntime: {
@@ -4555,8 +4556,15 @@ export class PluginManager extends Plugin {
     private openMemorySettings(targetId?: string): void {
         openSettings(this.app);
         openSettingsTab(this.app, "personal-assistant");
-        this.settingTab.openGroup("memory-personalization", targetId);
-        setPlatformTimeout(() => this.settingTab.openGroup("memory-personalization", targetId), 0);
+        this.settingTab.openGroup("memory-personalization", targetId, { external: true });
+        setPlatformTimeout(() => this.settingTab.openGroup("memory-personalization", targetId, { external: true }), 0);
+    }
+
+    private openAISettings(target: "chat" | "embedding" | "image" = "chat"): void {
+        openSettings(this.app);
+        openSettingsTab(this.app, "personal-assistant");
+        this.settingTab.openAIDetail(target);
+        setPlatformTimeout(() => this.settingTab.openAIDetail(target), 0);
     }
 
     private getCurrentConfirmedMemoryCount(): number {
