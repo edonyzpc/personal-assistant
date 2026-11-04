@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [3.0.5](https://github.com/edonyzpc/personal-assistant/compare/3.0.4...3.0.5) (2026-11-04)
+
+### Features
+- ai: support reusable provider connections and memory profiles
+- settings: simplify AI connection configuration (B-195)
+
+### Fix
+- ai: apply provider defaults for blank legacy endpoints
+- ai: align OpenAI defaults and Terra Responses handling
+- ai: preserve provider call identity and result validity
+
+### Improvements
+- ai: unify SDK protocols and close B-194
+
+### Docs
+- readme: deliver illustrated workflows and close B-193
+- readme: showcase PA workflows and add media preparation guide
+
+### Tests
+- consolidate suites and strengthen behavioral assertions
+
 ## [3.0.4](https://github.com/edonyzpc/personal-assistant/compare/3.0.3...3.0.4) (2026-10-29)
 
 ### Features
