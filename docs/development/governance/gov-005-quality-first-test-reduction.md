@@ -56,6 +56,10 @@ Bootstrap source: Owner 于 2026-09-26 要求分析减少 20% 用例的可行性
 
 ## Authority And Change Boundary
 
+2026-11-04，B-151 的 436 路径、各指标 2pp 余量、等价承接及统一完整验收保留为历史口径。
+后续任务按[联合审计契约](./gov-008-pa-test-audit.md)与[优化流程](../workflows/test-optimization-workflow.md)
+选取证据范围和裁决路径。
+
 [B-151 最终验证](../../archive/2026/b151-test-reduction/final-report.md) 保留已完成任务的独有验收与候选裁决；
 收尾后不再作为活跃执行状态权威。
 本契约补充 GOV-003/GOV-004，不替代二者。扩大生产修改、降低质量标准或接受保护缺口

@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-10-25
+Updated: 2026-11-05
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -48,6 +48,7 @@ Updated: 2026-10-25
 
 | ID | 评估项 | 触发条件 | 触发后入口 |
 | --- | --- | --- | --- |
+| T-013 | Context Pager 测试审计后续候选 | 后续明确授权该模块测试优化时，处理未把目标文本放入输入的弱断言，并先核实 skipped source hash 的独有保护；只有提出删除公开 summary 导出时才补齐实际消费者证据。两个待查点不自动变成补测或生产清理要求，不重开 B-196 能力验收 | [B-196 试审与限制](./archive/2026/b196-pa-test-audit-validation.md#真实-pa-试审与后续边界)、[GOV-008](./development/governance/gov-008-pa-test-audit.md) |
 | T-012 | B-181 物理移动设备补验 | Owner 明确启动 iPhone/iPad 验证、相关移动能力改变或出现可复现设备故障时补验；iPhone 后置、iPad 未验证。按实际设备覆盖输入/IME、软键盘/后台及分屏旋转的受影响路径，不重复桌面矩阵或把349px窄容器当硬件证据 | [B-181 验证](./archive/2026/b181-ui-state-rendering-validation.md)、[Product Spec](./product/specs/pa-ui-state-rendering-product-spec.md) |
 | T-001 | React → Preact | 新组件依赖 React-only 能力，或第三方库与 `preact/compat` 不兼容 | [Historical evaluation SDD](./archive/sdd-react-preact-evaluation.md) |
 | T-002 | SQLite/WASM inline strategy | Mobile cold start ≥ 5s、三次独立 OOM，或 passive load P95 ≥ 5s | [Historical decisions](./archive/v2.1.2-decisions.md) |

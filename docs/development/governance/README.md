@@ -1,7 +1,7 @@
 # Engineering Governance
 
 Document status: Current
-Updated: 2026-11-01
+Updated: 2026-11-05
 Authority: PA 仓库的 engineering governance/tooling contract 索引；不定义 PA runtime 或用户产品行为。
 
 本目录保存跨文档生命周期、Agent 路由、repo checker、CI/release tooling 与工程授权边界的长期契约。它与 Product Decision/Product Spec 分离：只有改变 PA runtime、Obsidian UI 或用户可感知行为时，才进入 Product Decision/Spec 链。
@@ -17,6 +17,7 @@ Authority: PA 仓库的 engineering governance/tooling contract 索引；不定�
 | GOV-005 | [质量优先的测试精简](./gov-005-quality-first-test-reduction.md) | Current | B-151 | [B-151 最终验证](../../archive/2026/b151-test-reduction/final-report.md) |
 | GOV-006 | [Lean Delivery And Beta Validation](./gov-006-lean-delivery-and-beta-validation.md) | Current | B-156 | Current rules + release tooling/tests；[最终验证](./gov-006-lean-delivery-and-beta-validation.md#final-validation-and-limits) |
 | GOV-007 | [README 图文设计与交付契约](./gov-007-readme-experience.md) | Current | B-193 | 当前表达契约；[素材准备](../workflows/readme-media-production.md)；[原交付历史验收](../../archive/2026/b193-readme-validation.md) |
+| GOV-008 | [PA 测试与防御联合审计能力](./gov-008-pa-test-audit.md) | Current | B-196 | [Skill](../../../.agents/skills/pa-test-audit/SKILL.md)、[统一验证范围](../workflows/test-optimization-workflow.md#6-冻结后集中完整验收)；[最终验收](../../archive/2026/b196-pa-test-audit-validation.md) |
 
 ## Boundary
 

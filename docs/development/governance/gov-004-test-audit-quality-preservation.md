@@ -208,6 +208,11 @@ Owner 于 2026-09-26 在观察到本地同环境 coverage 基线耗时后，明�
 
 ## Authority And Change Boundary
 
+2026-11-04，B-196 的后续日常审计沿用[联合审计契约](./gov-008-pa-test-audit.md)与
+[优化流程](../workflows/test-optimization-workflow.md)。等价精简保留具体承接证据。若独有保护的
+投入不相称，先找更低成本的充分验证，再按明确授权接受剩余风险。B-150 的全仓地图、
+集中门禁与变异授权记录该次交付边界。
+
 GPT-6 负责设计、任务切片、状态和独立验收；默认 GLM 按
 [既定工作流](../workflows/gpt6-glm-delivery-workflow.md) 承担获派调查、实现和验证。
 Owner 于 2026-09-26 明确选择“本任务改由 GPT-6 执行，不调用 GLM”；B-150 因此由

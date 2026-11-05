@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-11-04
+Updated: 2026-11-05
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-11-05 | `docs/development/active/pa-test-audit/**`、`docs/development/discovery/pa-test-audit-design.md` | deleted-after-absorption | [GOV-008](../development/governance/gov-008-pa-test-audit.md)、[Skill](../../.agents/skills/pa-test-audit/SKILL.md)、[优化流程](../development/workflows/test-optimization-workflow.md)、[最终验收与来源理由](./2026/b196-pa-test-audit-validation.md)、[T-013](../backlog.md#触发型评估) | Owner 授权确认完成后收尾、master 提交与推送。必需交付完成，工具有据跳过；过程原文及终态 Tracker 留本机副本，不声称此前 Git 已保存。独有证据压缩保留，F-01 保持 Contained、服务端留存未知，敏感原始日志不入 Git。移除 Active/Discovery/已完成 Backlog 入口，可选 PA 清理另按 T-013 启动。 |
 | 2026-11-04 | `docs/development/active/settings-ai-configuration-ux/**` | deleted-after-absorption | [DEC-079](../product/decisions/dec-079-settings-ai-configuration-ux.md)、[规格](../product/specs/pa-settings-ai-configuration-ux-product-spec.md)、[最终验收](./2026/b195-settings-ai-configuration-ux-validation.md)、[确认预览](./2026/b195-settings-ai-configuration-ux-preview.html) | Owner 授权收尾及 master 提交和推送。九项需求／验收及六项跟进修复完成。稳定设计由规格、架构和测试承接，确认预览原样迁移。Home、SDD、Tracker 移出 Active，原文留本机副本。无待处理实现项。 |
 | 2026-11-01 | `docs/development/active/sdk-protocol-agent-boundary/**` | deleted-after-absorption | [DEC-078](../product/decisions/dec-078-sdk-protocol-and-agent-boundary.md)、[Product Spec](../product/specs/pa-sdk-protocol-agent-boundary-product-spec.md)、[当前架构](../architecture/settings-status.md#sdk-接缝与恢复职责)、[最终验收](./2026/b194-sdk-protocol-validation.md) | Owner授权B-194收尾及本地master提交；AC-01–08与F-14/F-15完成，无未完成项转Backlog。Home/SDD/Tracker吸收后删除，移出Active Registry；未提交过程原文保留本机副本，不声称旧Git保存。保留分段测试、真实服务／模拟器与恢复证据边界；不含push或发布。 |
 | 2026-11-01 | `docs/development/active/readme-redesign/**` | deleted-after-absorption | [GOV-007](../development/governance/gov-007-readme-experience.md)、[README](../../README.md)、[最终验收](./2026/b193-readme-validation.md) | Owner明确授权B-193收尾、master提交与推送。必需文档、真实场景与素材、局部可读性修正及测试恢复完成，未实测项如实保留；Home/Plan/Tracker删除，移出Active Registry，无未完成实现项转Backlog。未提交过程原文已保存本机临时副本，不声称旧Git保存；不含正式版发布。 |

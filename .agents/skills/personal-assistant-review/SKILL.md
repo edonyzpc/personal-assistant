@@ -136,6 +136,8 @@ issue, say so.
 
 ## Maintainability And Probe Reliability
 
+- For a test-audit diff, review the retained protection or explicitly authorized
+  tradeoff in the same pass. Reuse the verification selected by the [test optimization workflow](../../../docs/development/workflows/test-optimization-workflow.md#6-冻结后集中完整验收).
 - For a new module or complex state change, walk through one plausible change
   adjacent to the current requirement. Locate the entry point, state owner,
   and invariants a future maintainer must preserve without the implementation
@@ -271,6 +273,7 @@ and list remaining validation gaps.
 
 ## Related Skills
 
+- Use [pa-test-audit](../pa-test-audit/SKILL.md) for a requested focused audit of test value, cost, or defensive code.
 - To triage and implement fixes from this review, use `personal-assistant-review-followup`.
 - For cross-surface UI/UX design audits and visual baselines, use `ui-ux-design-audit`.
 - For app-level smoke validation, use `obsidian-test-vault-smoke`.

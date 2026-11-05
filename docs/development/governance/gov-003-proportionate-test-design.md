@@ -48,6 +48,9 @@ beta/stable 可复用 parent 的成功完整 master CI；缺失或无效证据�
 
 ## Current Validation Rules — 2026-10-06
 
+2026-11-04，B-196 接续日常审计。局部优化按[实际影响范围](../workflows/test-optimization-workflow.md#6-冻结后集中完整验收)
+选择基线及验证。B-142 的完整验收适用于该次交付，现行 CI、发布与完整门禁各按适用契约执行。
+
 上文 B-142 范围与下文交付记录保留当时事实。当前常规 CI、stable tag 与 beta 的
 完整回退路径使用 `--maxWorkers=2 --coverage`；本地完整验证使用 `--runInBand`。
 2026-10-06 用户授权将正式发布的重复验证优化纳入 GOV-002。正常 beta/stable 的

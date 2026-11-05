@@ -27,13 +27,14 @@
 
 ## Engineering Governance
 
+- [GOV-008 PA 测试与防御联合审计能力](./governance/gov-008-pa-test-audit.md) — 测试真实性、独有价值、防御必要性与成本；通过专项 skill 与现有验证流程实施。
 - [GOV-007 README 图文设计与交付契约](./governance/gov-007-readme-experience.md) — 产品展示、影响力、用户/开发分层、公开示例与双语验收；[原 B-193 历史验收](../archive/2026/b193-readme-validation.md)不代替新素材和展示效果验证。
 - [GOV-006 Lean Delivery And Beta Validation](./governance/gov-006-lean-delivery-and-beta-validation.md) — 验证复用、GLM恢复与beta流水线规则；[最终验证](./governance/gov-006-lean-delivery-and-beta-validation.md#final-validation-and-limits)。
 - [Governance Registry](./governance/README.md) — repo docs lifecycle、Agent workflow、checker、CI/release tooling 与工程授权边界；不定义 PA runtime 或用户产品行为。
 - [GOV-002 Master-First Branch And Beta Packaging](./governance/gov-002-master-first-branch-and-beta-packaging.md) — 所有已接受工作先进入 `master`，BRAT beta 仅从精确 `master` 基线包装。
 - [GOV-003 Proportionate Test Design](./governance/gov-003-proportionate-test-design.md) — 以真实回归保护为准精简测试，保持输入隔离、覆盖与发布门禁。
 - [GOV-004 测试审计与质量保护设计](./governance/gov-004-test-audit-quality-preservation.md) — 风险分批审计、契约承接、独立复核与受限隔离变异验证。
-- [GOV-005 质量优先的测试精简](./governance/gov-005-quality-first-test-reduction.md) — 重复执行的保护承接，四项覆盖率各最多下降 2 个百分点。
+- [GOV-005 质量优先的测试精简](./governance/gov-005-quality-first-test-reduction.md) — 重复执行的保护承接与 B-151 历史验收的覆盖率余量。
 
 ## Proposal
 

@@ -23,6 +23,10 @@ is not evidence of a user decision.
 
 ## Workflow
 
+For findings from [pa-test-audit](../pa-test-audit/SKILL.md), continue from the
+recorded candidates, valid evidence, and existing authority. Triage only the
+actual findings and reuse the verification scope already selected.
+
 1. Verify each finding against its exact trigger, affected code, and current
    contract before restating it. Separate verified defects from hypotheses;
    reviewer confidence or severity is not evidence.

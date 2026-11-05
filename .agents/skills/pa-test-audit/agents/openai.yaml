@@ -1,0 +1,4 @@
+interface:
+  display_name: "PA Test Audit"
+  short_description: "Audit PA tests, defensive code, and maintenance costs"
+  default_prompt: "Use $pa-test-audit to review the selected PA test and production scope read-only and report evidence-backed findings."
