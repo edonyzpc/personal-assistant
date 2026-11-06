@@ -71,6 +71,6 @@ Templater-generated frontmatter feeds Dataview queries. When a template sets `st
 - Template sets `status: <% tp.system.suggester(["active","planned","done"], ["active","planned","done"]) %>` in frontmatter.
 - Dataview query `TABLE status, due FROM #project WHERE status = "active"` picks up the value.
 
-Dynamic commands (`<%+ %>`) update frontmatter on each file open, keeping Dataview queries current. Use `<%+ tp.date.now("YYYY-MM-DD") %>` in frontmatter to track "last opened" dates.
+Dynamic commands (`<%+ %>`) render in reading/preview mode; they do not write updated frontmatter for Dataview. Persisted dates require an explicit property update when that behavior is requested.
 
 When evidence about the user's template setup is missing, use `search_vault_snippets` to find existing Templater patterns in the vault before suggesting new ones.

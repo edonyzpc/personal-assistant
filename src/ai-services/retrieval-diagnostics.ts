@@ -262,6 +262,7 @@ const REASONS = new Set([
     "policy_disabled",
     "preflight_unavailable",
     "projection_aborted",
+    "projection_deadline",
     "projection_failed",
     "projection_unavailable",
     "provider_error",

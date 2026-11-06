@@ -2913,12 +2913,12 @@ describe("retrieval evidence receipt current-artifact verifier", () => {
         ["episode surface", (receipt: Record<string, any>) => {
             const binding = receipt.compactProxy.workloadBinding;
             binding.episodes[0].surface = "pagelet";
-            binding.bindingSha256 = sha256(canonicalJson(binding.episodes));
+            resealCompactEpisodeBinding(receipt, binding.episodes[0]);
         }, "app_compact_proxy_episode_binding_invalid"],
         ["fresh Chat marker", (receipt: Record<string, any>) => {
             const binding = receipt.compactProxy.workloadBinding;
             binding.episodes[0].freshChat = false;
-            binding.bindingSha256 = sha256(canonicalJson(binding.episodes));
+            resealCompactEpisodeBinding(receipt, binding.episodes[0]);
         }, "app_compact_proxy_episode_binding_invalid"],
         ["unique opaque run", (receipt: Record<string, any>) => {
             const binding = receipt.compactProxy.workloadBinding;
@@ -3601,6 +3601,7 @@ describe("retrieval evidence receipt current-artifact verifier", () => {
                 sequence: prior.sequence + 1,
                 elapsedMs: prior.elapsedMs + 1,
                 runId: prior.runId,
+                invocationOrdinal: 0,
                 surface: "chat",
                 phase: "queue_release",
                 outcome: "completed",

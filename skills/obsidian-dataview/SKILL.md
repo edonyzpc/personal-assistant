@@ -23,7 +23,7 @@ Clauses follow the query type keyword:
 - `FROM` — source filter. Accepts folder paths (`"Journal"`), tags (`#project`), links (`[[MOC]]`), or combinations with `AND`/`OR`. Negate with `-`: `FROM #task AND -"Archive"`.
 - `WHERE` — row-level filter on any field expression: `WHERE status = "active"`.
 - `SORT` — ordering: `SORT file.ctime DESC`. Multiple sorts comma-separated.
-- `GROUP BY` — group rows: `GROUP BY file.folder`. Inside grouped rows, access the group key as `rows` and the key as `key`.
+- `GROUP BY` — group pages: `GROUP BY file.folder AS folder`. Each result exposes `folder` as its group value and `rows` as its member pages.
 - `FLATTEN` — expand list fields into individual rows: `FLATTEN tags`.
 - `LIMIT` — cap result count: `LIMIT 10`.
 
@@ -130,7 +130,7 @@ SORT length(rows) DESC
 
 **Project status dashboard**:
 ```
-TABLE status, due, length(file.tasks.where(t => !t.completed)) AS "Open Tasks"
+TABLE status, due, length(filter(file.tasks, (t) => !t.completed)) AS "Open Tasks"
 FROM #project
 WHERE status != "done"
 SORT due ASC

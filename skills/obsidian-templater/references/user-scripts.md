@@ -17,7 +17,7 @@ module.exports = async function(tp) {
 };
 ```
 
-**Invocation**: `<% tp.user.myHelper(tp) %>`. The function name matches the filename (without extension). The `tp` object is always passed as the first argument.
+**Invocation**: `<% tp.user.myHelper(tp) %>`. The function name matches the filename (without extension). Arguments follow the function's signature; pass `tp` explicitly when the helper needs it.
 
 ## Startup Templates
 

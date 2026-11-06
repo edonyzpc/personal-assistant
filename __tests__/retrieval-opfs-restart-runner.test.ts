@@ -740,7 +740,7 @@ describe("retrieval OPFS restart runner", () => {
         expect(tamperedReceipt.before).toBeNull();
     });
 
-    it("fails invalid formal runtime identity and blocks a missing identity seam", async () => {
+    it("fails an invalid app version source and blocks a missing app version", async () => {
         const invalidSourceState = createState({ appVersionSource: "app.version" });
         const invalidSourceRecorder = await bootRunner(
             invalidSourceState,

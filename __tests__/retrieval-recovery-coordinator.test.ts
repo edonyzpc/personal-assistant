@@ -12,7 +12,7 @@ import {
     mergeMemorySearchResults,
     type MemoryRecoveryAttempt,
 } from "../src/ai-services/retrieval-recovery-coordinator";
-import type { RetrievalDiagnosticEventInput } from "../src/ai-services/retrieval-diagnostics";
+import { RetrievalDiagnosticsController, type RetrievalDiagnosticEventInput } from "../src/ai-services/retrieval-diagnostics";
 
 describe("ChatMemoryRecoveryCoordinator", () => {
     it("keeps behavior unchanged when diagnostics are absent or throw", async () => {
@@ -561,6 +561,8 @@ describe("ChatMemoryRecoveryCoordinator", () => {
         try {
             const startedAt = Date.now();
             const recorded: RetrievalDiagnosticEventInput[] = [];
+            const diagnostics = new RetrievalDiagnosticsController();
+            const session = diagnostics.start();
             const attempts: MemoryRecoveryAttempt[] = [];
             const projectionStarted = deferred<void>();
             const lateProjection = deferred<MemorySearchResult>();
@@ -575,7 +577,10 @@ describe("ChatMemoryRecoveryCoordinator", () => {
                 minimumRelaxedBudgetMs: 1,
                 projectionMarginMs: 10,
                 hostSettlementMarginMs: 5,
-                recordDiagnostic: (event) => recorded.push(event),
+                recordDiagnostic: (event) => {
+                    recorded.push(event);
+                    diagnostics.record("chat", event);
+                },
             });
             await jest.advanceTimersByTimeAsync(5);
             let settled = false;
@@ -612,6 +617,11 @@ describe("ChatMemoryRecoveryCoordinator", () => {
                 outcome: "deadline",
                 reason: "projection_deadline",
                 metrics: expect.objectContaining({ durationMs: 30 }),
+            }));
+            expect(diagnostics.stop(session.sessionId).events).toContainEqual(expect.objectContaining({
+                phase: "recovery_projection",
+                outcome: "deadline",
+                reason: "projection_deadline",
             }));
 
             lateProjection.resolve(createEvidenceResult("launch", [candidate("late.md", 0.9)]));

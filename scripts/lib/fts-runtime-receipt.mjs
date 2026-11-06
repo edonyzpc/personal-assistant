@@ -203,6 +203,7 @@ export function inspectPlatformReceipt(receipt, options = {}) {
   );
 
   const renderer = receipt.exactRenderer;
+  const exactRenderer = rendererIdentityIsExact(renderer);
   const nodeRuntime = receipt.referenceRuntime;
   const embeddedRuntime = receipt.artifacts?.runtimeCanary?.payload;
   if (embeddedRuntime && (
@@ -219,7 +220,7 @@ export function inspectPlatformReceipt(receipt, options = {}) {
       throw new Error(`Runtime fingerprint mismatch: ${runtime.label ?? "unknown"}.`);
     }
   }
-  if (!rendererIdentityIsExact(renderer)) blockers.push("exact_obsidian_renderer_missing");
+  if (!exactRenderer) blockers.push("exact_obsidian_renderer_missing");
   if (!nodeRuntime?.available) blockers.push("reference_runtime_missing");
   else if (!referenceRuntimeUsesRequiredNode(nodeRuntime)) {
     blockers.push("reference_runtime_node22_required");
@@ -238,12 +239,12 @@ export function inspectPlatformReceipt(receipt, options = {}) {
   }
 
   const claimedPlatform = receipt.platform;
-  if (rendererIdentityIsExact(renderer)
+  if (exactRenderer
     && (claimedPlatform?.os !== renderer.runtime.processPlatform
       || claimedPlatform?.arch !== renderer.runtime.processArch)) {
     throw new Error("Receipt platform does not match the exact renderer runtime.");
   }
-  if (rendererIdentityIsExact(renderer) && nodeRuntime?.available
+  if (exactRenderer && nodeRuntime?.available
     && (nodeRuntime.runtime?.processPlatform !== renderer.runtime.processPlatform
       || nodeRuntime.runtime?.processArch !== renderer.runtime.processArch)) {
     throw new Error("Reference runtime platform does not match the exact renderer runtime.");

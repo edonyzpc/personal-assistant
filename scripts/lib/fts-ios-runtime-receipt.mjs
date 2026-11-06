@@ -11,7 +11,6 @@ import {
 } from "./fts-ios-runtime-bundle.mjs";
 import {
   FTS_IOS_ATTESTATION_TRUST_BOUNDARY,
-  validateFtsIosChallenge,
   validateFtsIosSessionAttestation,
 } from "./fts-ios-runtime-session.mjs";
 
@@ -189,10 +188,6 @@ function validateExternalSessionEvidence(receipt, expected) {
   if (!expected.sessionAttestation) blockers.push("trusted_device_session_evidence_missing");
   if (!expected.trustedAttestorKeySha256) blockers.push("trusted_attestor_key_missing");
   if (!expected.sessionChallenge || !expected.sessionAttestation) return blockers;
-  const challengeBlockers = validateFtsIosChallenge(expected.sessionChallenge, {
-    now: expected.verificationNow,
-    trustedAttestorKeySha256: expected.trustedAttestorKeySha256,
-  });
   const attestationBlockers = validateFtsIosSessionAttestation(
     expected.sessionAttestation,
     receipt,
@@ -213,10 +208,9 @@ function validateExternalSessionEvidence(receipt, expected) {
     "trusted_device_plugin_binding_mismatch",
     "trusted_device_evidence_signature_invalid",
   ]);
-  const tamper = [...challengeBlockers, ...attestationBlockers]
-    .find((blocker) => integrityBlockers.has(blocker));
+  const tamper = attestationBlockers.find((blocker) => integrityBlockers.has(blocker));
   integrity(!tamper, `external session evidence failed integrity: ${tamper ?? "unknown"}`);
-  blockers.push(...challengeBlockers, ...attestationBlockers);
+  blockers.push(...attestationBlockers);
   return [...new Set(blockers)];
 }
 
@@ -248,10 +242,11 @@ export function inspectFtsIosRuntimeReceipt(receipt, expected = {}) {
   const sessionBlockers = validateExternalSessionEvidence(receipt, expected);
   const freshnessBlockers = validateBaseReceiptFreshness(receipt, expected);
   const repositoryNode = inspectRepositoryNodeReference(expected.repositoryNodeVersion);
+  const identityBlockers = iosRuntimeIdentityBlockers(receipt);
 
   const blockers = new Set([
     ...(Array.isArray(receipt.blockers) ? receipt.blockers : []),
-    ...iosRuntimeIdentityBlockers(receipt),
+    ...identityBlockers,
     ...checkoutBlockers,
     ...sessionBlockers,
     ...freshnessBlockers,
@@ -307,7 +302,6 @@ export function inspectFtsIosRuntimeReceipt(receipt, expected = {}) {
     }
   }
 
-  const identityBlockers = iosRuntimeIdentityBlockers(receipt);
   const expectedCaptureStatus = identityBlockers.length === 0
     && (!Array.isArray(receipt.blockers) || receipt.blockers.length === 0)
     ? "CANDIDATE"

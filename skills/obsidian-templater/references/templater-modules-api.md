@@ -6,15 +6,15 @@
 tp.file.title: string
 tp.file.content: string
 tp.file.path(relative?: boolean): string
-tp.file.folder(relative?: boolean): string
+tp.file.folder(absolute?: boolean): string
 tp.file.selection(): string
 tp.file.rename(newName: string): Promise<void>
-tp.file.move(newPath: string, fileName?: string): Promise<void>
+tp.file.move(newPath: string, fileToMove?: TFile): Promise<void>
 tp.file.create_new(
     template: TFile | string,
     filename: string,
     openNewNote?: boolean,     // default: false
-    folder?: TFolder | string  // default: current folder
+    folder?: TFolder | string  // default: Obsidian's configured new-note location
 ): Promise<TFile>
 tp.file.include(tfileOrPath: TFile | string): Promise<string>
 tp.file.exists(filePath: string): Promise<boolean>
@@ -26,17 +26,18 @@ tp.file.cursor_append(content: string): void
 **Edge cases:**
 - `create_new` with empty string template creates a blank note.
 - `create_new` with a `TFile` template applies Templater processing to that file.
-- `include` resolves paths relative to the vault root, not the current file.
+- `include` accepts a wikilink (including a heading or block) or a TFile.
 - `find_tfile` matches by basename without extension; returns null if not found.
 - `cursor(0)` is the default cursor position; `cursor(1)`, `cursor(2)` etc. create tab stops.
-- `move` does not rename -- pass `fileName` to rename during move.
+- `move` takes the complete destination without extension; changing its filename also renames the file.
+- `path(true)` includes the filename and is relative to the vault; `folder(true)` is the folder path from the vault root.
 
 ## tp.date
 
 ```typescript
 tp.date.now(
     format?: string,       // default: "YYYY-MM-DD"
-    offset?: number | string, // e.g. 7, "1 day", "-2 weeks"
+    offset?: number | string, // integer days or ISO 8601 duration, e.g. 7, "P-1M"
     ref?: string,          // reference date string
     refFormat?: string     // format of ref
 ): string
@@ -46,7 +47,7 @@ tp.date.yesterday(format?: string): string
 
 tp.date.weekday(
     format: string,
-    n: number,         // 0=Monday, 1=Tuesday, ... 6=Sunday (ISO)
+    n: number,         // 0 is the locale's first weekday
     ref?: string,
     refFormat?: string
 ): string
@@ -55,7 +56,7 @@ tp.date.weekday(
 **Format tokens** (Moment.js):
 `YYYY` (4-digit year), `YY`, `MM` (01-12), `M`, `DD` (01-31), `D`, `HH` (00-23), `hh` (01-12), `mm`, `ss`, `dddd` (weekday name), `ddd`, `MMMM` (month name), `MMM`, `X` (unix timestamp), `x` (unix ms).
 
-**Offset formats**: integer (days), or string with unit: `"1 day"`, `"-3 months"`, `"2 weeks"`, `"1 year"`. Multiple units: `"1 year 2 months"`.
+**Offset formats**: integer days or ISO 8601 duration strings, such as `"P-1M"` for the previous month and `"P1Y"` for next year.
 
 ## tp.frontmatter
 
@@ -76,7 +77,7 @@ tp.system.prompt(
     defaultValue?: string,
     throw_on_cancel?: boolean,  // default: false
     multiline?: boolean,        // default: false
-    suggestions?: string[]
+    select_default_value?: boolean
 ): Promise<string | null>
 
 tp.system.suggester(
@@ -92,7 +93,7 @@ tp.system.suggester(
 - `prompt` returns `null` on cancel when `throw_on_cancel=false` (default). Set `throw=true` to throw an error instead, which aborts template processing.
 - `suggester` returns `null` on cancel by default. Same `throw_on_cancel` behavior.
 - `clipboard()` may throw if clipboard access is denied by the OS.
-- `suggestions` in `prompt` enables fuzzy autocomplete from the provided list.
+- `select_default_value` in `prompt` selects the default text when the dialog opens, so typing replaces it. Use `suggester` to choose from a list.
 - `suggester` with a function as `textItems` calls it for each `actualItems` element to produce display text.
 
 ## tp.web
@@ -103,7 +104,7 @@ tp.web.daily_quote(): Promise<string>
 tp.web.random_picture(
     size?: string,          // e.g. "200x200"
     query?: string,         // search term
-    include_size?: boolean  // include dimensions in URL
+    include_size?: boolean  // include dimensions in image Markdown
 ): Promise<string>
 
 tp.web.request(
@@ -114,7 +115,7 @@ tp.web.request(
 
 **Notes:**
 - `daily_quote` fetches from an external API; may fail offline.
-- `random_picture` returns an Unsplash URL. The `query` filters by topic.
+- `random_picture` returns image Markdown. The `query` filters by topic.
 - `request` returns the full response body as a string. If `path` is provided, parses as JSON and extracts the value at that path.
 - All web methods require network access. They will throw in offline/restricted environments.
 

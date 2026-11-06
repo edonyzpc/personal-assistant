@@ -1112,9 +1112,11 @@ describe('B157 independent context harness contracts (offline)', () => {
                 const structured = JSON.parse(reply.content);
                 if (scenario === 'canonical over budget') {
                     const source = historySummaryMaterials(body).source.sourceMessages[0];
-                    structured.facts.push({ text: '', sourceMessageIndexes: [source.index] });
+                    structured.facts.push({ text: '', sourceMessages: [source.index] });
                     const maxChars = Number(body.messages[0].content.match(/at most (\d+) characters/)[1]);
                     structured.facts[0].text = 'x'.repeat(maxChars + 1 - JSON.stringify(structured).length);
+                    expect(structured.facts[0].text.length).toBeGreaterThan(0);
+                    expect(structured.facts[0].text.length).toBeLessThanOrEqual(2_000);
                     return { ...reply, content: JSON.stringify(structured) };
                 }
                 const formatted = JSON.stringify(structured, null, 2);

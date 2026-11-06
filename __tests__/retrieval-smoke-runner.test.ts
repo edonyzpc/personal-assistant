@@ -5640,7 +5640,7 @@ describe("B-125 retrieval app-smoke fixture", () => {
         })).rejects.toThrow("bound to the retrieval diagnostics session");
     });
 
-    it("rejects Worker acknowledgement that arrives after the Memory attempt terminal", async () => {
+    it("rejects queue release completion that arrives after the Memory attempt terminal", async () => {
         const repositoryRoot = resolve(__dirname, "..");
         const { context, runner, diagnosticsControl } = createRunnerContext(repositoryRoot, {
             preflightReady: true,
@@ -5671,7 +5671,7 @@ describe("B-125 retrieval app-smoke fixture", () => {
         });
     });
 
-    it("rejects same-run Worker acknowledgement that arrives after the finalization boundary", async () => {
+    it("rejects same-run queue release completion that arrives after the finalization boundary", async () => {
         const repositoryRoot = resolve(__dirname, "..");
         const { context, runner, diagnosticsControl } = createRunnerContext(repositoryRoot, {
             preflightReady: true,

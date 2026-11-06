@@ -297,29 +297,23 @@ describe("B-125 retrieval optimization platform policy", () => {
                 graphPpr: false,
                 relaxedRecovery: false,
             });
-        } finally {
             Platform.isWin = false;
             Platform.isAndroidApp = true;
             Platform.isMacOS = false;
             Platform.isLinux = false;
             Platform.isIosApp = true;
-        }
 
-        try {
             expect(isB125RetrievalOptimizationPlatformSupported()).toBe(false);
             expect(resolveB125RetrievalOptimizationPolicySnapshot(undefined)).toMatchObject({
                 platformSupported: false,
                 platformMask: "android",
             });
-        } finally {
             Platform.isWin = false;
             Platform.isAndroidApp = false;
             Platform.isMacOS = false;
             Platform.isLinux = false;
             Platform.isIosApp = false;
-        }
 
-        try {
             expect(isB125RetrievalOptimizationPlatformSupported()).toBe(false);
             expect(resolveB125RetrievalOptimizationPolicySnapshot(undefined)).toMatchObject({
                 platformSupported: false,

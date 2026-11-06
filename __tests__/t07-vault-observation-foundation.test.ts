@@ -909,6 +909,7 @@ describe("T-07 inspect evidence foundation", () => {
         };
         const fixture = inspectFixture(cache);
         const hashMock = computeContentHash as jest.MockedFunction<typeof computeContentHash>;
+        const originalHash = hashMock.getMockImplementation()!;
         let mutated = false;
         hashMock.mockImplementation(async (input: string) => {
             if (!mutated && input.includes('"text":"A"')) {
@@ -918,11 +919,12 @@ describe("T-07 inspect evidence foundation", () => {
             const { createHash } = jest.requireActual("node:crypto") as typeof import("node:crypto");
             return createHash("sha1").update(input, "utf8").digest("hex");
         });
-        const result = await fixture.invoke({ path: "notes/inspect.md" });
-        hashMock.mockImplementation(async input => {
-            const { createHash } = jest.requireActual("node:crypto") as typeof import("node:crypto");
-            return createHash("sha1").update(input, "utf8").digest("hex");
-        });
+        let result: ChatToolResult<InspectObsidianNoteOutput>;
+        try {
+            result = await fixture.invoke({ path: "notes/inspect.md" });
+        } finally {
+            hashMock.mockImplementation(originalHash);
+        }
         expect(result.ok).toBe(true);
         expect(mutated).toBe(true);
         expect(result.content).toMatchObject({ headings: [{ text: "A", level: 2 }] });
@@ -1186,16 +1188,6 @@ describe("T-07 strict reader and clone", () => {
     it("enforces per-envelope and whole-turn evidence budgets", () => {
         const evidence = baseRead();
         const parsed = parseVaultObservationEvidence(evidence) as { ok: true; evidence: VaultObservationEvidence };
-        expect(() => {
-            const oversizedScope = { ...parsed.evidence, scope: { allowedPaths: [], excludedPaths: [] } };
-            Object.assign(oversizedScope, {
-                observationId: "x".repeat(256),
-                scope: {
-                    allowedPaths: Array.from({ length: 500 }, () => "x".repeat(4096)),
-                    excludedPaths: [],
-                },
-            });
-        }).not.toThrow();
         expect(parseVaultObservationEvidence({
             ...parsed.evidence,
             scope: {

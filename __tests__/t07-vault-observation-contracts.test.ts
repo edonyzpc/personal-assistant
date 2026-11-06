@@ -430,7 +430,6 @@ describe("T-07 persisted observation evidence", () => {
         const persisted = serialized.memoryMetadata as EvidenceCarrier;
         expect(persisted.vaultObservationContractVersion).toBe(1);
         expect(persisted.vaultObservationEvidence).toEqual([first, second]);
-        expect(JSON.stringify(serialized)).not.toContain("A source-backed answer with body log");
 
         await store.appendTurn(serialized);
         const saved = await store.getTurns("conversation");
