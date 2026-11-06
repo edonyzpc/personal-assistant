@@ -1241,6 +1241,37 @@ describe("ShareCardModal", () => {
         expect(unregisterFont).toHaveBeenCalledTimes(1);
     });
 
+    it("does not release a reopened modal's font when the previous load rejects late", async () => {
+        const document = new ShareCardTestDocument();
+        let rejectOldFont!: (error: Error) => void;
+        registerFont.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+            rejectOldFont = reject;
+        }));
+        const createExporterMock = jest.fn(() => createExporter());
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => createPages(1),
+            createRenderer: () => createRenderer(document, []),
+            createExporter: createExporterMock,
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+        modal.onClose();
+        modal.onOpen();
+        await flushShareCardTasks();
+        expect(registerFont).toHaveBeenCalledTimes(2);
+        expect(createExporterMock).toHaveBeenCalledTimes(1);
+        expect(unregisterFont).toHaveBeenCalledTimes(1);
+
+        rejectOldFont(new Error("previous font load failed"));
+        await flushShareCardTasks();
+        expect(unregisterFont).toHaveBeenCalledTimes(1);
+        expect(document.body.querySelector(".pa-share-card-status")!.textContent).toBe("");
+        modal.onClose();
+        expect(unregisterFont).toHaveBeenCalledTimes(2);
+    });
+
     it("localizes explicit resources with invisible base-path context before pagination", async () => {
         const document = new ShareCardTestDocument();
         const localized: LocalizedShareCardResources = {

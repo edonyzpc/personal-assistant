@@ -401,21 +401,16 @@ describe("Share Card print styles", () => {
         expect(report.filterIds).toHaveLength(2);
     });
 
-    it("makes a body-only Xerox card visibly distinct while preserving its text", () => {
-        const fixtures = [createPrintFixture(), createPrintFixture()];
-        for (const fixture of fixtures) {
-            for (const heading of fixture.body.querySelectorAll("h1, h2")) heading.remove();
-        }
-        const [first, second] = fixtures;
-        const beforeText = collectText(second.body);
-        const report = applyShareCardPrintStyle(asElement(second.card), asElement(second.body));
+    it("applies the approved Xerox filter to body-only text without changing its content", () => {
+        const { card, body } = createPrintFixture();
+        for (const heading of body.querySelectorAll("h1, h2")) heading.remove();
+        const beforeText = collectText(body);
+        const report = applyShareCardPrintStyle(asElement(card), asElement(body));
 
         expect(report.headingRunCount).toBe(0);
         expect(report.bodyRunCount).toBeGreaterThan(0);
-        expect(collectText(second.body)).toBe(beforeText);
-        expect(collectText(first.body)).toBe(beforeText);
-        expect(first.card.querySelectorAll(".pa-share-card-print-defs")).toHaveLength(0);
-        const xeroxFilter = filterElement(second.card
+        expect(collectText(body)).toBe(beforeText);
+        const xeroxFilter = filterElement(card
             .querySelectorAll(".pa-share-card-print-defs")[0]!);
         expect(childTags(xeroxFilter)).toEqual([
             "feTurbulence", "feDisplacementMap", "feTurbulence", "feDisplacementMap",

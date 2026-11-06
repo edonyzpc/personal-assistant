@@ -575,7 +575,9 @@ describe("Share Card export", () => {
     it("captures Copy and Save from the same mutable sharer appearance", async () => {
         const document = new ShareCardTestDocument();
         document.defaultView.navigator.clipboard = {
-            write: jest.fn(async () => undefined),
+            write: jest.fn(async (items: Array<{ items: Record<string, Blob | PromiseLike<Blob>> }>) => {
+                await items[0]!.items["image/png"];
+            }),
         };
         document.defaultView.ClipboardItem = class ClipboardItemMock {
             constructor(readonly items: Record<string, Blob | PromiseLike<Blob>>) {}

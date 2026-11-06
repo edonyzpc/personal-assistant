@@ -218,18 +218,12 @@ export function renderGhostPublishingSettings(
             if (value) {
                 const megabytes = Number(value);
                 if (!/^\d+(?:\.\d{1,6})?$/.test(value) || !Number.isFinite(megabytes) || megabytes <= 0) {
-                    busy = true;
-                    updateControls();
-                    busy = false;
                     updateControls();
                     feedback.textContent = t("plugin.ghost.settings.invalidUploadLimit");
                     return;
                 }
                 maxUploadBytes = Math.round(megabytes * 1_000_000);
                 if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes <= 0) {
-                    busy = true;
-                    updateControls();
-                    busy = false;
                     updateControls();
                     feedback.textContent = t("plugin.ghost.settings.invalidUploadLimit");
                     return;

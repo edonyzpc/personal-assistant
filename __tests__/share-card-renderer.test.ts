@@ -623,6 +623,37 @@ describe("ShareCardRenderer", () => {
         expect(label.getAttribute("font-family")).toBeNull();
     });
 
+    it.each([
+        ["fill", "u\\72 l(https://example.test/external.svg)", false],
+        ["fill", "u\\72 l(#local-paint)", true],
+        ["aria-label", "C:\\", true],
+    ] as const)("audits SVG resources without interpreting literal %s text: %s", async (attribute, value, safe) => {
+        const document = new ShareCardTestDocument();
+        renderMock.mockImplementationOnce(async (_app, _markdown, element) => {
+            const svg = document.createElement("svg");
+            const rect = document.createElement("rect");
+            rect.setAttribute(attribute, value);
+            svg.appendChild(rect);
+            (element as unknown as ShareCardTestElement).appendChild(svg);
+        });
+        const renderer = new ShareCardRenderer({} as App, asDocument(document), {
+            waitForFrame: async () => {
+                const rect = document.body.querySelector("rect");
+                expect(rect?.getAttribute(attribute) ?? null).toBe(safe ? value : null);
+            },
+        });
+
+        const rendered = await renderer.renderPage({
+            content: `<svg><rect ${attribute}="${value}"/></svg>`, pageIndex: 0, totalPages: 1,
+        }, { theme: "light" });
+        expect(rendered.sanitizationIssues).toEqual(safe ? [] : [
+            { tagName: "rect", reason: "external-resource-remains" },
+        ]);
+        expect(auditVisualResourceUris(rendered.bodyEl)).toEqual([]);
+        rendered.cleanup();
+        renderer.cleanup();
+    });
+
     it("renders the fixed card structure, measures overflow and aborts its handle", async () => {
         const document = new ShareCardTestDocument();
         const unload = jest.spyOn(Component.prototype, "unload");

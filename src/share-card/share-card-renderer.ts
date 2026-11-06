@@ -27,6 +27,7 @@ import {
 } from "./share-card-assets";
 import { SHARE_CARD_FONT_FAMILY } from "./share-card-font";
 import { ensurePaperReady, getPaperDataUri } from "./share-card-paper";
+import { normalizeShareCardCssForAudit } from "./share-card-resources";
 
 const HARD_REMOVED_SELECTOR = ["script", "style", "link", "base", "meta"].join(",");
 const PLACEHOLDER_SELECTOR = [
@@ -64,6 +65,10 @@ const SAFE_SVG_ELEMENTS = new Set([
 
 const SAFE_GLOBAL_ATTRIBUTES = new Set([
     "aria-hidden", "aria-label", "dir", "lang", "role", "title",
+]);
+const SVG_CSS_RESOURCE_ATTRIBUTES = new Set([
+    "clip-path", "color-profile", "cursor", "fill", "filter", "marker",
+    "marker-start", "marker-mid", "marker-end", "mask", "stroke",
 ]);
 const SAFE_HTML_ATTRIBUTES: Readonly<Record<string, ReadonlySet<string>>> = {
     canvas: new Set(["height", "width"]),
@@ -2031,7 +2036,7 @@ export function auditVisualResourceUris(bodyEl: HTMLElement): string[] {
                 invalid.push(normalizedName);
                 continue;
             }
-            if (normalizedName === "style" || value.toLowerCase().includes("url(")) {
+            if (normalizedName === "style" || mayContainCssResource(normalizedName, value)) {
                 if (!hasOnlySafeCssResources(value)) invalid.push(normalizedName);
                 continue;
             }
@@ -2122,7 +2127,7 @@ function sanitizeElementAttributes(
             }
             continue;
         }
-        if (value.toLowerCase().includes("url(") && !hasOnlySafeCssResources(value)) {
+        if (mayContainCssResource(normalizedName, value) && !hasOnlySafeCssResources(value)) {
             element.removeAttribute(attributeName);
             invalidVisualResource = true;
             issues.push({ tagName, reason: "external-resource-remains" });
@@ -2147,14 +2152,31 @@ function firstSafeDataUrl(value: string): string | null {
 }
 
 function isSafeStyle(value: string): boolean {
-    if (/@import|expression\s*\(|javascript\s*:/i.test(value)) return false;
-    return hasOnlySafeCssResources(value);
+    try {
+        const normalized = normalizeShareCardCssForAudit(value);
+        if (/@import|expression\s*\(|javascript\s*:/i.test(normalized)) return false;
+        return hasOnlySafeCssResources(value);
+    } catch {
+        return false;
+    }
+}
+
+function mayContainCssResource(attributeName: string, value: string): boolean {
+    return value.toLowerCase().includes("url(")
+        || (SVG_CSS_RESOURCE_ATTRIBUTES.has(attributeName)
+            && (value.includes("\\") || value.includes("/*")));
 }
 
 function hasOnlySafeCssResources(value: string): boolean {
+    let normalized: string;
+    try {
+        normalized = normalizeShareCardCssForAudit(value);
+    } catch {
+        return false;
+    }
     URL_FUNCTION_RE.lastIndex = 0;
     let match: RegExpExecArray | null;
-    while ((match = URL_FUNCTION_RE.exec(value))) {
+    while ((match = URL_FUNCTION_RE.exec(normalized))) {
         if (!isAllowedVisualResourceUri(match[2] ?? "")) return false;
     }
     return true;

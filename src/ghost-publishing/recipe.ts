@@ -80,7 +80,7 @@ export function selectRecipe(
     profile: SitePublishingProfile,
 ): RecipeSelection {
     const normalizedLanguages = [...new Set(capabilities.codeLanguages.map((language) => language.toLowerCase()))].sort();
-    const knownLanguages = normalizedLanguages.filter((language) => language in PRISM_GRAMMARS);
+    const knownLanguages = normalizedLanguages.filter((language) => Object.prototype.hasOwnProperty.call(PRISM_GRAMMARS, language));
     const needsPrism = knownLanguages.length > 0;
     const needsMermaid = capabilities.hasMermaid;
     const needsKatex = capabilities.hasInlineMath || capabilities.hasDisplayMath;

@@ -80,8 +80,7 @@ describe("paginateShareCardMarkdown", () => {
         const visual = "![chart](data:image/png;base64,AAAA)";
         const pages = await paginateShareCardMarkdown(
             ["before", visual, "after"],
-            (content) => content !== `before\n\n${visual}\n\nafter`
-                && content !== "before\n\n" + visual + "\n\nafter",
+            (content) => content !== `before\n\n${visual}\n\nafter`,
         );
 
         expect(pages).toHaveLength(2);

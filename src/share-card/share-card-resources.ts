@@ -757,10 +757,13 @@ function decodeCssEscapes(value: string): string {
     return decoded;
 }
 
+/** Normalize CSS syntax for resource checks; never use this to rewrite user text. */
+export function normalizeShareCardCssForAudit(value: string): string {
+    return decodeCssEscapes(value.replace(/\/\*[\s\S]*?\*\//g, ""));
+}
+
 function validateSvgCssReferences(css: string): void {
-    const normalized = decodeCssEscapes(
-        decodeXmlCharacterReferences(css).replace(/\/\*[\s\S]*?\*\//g, ""),
-    );
+    const normalized = normalizeShareCardCssForAudit(decodeXmlCharacterReferences(css));
     if (UNSAFE_SVG_MARKUP_RE.test(normalized)) unsafeSvg();
     SVG_RESOURCE_URL_RE.lastIndex = 0;
     let match: RegExpExecArray | null;

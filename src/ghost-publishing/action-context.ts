@@ -224,15 +224,8 @@ export async function createGhostActionContext(options: GhostActionContextOption
         }
     }
     async function resource(plan: ExportResourcePlan): Promise<GhostPreparedImage> {
-        const owners = plan.resolvedPath ? resourceAdmissions.get(plan.resolvedPath) : undefined;
-        const resourceGuard: GhostPublishingSourceGuard = plan.resolvedPath && owners ? {
-            ...sourceGuard,
-            isPathAllowed: path => {
-                try { assertPath(path); return true; } catch { return false; }
-            },
-        } : sourceGuard;
         const image = await prepareGhostResource(plan, { host: trackedHost(), client: options.client, isDesktop,
-            guard: resourceGuard, sourceValidity: () => sourceGuard.isCurrent(), gate, siteId, siteUrl: adapter.site });
+            guard: sourceGuard, sourceValidity: () => sourceGuard.isCurrent(), gate, siteId, siteUrl: adapter.site });
         assertPreparing();
         return { ...image, role: ghostResourceRole(plan) };
     }

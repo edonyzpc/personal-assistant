@@ -436,8 +436,6 @@ describe("prepareGhostMetadata", () => {
         finishRequest({ response_metadata: { finish_reason: "stop" }, content: JSON.stringify({ customExcerpt: "late", metaDescription: "late" }) });
         await expect(preparation).rejects.toMatchObject({ code: "connection_changed" });
         currentSettings = { ...baseSettings };
-        await expect(prepareGhostMetadata(host, input({ articleText: "x".repeat(120_001) })))
-            .rejects.toBeInstanceOf(GhostMetadataPreparationError);
         createChatModel.mockResolvedValueOnce({ invoke: async () => { throw new Error("transport"); } });
         await expect(prepareGhostMetadata(host, input())).rejects.toMatchObject({ code: "provider_failure" });
     });

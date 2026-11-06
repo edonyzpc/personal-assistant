@@ -289,7 +289,7 @@ export class ShareCardModal extends Modal {
             try {
                 await registerShareCardFontFace(this.contentEl.ownerDocument);
             } catch (error) {
-                if (this.fontRegistrationHeld) {
+                if (this.isCurrent(token) && this.fontRegistrationHeld) {
                     unregisterShareCardFontFace(this.contentEl.ownerDocument);
                     this.fontRegistrationHeld = false;
                 }
@@ -323,14 +323,6 @@ export class ShareCardModal extends Modal {
             yieldToPlatform: () => waitForShareCardPaginationFrame(
                 this.contentEl.ownerDocument,
             ),
-            refineBoundaries: typeof renderer.prepareBlockBoundaryWindow === "function"
-                ? (blockIndex, sourceStart, sourceEnd) => renderer.prepareBlockBoundaryWindow(
-                    blockIndex,
-                    sourceStart,
-                    sourceEnd,
-                    renderOptions,
-                )
-                : undefined,
         };
         const runPagination = (
             candidateFit: ShareCardFitPredicate,

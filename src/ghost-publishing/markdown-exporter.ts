@@ -629,7 +629,7 @@ function footnoteDefinitionCard(
     const bodyOffset = definitionOffset + Math.max(0, token?.content.indexOf(bodyText) ?? 0);
     const body = renderInlineMarkdown(bodyText, context, line, bodyOffset);
     return htmlCardNode(
-        `<section class="pa-ghost-footnotes"><p id="user-content-fn-${id}"><sup>${escapeHtml(id)}</sup> ${body}</p></section>`,
+        `<section class="pa-ghost-footnotes"><p id="user-content-fn-${escapeHtml(id)}"><sup>${escapeHtml(id)}</sup> ${body}</p></section>`,
     );
 }
 

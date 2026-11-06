@@ -1354,6 +1354,34 @@ describe("Ghost publishing deterministic export", () => {
         expect(result.resources.map((resource) => resource.source)).toEqual(["https://example.invalid/task.png"]);
     });
 
+    it("escapes footnote identifiers in generated HTML while preserving matching links", async () => {
+        const id = 'x"><img/src=x/onerror=alert(1)>';
+        const escaped = 'x&quot;&gt;&lt;img/src=x/onerror=alert(1)&gt;';
+        const result = await prepareGhostExport({
+            targetPath: "Footnote.md",
+            host: createHost([fakeFile("Footnote.md", `Reference[^${id}].\n\n[^${id}]: Note`)]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        const html = result.lexical.root.children.filter(node => node.type === "html").map(node => String(node.html));
+        expect(html).toEqual([
+            `<p class="pa-ghost-footnote-reference">Reference<sup class="pa-ghost-footnote-ref" id="user-content-fnref-${escaped}"><a href="#user-content-fn-${escaped}">${escaped}</a></sup>.</p>`,
+            `<section class="pa-ghost-footnotes"><p id="user-content-fn-${escaped}"><sup>${escaped}</sup> Note</p></section>`,
+        ]);
+    });
+
+    it.each(["constructor", "__proto__"])("preserves unsupported %s code without treating inherited properties as grammars", async language => {
+        const result = await prepareGhostExport({
+            targetPath: "Code.md",
+            host: createHost([fakeFile("Code.md", `\`\`\`${language}\nexact code\n\`\`\``)]),
+            guard: allowAllGuard(), siteProfile: profile,
+        });
+        expect(result.lexical.root.children).toEqual([expect.objectContaining({ type: "codeblock", language, code: "exact code\n" })]);
+        expect(result.warnings).toEqual([expect.objectContaining({ code: "unknown-highlight-language" })]);
+        expect(result.recipe.selection.needsPrism).toBe(false);
+        expect(result.recipe.head).toBe("");
+        expect(result.recipe.foot).toBe("");
+    });
+
     it("preserves table links and images plus following indented code", async () => {
         const markdown = [
             "| A | B |",
