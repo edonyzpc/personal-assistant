@@ -7,7 +7,7 @@ import type { CreateModelForExtraction } from "../src/ai-services/memory-extract
 import { MemoryStatusNotifier } from "../src/plugin/memory-status";
 import { MemoryPluginIntegration } from "../src/memory/plugin-integration";
 import { PageletCostTracker } from "../src/pagelet/pa-review-cost";
-import { PluginManager } from "../src/plugin";
+import { AIUtils } from "../src/ai-services/ai-utils";
 import { createPluginHarness } from "./helpers/plugin-harness";
 
 function createStatusNotifier(): MemoryStatusNotifier {
@@ -26,10 +26,10 @@ describe("MemoryPluginIntegration", () => {
             response_metadata: { status: "completed", output: [] },
         });
         const model = {
-            invoke: jest.fn(async () => sdkResult),
+            invoke: jest.fn(async (_prompt: string, _options?: { signal?: AbortSignal }) => sdkResult),
         };
-        const createChatModel = jest.spyOn(PluginManager.prototype, "createChatModel")
-            .mockResolvedValue(model as unknown as Awaited<ReturnType<PluginManager["createChatModel"]>>);
+        const createChatModel = jest.spyOn(AIUtils.prototype, "createChatModel")
+            .mockResolvedValue(model as unknown as Awaited<ReturnType<AIUtils["createChatModel"]>>);
         try {
             const { plugin } = createPluginHarness();
             (plugin as unknown as { pageletCostTracker: PageletCostTracker }).pageletCostTracker
@@ -40,9 +40,17 @@ describe("MemoryPluginIntegration", () => {
                 };
             }).memoryIntegration;
 
-            const extractionModel = await integration.options.createExtractionModel();
-            expect(createChatModel).toHaveBeenCalledWith(0, { maxTokens: 256 });
+            const controller = new AbortController();
+            const prepareProviderRequest = jest.fn(async () => undefined);
+            const onProviderRequestStart = jest.fn();
+            const extractionModel = await integration.options.createExtractionModel({
+                signal: controller.signal, prepareProviderRequest, onProviderRequestStart,
+            });
+            expect(createChatModel).toHaveBeenCalledWith(0, expect.objectContaining({
+                maxTokens: 256, prepareProviderRequest, onProviderRequestStart,
+            }));
             expect(await extractionModel?.invoke("extraction prompt")).toBe("projected extraction text");
+            expect(model.invoke).toHaveBeenCalledWith("extraction prompt", { signal: controller.signal });
         } finally {
             createChatModel.mockRestore();
         }

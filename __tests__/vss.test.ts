@@ -4292,6 +4292,59 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(vectorOnlyArgs[9]).toEqual(RETRIEVAL_CALIBRATION_PROFILE.baseline.standard);
     });
 
+    it('rechecks the live lexical flag after validating current profile note bodies', async () => {
+        const { plugin, vss, a, mockVault } = await createProfiles();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const readyStatus: LexicalIndexStatus = { state: 'ready', chunkCount: 2, lexicalRowCount: 2 };
+        const searchHybridDetailed = jest.fn<() => Promise<import('../src/vss/types').VectorHybridSearchResult>>()
+            .mockResolvedValueOnce({
+                results: [{ score: 1, doc: new Document({ pageContent: 'old body', metadata: { path: 'note.md' } }) }],
+                sourceEpoch: 'lexical-epoch',
+                lexical: { attempted: true, state: 'ready' },
+            })
+            .mockResolvedValueOnce({
+                results: [{ score: 0.8, doc: new Document({ pageContent: 'old body', metadata: { path: 'vector.md' } }) }],
+                sourceEpoch: 'vector-epoch',
+                lexical: { attempted: false, state: 'unavailable', reason: 'feature_disabled' },
+            });
+        Object.assign(a, { searchHybridDetailed, getLexicalStatus: jest.fn(async () => readyStatus) });
+        Object.setPrototypeOf(a, MockSqliteVectorIndex.prototype);
+        a.records.set('vector.md', { ...a.records.get('note.md')!, path: 'vector.md' });
+        await vss.getMemoryReadiness();
+        const sourceReadStarted = createDeferred<void>();
+        const sourceReadRelease = createDeferred<string>();
+        mockVault.getAbstractFileByPath.mockImplementation((path) => createTFile(path, { mtime: 1, ctime: 1, size: 8 }));
+        mockVault.read.mockImplementation(async (file) => {
+            if (file.path === 'note.md') {
+                sourceReadStarted.resolve();
+                return sourceReadRelease.promise;
+            }
+            return 'old body';
+        });
+        const queryEmbeddingOut: { value?: number[]; sourceEpoch?: string } = {};
+        const searching = vss.searchHybrid('query', { queryEmbeddingOut });
+        try {
+            await sourceReadStarted.promise;
+            plugin.settings.retrievalOptimizationFlags = { lexicalProfile: false };
+            sourceReadRelease.resolve('old body');
+
+            await expect(searching).resolves.toEqual([
+                expect.objectContaining({ doc: expect.objectContaining({ metadata: expect.objectContaining({ path: 'vector.md' }) }) }),
+            ]);
+            expect(searchHybridDetailed).toHaveBeenCalledTimes(2);
+            expect(mockVault.read.mock.calls.map(([file]) => file.path)).toEqual(['note.md', 'vector.md']);
+            expect(queryEmbeddingOut.sourceEpoch).toBe('vector-epoch');
+            expect(vss.getMemoryStatusSnapshot()).toMatchObject({
+                lexicalSearchAttempted: false,
+                lexicalSearchReason: 'feature_disabled',
+            });
+        } finally {
+            sourceReadRelease.resolve('old body');
+            await searching;
+            await vss.dispose();
+        }
+    });
+
     it('discards a lexical-fused result when a microtask disables the live flag during the second status refresh', async () => {
         const { plugin } = createPlugin();
         plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };

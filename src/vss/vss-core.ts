@@ -2955,11 +2955,15 @@ export class VSS {
                     await runVectorOnlyFallback();
                 }
             }
+            let currentResults = await this.filterCurrentProfileResults(result.results, requestIdentity);
+            assertInvocationIndexCurrent();
+            // Current-profile validation reads note bodies asynchronously too.
             // This is the linearization point for the live rollout flag. When
             // it remains enabled there is no await between this check and the
             // result/status commit, so a late disable cannot cross the boundary.
             if (lexicalEnabledForAttempt && !this.isLexicalProfileEnabled()) {
                 await runVectorOnlyFallback();
+                currentResults = await this.filterCurrentProfileResults(result.results, requestIdentity);
             }
             assertInvocationIndexCurrent();
             if (options?.queryEmbeddingOut) {
@@ -2977,8 +2981,6 @@ export class VSS {
                     durationMs: result.lexical.durationMs,
                 });
             }
-            const currentResults = await this.filterCurrentProfileResults(result.results, requestIdentity);
-            assertInvocationIndexCurrent();
             return currentResults.map(normalizeSearchResult);
         }, "foreground", false, signal).catch((error) => {
             const errorCode = getErrorCode(error);

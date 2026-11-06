@@ -383,15 +383,13 @@ export class MemoryAdmissionCoordinator {
                     && candidate.partition.key === this.opaqueVaultKey
                 ));
                 if (!item) throw new AdmissionError("queue_item_missing");
-                const boundEnvelope = readAdmissionEnvelope(item);
-                if (!boundEnvelope) throw new AdmissionError("admission_envelope_missing");
-                semanticReceipt = boundEnvelope.chatSemanticReceipt;
+                const envelope = readAdmissionEnvelope(item);
+                if (!envelope) throw new AdmissionError("admission_envelope_missing");
+                semanticReceipt = envelope.chatSemanticReceipt;
                 summary = item.claim.trim();
                 assertCurrent();
                 if (semanticReceipt) journal = requireAdmissionEnvelope(draft, this.opaqueVaultKey, occurredAt, true);
                 if (item.status === "applied") {
-                    const envelope = readAdmissionEnvelope(item);
-                    if (!envelope) throw new AdmissionError("admission_envelope_missing");
                     const claim = findExistingAdmissionClaim(
                         draft,
                         envelope,
@@ -403,8 +401,6 @@ export class MemoryAdmissionCoordinator {
                 if (item.status !== "suggested" && item.status !== "edited") {
                     throw new AdmissionError("queue_item_not_reviewable");
                 }
-                const envelope = readAdmissionEnvelope(item);
-                if (!envelope) throw new AdmissionError("admission_envelope_missing");
                 if (!input.dataBoundaryAllowed) throw new AdmissionError("data_boundary_denied");
                 const partition: MemoryPartitionKey = { kind: "vault", key: this.opaqueVaultKey };
                 if (hasSuppressionMatch(
@@ -417,7 +413,6 @@ export class MemoryAdmissionCoordinator {
                     throw new AdmissionError("suppression_matched");
                 }
 
-                const priorQueue = cloneDeviceQueueItem(item);
                 item.status = "applied";
                 item.updatedAt = occurredAt.toISOString();
                 appendQueueCompatibilityDelta(draft, journal, item, occurredAt);
@@ -438,7 +433,6 @@ export class MemoryAdmissionCoordinator {
                     idFactory: this.idFactory,
                 });
                 if (journal && !buildLegacyMemoryRollbackProjection(draft, this.opaqueVaultKey, occurredAt).ok) {
-                    Object.assign(item, priorQueue);
                     throw new AdmissionError("rollback_projection_invalid");
                 }
                 return {

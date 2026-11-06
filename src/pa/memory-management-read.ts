@@ -579,7 +579,6 @@ function evidenceIdentityDomainId(identity: string): string | undefined {
 }
 
 function permittedItems(state: PreparedManagementState): MemoryManagementQueryItem[] {
-    const boundary = currentBoundary(state);
     const governedState = state.governed;
     const revisionByClaim = new Map(governedState?.claims.map(claim => [
         claim.id,
@@ -595,8 +594,7 @@ function permittedItems(state: PreparedManagementState): MemoryManagementQueryIt
         const revision = governedClaim ? revisionByClaim.get(governedClaim.id) : undefined;
         const forgotten = item.lifecycle === "forgotten_marker";
         const permitted = forgotten
-            || (governedClaim && revision ? provenanceAllowed(revision.provenance, boundary, state)
-                : legacyProvenanceAllowed(item.provenance, boundary, state));
+            || provenanceAllowed(governedClaim && revision ? revision.provenance : item.provenance, state);
         if (!permitted) continue;
         items.push(projectItem(item, governedClaim?.activeRevisionId, revision, forgotten));
     }
@@ -604,23 +602,7 @@ function permittedItems(state: PreparedManagementState): MemoryManagementQueryIt
 }
 
 function provenanceAllowed(
-    provenance: readonly PersistedMemoryProvenance[],
-    _boundary: string,
-    state: PreparedManagementState,
-): boolean {
-    if (provenance.length === 0) return false;
-    return provenance.every(entry => {
-        if (entry.kind === "note") return isPathAllowedState(state, entry.sourceRef.path);
-        if (entry.kind === "conversation" || entry.kind === "explicit_setting"
-            || entry.kind === "host_user_request") return true;
-        return entry.dataBoundaryFingerprint === currentBoundary(state)
-            && entry.representativeSourceRefs.every(ref => isPathAllowedState(state, ref.path));
-    });
-}
-
-function legacyProvenanceAllowed(
-    provenance: readonly MemoryControlCenterProvenance[],
-    _boundary: string,
+    provenance: readonly (PersistedMemoryProvenance | MemoryControlCenterProvenance)[],
     state: PreparedManagementState,
 ): boolean {
     if (provenance.length === 0) return false;
@@ -853,11 +835,11 @@ function usageStateFingerprint(
                 contextOnly,
             referencedRevisions: referencedRevisions.map(revision => ({
                 id: revision.id,
-                disclosable: provenanceAllowed(revision.provenance, "", state),
+                disclosable: provenanceAllowed(revision.provenance, state),
             })),
                 ...(contextOnly ? {
                     contextDisclosable: activeRevision
-                        ? provenanceAllowed(activeRevision.provenance, "", state)
+                        ? provenanceAllowed(activeRevision.provenance, state)
                         : false,
                 } : {}),
             };
@@ -1081,7 +1063,7 @@ function permittedHistoricalClaims(
         const claim = state.governed?.claims.find(candidate => candidate.id === claimId);
         const revision = state.governed?.revisions.find(candidate => candidate.id === revisionId && candidate.claimId === claimId);
         return claim && revision && claim.lifecycle !== "forgotten_tombstone" && claim.lifecycle !== "forget_pending"
-            && provenanceAllowed(revision.provenance, "", state);
+            && provenanceAllowed(revision.provenance, state);
     });
 }
 
@@ -1099,6 +1081,6 @@ function permittedHistoricalContextClaims(
         return Boolean(claim && revision
             && claim.lifecycle !== "forgotten_tombstone"
             && claim.lifecycle !== "forget_pending"
-            && provenanceAllowed(revision.provenance, "", state));
+            && provenanceAllowed(revision.provenance, state));
     });
 }

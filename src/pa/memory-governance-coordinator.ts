@@ -178,9 +178,13 @@ export class MemoryGovernanceCoordinator {
         if (!payload) return Promise.resolve(failure("invalid_writing_style"));
         if (!input.scopeAllowed) return Promise.resolve(failure("scope_not_allowed"));
         if (!input.dataBoundaryAllowed) return Promise.resolve(failure("data_boundary_denied"));
+        const isCurrent = input.isCurrent;
+        const assertSourceCurrent = isCurrent ? () => {
+            if (!isCurrent()) throw new CoordinatorError("writing_style_source_changed");
+        } : undefined;
         return this.serialize(async () => this.runDomainMutation(() => this.repository.transact((draft) => {
             const occurredAt = this.nowIso();
-            if (input.isCurrent && !input.isCurrent()) throw new CoordinatorError("writing_style_source_changed");
+            assertSourceCurrent?.();
             this.assertMutationEnvelope(draft, occurredAt);
             const existing = draft.revisions.find((revision) => revision.writingStyle?.explicitActionId === payload.explicitActionId);
             if (existing) {
@@ -216,7 +220,7 @@ export class MemoryGovernanceCoordinator {
             draft.projectionLinks.push(link);
             // Context-only samples never acquire Type A/legacy projection or rollback copies.
             return { ...receipt(claimId, event), revisionId };
-        })));
+        }, assertSourceCurrent)));
     }
 
     correct(input: {

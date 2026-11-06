@@ -75,14 +75,16 @@ describe("existing insight read port", () => {
         const listSavedInsights = jest.fn(() => [
             insight("archived", "work/a.md", "archived"),
             insight("private", "private/secret.md"),
+            insight("missing", "work/missing.md"),
             insight("idea", null),
         ]);
         const port = createInsightReadPort({
             isRuntimeCurrent: () => true,
             getVaultInsights: () => ({ status: "not_loaded", snapshot: null, boundary: "b1", isSourceCurrent: () => false }),
             listSavedInsights, getBoundary: () => "b1",
-            isPathAllowed: () => true,
-            getSourceRevision: path => path === "work/a.md" ? { identity: file, mtime, ctime: 1, size: 8 } : null,
+            isPathAllowed: path => !path.startsWith("private/"),
+            getSourceRevision: path => path === "work/a.md" || path === "private/secret.md"
+                ? { identity: file, mtime, ctime: 1, size: 8 } : null,
         });
         const result = port.querySavedInsights({ limit: 10 });
         expect(result.content.matchCount).toBe(2);

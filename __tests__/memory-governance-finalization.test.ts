@@ -16,11 +16,13 @@ import type { LegacyMemoryRollbackProjection } from "../src/pa/memory-governance
 
 const NOW = new Date("2026-07-10T08:00:00.000Z");
 
-async function migratedRepository(): Promise<InMemoryMemoryGovernanceRepository> {
-    const repository = new InMemoryMemoryGovernanceRepository();
+async function migratedRepository(
+    repository = new InMemoryMemoryGovernanceRepository(),
+    opaqueVaultKey = "vault-a",
+): Promise<InMemoryMemoryGovernanceRepository> {
     await new MemoryGovernanceMigrationCoordinator({
         repository,
-        opaqueVaultKey: "vault-a",
+        opaqueVaultKey,
         payload: {
             memoryGovernance: {
                 records: [{
@@ -174,6 +176,10 @@ describe("Memory governance finalization", () => {
 
     it("clears legacy slices, verifies readback, then removes recovery payload", async () => {
         const repository = await migratedRepository();
+        await migratedRepository(repository, "vault-b");
+        const before = await repository.initialize();
+        const otherClaim = before.claims.find((claim) => claim.partition.key === "vault-b")!;
+        expect(otherClaim.legacyCompatibility?.recordIdFingerprints).toHaveLength(1);
         let legacy = { records: [{}], memoryQueueItems: [{}], confirmedMemoryCount: 30, memoryAutoAcceptPaused: true };
         const coordinator = new MemoryGovernanceFinalizationCoordinator({
             repository,
@@ -193,7 +199,14 @@ describe("Memory governance finalization", () => {
         });
         const state = await repository.initialize();
         expect(state.migrationStates["vault-a"]).toMatchObject({ phase: "finalized" });
-        expect(state.rollbackPayloadEntries).toEqual([]);
+        expect(state.claims.find((claim) => claim.partition.key === "vault-a")?.legacyCompatibility)
+            .toBeUndefined();
+        expect(state.claims.find((claim) => claim.id === otherClaim.id)).toEqual(otherClaim);
+        expect(state.revisions).toEqual(before.revisions);
+        expect(state.projectionLinks).toEqual(before.projectionLinks);
+        expect(state.migrationStates["vault-b"]).toEqual(before.migrationStates["vault-b"]);
+        expect(state.rollbackPayloadEntries).toEqual(before.rollbackPayloadEntries
+            .filter((entry) => entry.partition.key === "vault-b"));
         expect(state.migrationDeltas).toEqual([]);
     });
 

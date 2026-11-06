@@ -13,7 +13,7 @@ import {
     type UserProfileSnapshot,
     type UserProfileStore,
 } from "../ai-services/memory-extraction";
-import type { VaultInsightsSourceReceipt } from "../ai-services/memory-extraction/extraction-scheduler";
+import type { CreateModelForExtraction, VaultInsightsSourceReceipt } from "../ai-services/memory-extraction/extraction-scheduler";
 import type { MemoryHost } from "./MemoryHost";
 import { MemoryManager } from "../memory-manager";
 import { VSS } from "../vss";
@@ -36,7 +36,7 @@ export interface MemoryPluginIntegrationOptions {
     createLegacyProfileStore: () => UserProfileStore;
     createGovernedProfileStore: () => UserProfileStore;
     createExistingProfileReader: () => ExistingUserProfileReader;
-    createExtractionModel: () => Promise<{ invoke: (prompt: string) => Promise<string> } | null>;
+    createExtractionModel: CreateModelForExtraction;
     admitTypeACandidates: (batch: TypeAAdmissionBatch) => Promise<TypeAAdmissionResult>;
     captureTypeAAdmissionBaseline: NonNullable<ConstructorParameters<typeof MemoryExtractionScheduler>[0]["captureTypeAAdmissionBaseline"]>;
     getTypeAProcessedTurn: NonNullable<ConstructorParameters<typeof MemoryExtractionScheduler>[0]["getTypeAProcessedTurn"]>;

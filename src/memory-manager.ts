@@ -1173,9 +1173,7 @@ export class MemoryManager {
                 if (summary.failed > 0) {
                     throw new Error(`Background memory update skipped ${summary.failed} note(s).`);
                 }
-                if (!summary.aborted) {
-                    this.host.notifyStatusChanged();
-                }
+                this.host.notifyStatusChanged();
                 if (this.vss.hasDirtyChanges()) {
                     this.scheduleAutoFlush("dirty-pending", QUIET_AUTO_FLUSH_DELAY_MS);
                 }
@@ -1186,9 +1184,7 @@ export class MemoryManager {
                 });
                 if (!this.isLifecycleCurrent(lifecycleToken)) return;
                 if (summary.aborted) return;
-                if (!summary.aborted) {
-                    this.host.notifyStatusChanged();
-                }
+                this.host.notifyStatusChanged();
                 if (summary.dirtyConfirmed > 0 || this.vss.hasDirtyChanges()) {
                     this.scheduleAutoFlush("verify", 0);
                 }
@@ -1216,9 +1212,7 @@ export class MemoryManager {
                 if (summary.failed > 0) {
                     throw new Error(`Background memory reconcile failed for ${summary.failed} note(s).`);
                 }
-                if (!summary.aborted) {
-                    this.host.notifyStatusChanged();
-                }
+                this.host.notifyStatusChanged();
                 if (summary.hasMore) {
                     this.scheduleReconcile(reason, 1_000);
                 }
@@ -1275,9 +1269,7 @@ export class MemoryManager {
             });
             if (abortController.signal.aborted || !this.isLifecycleCurrent(lifecycleToken)) return;
             if (summary.aborted) return;
-            if (!summary.aborted) {
-                this.host.notifyStatusChanged();
-            }
+            this.host.notifyStatusChanged();
             if (summary.dirtyConfirmed > 0 || this.vss.hasDirtyChanges()) {
                 this.scheduleAutoFlush("verify", 0);
             }

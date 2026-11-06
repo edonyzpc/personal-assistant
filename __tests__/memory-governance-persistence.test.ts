@@ -372,7 +372,7 @@ describe("IndexedDbMemoryGovernanceRepository", () => {
         expect(upgraded).toEqual({ ...normalizeDeviceMemoryGovernanceStateV1(original), schemaVersion: 3 });
         expect(factory.backend.version).toBe(3);
         expect(upgraded.revisions[0]).not.toHaveProperty('chatSemanticReceipt');
-        const oldOpen = factory.open('old-writer', oldVersion);
+        const oldOpen = factory.open(getMemoryGovernanceDeviceDbName("personal-assistant"), oldVersion);
         await expect(new Promise((resolve, reject) => { oldOpen.onsuccess = resolve; oldOpen.onerror = () => reject(oldOpen.error); }))
             .rejects.toMatchObject({ name: 'VersionError' });
         expect(await repository.initialize()).toEqual(upgraded); await repository.dispose();
@@ -542,12 +542,19 @@ describe("IndexedDbMemoryGovernanceRepository", () => {
         try {
             const factory = new FakeGovernanceIndexedDbFactory();
             factory.silentOpenCount = 1;
+            const open = jest.spyOn(factory, "open");
             const repository = createIndexedRepository(factory, { openTimeoutMs: 5 });
             const opening = repository.initialize();
 
             jest.advanceTimersByTime(5);
             await expect(opening).rejects.toMatchObject({ code: "database_open_timeout" });
+            const request = open.mock.results[0].value as IDBOpenDBRequest;
+            const lateConnection = factory.connections[0];
+            expect(lateConnection.closeCalls).toBe(0);
+            request.onsuccess?.call(request, {} as Event);
+            expect(lateConnection.closeCalls).toBe(1);
             await repository.dispose();
+            expect(lateConnection.closeCalls).toBe(1);
         } finally {
             jest.useRealTimers();
         }

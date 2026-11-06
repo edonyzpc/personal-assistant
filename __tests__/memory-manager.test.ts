@@ -782,7 +782,7 @@ describe('MemoryManager chat decisions', () => {
             expect(preparationSignal.aborted).toBe(true);
             await manager.waitForIdle();
             expect(plugin.vss.admitPreparedRebuild).not.toHaveBeenCalled();
-            expect(mockNoticeMessages).not.toContain('Could not prepare memory. I will answer normally for now.');
+            expect(mockNoticeMessages).not.toContain('I could not prepare memory this time, so I answered normally.');
         } finally {
             restoreDocument();
         }
@@ -966,13 +966,10 @@ describe('MemoryManager chat decisions', () => {
         plugin.vss.rebuildLocalIndex.mockRejectedValueOnce(new TypeError('null is not an object'));
         const manager = createManager(plugin);
         try {
-            const noticeCountBefore = mockNoticeMessages.length;
             await manager.ensureReadyForChat('question');
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
+            await manager.waitForIdle();
 
-            expect(mockNoticeMessages.length).toBeGreaterThan(noticeCountBefore);
+            expect(mockNoticeMessages).toContain('I could not prepare memory this time, so I answered normally.');
             expect(plugin.settings.memoryApprovalPolicy).toBe('always');
         } finally {
             restoreDocument();
@@ -988,8 +985,10 @@ describe('MemoryManager chat decisions', () => {
         });
         const plugin = createPlugin(plan);
         const rebuildStarted = createDeferred<void>();
+        const rebuildFailure = createDeferred<void>();
         plugin.vss.rebuildLocalIndex.mockImplementation(async () => {
             rebuildStarted.resolve();
+            await rebuildFailure.promise;
             throw new Error('delayed crash');
         });
         const manager = createManager(plugin);
@@ -998,11 +997,13 @@ describe('MemoryManager chat decisions', () => {
             await manager.ensureReadyForChat('question');
             await rebuildStarted.promise;
             manager.stopAutoMaintenance();
-            await Promise.resolve();
-            await Promise.resolve();
+            rebuildFailure.resolve();
+            await manager.waitForIdle();
 
-            expect(mockNoticeMessages).not.toContain('Could not prepare memory. I will answer normally for now.');
+            expect(mockNoticeMessages).not.toContain('I could not prepare memory this time, so I answered normally.');
         } finally {
+            rebuildFailure.resolve();
+            await manager.waitForIdle();
             restoreDocument();
         }
     });

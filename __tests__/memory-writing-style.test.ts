@@ -3,7 +3,7 @@ import { hashWritingStyleText, parseWritingStyle, authorizeWritingStyle, isGover
     renderWritingStyleContext, type WritingStylePayload } from '../src/pa/writing-style';
 import { MemoryGovernanceCoordinator } from '../src/pa/memory-governance-coordinator';
 import { createEmptyDeviceMemoryGovernanceStateV1, InMemoryMemoryGovernanceRepository,
-    normalizeDeviceMemoryGovernanceStateV1, validateDeviceMemoryGovernanceStateV1, type DeviceMemoryGovernanceStateV1 } from '../src/pa/memory-governance-persistence';
+    normalizeDeviceMemoryGovernanceStateV1, type DeviceMemoryGovernanceStateV1 } from '../src/pa/memory-governance-persistence';
 import { selectGovernedMemoryUse, selectGovernedWritingStyles } from '../src/pa/memory-use-projection';
 import { buildGovernedMemoryViewSnapshot } from '../src/pa/memory-governance-view';
 
@@ -14,13 +14,6 @@ function payload(text = '旅行归来，想把沿途的风景分享给朋友。'
 }
 async function harness() {
     const repo = new InMemoryMemoryGovernanceRepository();
-    const transact = repo.transact.bind(repo);
-    jest.spyOn(repo, 'transact').mockImplementation((operation) => transact(async (draft) => {
-        const value = await operation(draft);
-        const validation = validateDeviceMemoryGovernanceStateV1(draft);
-        if (!validation.ok) throw new Error(validation.reason);
-        return value;
-    }));
     await repo.transact((state) => { state.policyStates.vault = { version: 1, mode: 'effect_based', contextProjectionMode: 'governed' }; });
     let next = 0;
     const cleanup = jest.fn(async () => undefined);
@@ -77,6 +70,23 @@ describe('typed style integrity and legacy normalization', () => {
 });
 
 describe('typed style uses the real coordinator lifecycle', () => {
+    it('rejects a style whose source becomes stale before the persistence commit', async () => {
+        const h = await harness();
+        const before = await h.repo.initialize();
+        let current = true;
+        const transact = h.repo.transact.bind(h.repo);
+        jest.spyOn(h.repo, 'transact').mockImplementation((operation, assertCurrent) => transact(async (draft) => {
+            const result = await operation(draft);
+            current = false;
+            return result;
+        }, assertCurrent));
+
+        await expect(h.coordinator.rememberWritingStyle({
+            writingStyle: payload(), scopeAllowed: true, dataBoundaryAllowed: true, isCurrent: () => current,
+        })).resolves.toEqual({ ok: false, reason: 'writing_style_source_changed' });
+        expect(await h.repo.initialize()).toEqual(before);
+    });
+
     it('requires host authorization, idempotently saves exact style, and never creates legacy/profile copies', async () => {
         const h = await harness(); const first = await h.add(); const duplicate = await h.add();
         expect(duplicate.claimId).toBe(first.claimId);

@@ -130,6 +130,54 @@ describe('Type A semantic extraction', () => {
 });
 
 describe('semantic scheduler source lifetime and governed-only admission', () => {
+    it.each([
+        [true, 'unchanged'], [true, 'source-edit'], [true, 'stop'],
+        [false, 'unchanged'], [false, 'source-edit'], [false, 'stop'],
+    ] as const)('revalidates extraction at delayed transport dispatch (semantic=%s, %s)', async (semanticTypeA, change) => {
+        const data = input('Remember I prefer concise answers.');
+        delete data.turns[0].user.hostProvenance;
+        let turns = data.turns;
+        let entered!: () => void;
+        let release!: () => void;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        const dispatch = jest.fn();
+        const admit = jest.fn(async () => ({ status: 'processed' as const }));
+        const scheduler = new MemoryExtractionScheduler({
+            app: {} as App,
+            chatHistoryManager: {
+                captureSourceLifetime: () => () => true,
+                findConversation: async () => data.conversation,
+                getTurns: async () => turns,
+            } as unknown as ChatHistoryManager,
+            userProfileStore: new MemoryUserProfileStore(), semanticTypeA,
+            admitTypeACandidates: admit,
+            createModelForExtraction: async (admission?: {
+                signal?: AbortSignal;
+                prepareProviderRequest?: () => void | Promise<void>;
+                onProviderRequestStart?: () => void;
+            }) => ({ invoke: async () => {
+                entered();
+                await pending;
+                await admission?.prepareProviderRequest?.();
+                admission?.onProviderRequestStart?.();
+                if (admission?.signal?.aborted) throw new Error('Cancelled transport');
+                dispatch();
+                return '{"extractions":[]}';
+            } }),
+        });
+        try {
+            const extraction = scheduler.runTypeAExtraction('conversation');
+            await started;
+            if (change === 'source-edit') turns = [];
+            if (change === 'stop') scheduler.stopAdmission();
+            release();
+            await extraction;
+            expect(dispatch).toHaveBeenCalledTimes(change === 'unchanged' ? 1 : 0);
+            if (change !== 'unchanged') expect(admit).not.toHaveBeenCalled();
+        } finally { scheduler.dispose(); }
+    });
+
     async function canonicalSetup(options: { wrongCachedId?: boolean; duplicate?: 'key' | 'id' | 'canonical-id' } = {}) {
         const data = input();
         const extractor = new TypeAUserProfileExtractor();

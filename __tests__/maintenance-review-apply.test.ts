@@ -146,6 +146,35 @@ describe("Maintenance Review move apply", () => {
         expect(host.paths.has("Notes/Quick Capture.md")).toBe(false);
     });
 
+    it.each([
+        ["apply", "Inbox/Quick Capture.md", "source_denied"],
+        ["apply", "Notes/Quick Capture.md", "target_denied"],
+        ["undo", "Notes/Quick Capture.md", "boundary_denied"],
+        ["undo", "Inbox/Quick Capture.md", "boundary_denied"],
+    ] as const)("rejects %s when %s is revoked during existence checks", async (operation, deniedPath, reason) => {
+        const proposal = moveProposal();
+        const denied = new Set<string>();
+        const host = fakeHost(["Inbox", "Notes", "Inbox/Quick Capture.md"], {
+            allowed: (path) => !denied.has(path),
+        });
+        const applied = operation === "undo" ? await applyMaintenanceMoveProposal(proposal, host) : null;
+        if (applied && !applied.ok) throw new Error(`Expected setup move: ${applied.message}`);
+        const pathsBefore = [...host.paths];
+        const currentSource = operation === "undo" ? "Notes/Quick Capture.md" : "Inbox/Quick Capture.md";
+        host.exists = async (path) => {
+            const exists = host.paths.has(path);
+            if (path === currentSource) denied.add(deniedPath);
+            return exists;
+        };
+
+        const result = applied?.ok
+            ? await undoMaintenanceMoveAction(applied.action, host)
+            : await applyMaintenanceMoveProposal(proposal, host);
+
+        expect(result).toMatchObject({ ok: false, reason });
+        expect([...host.paths]).toEqual(pathsBefore);
+    });
+
     it("rejects inbox move targets outside the declared maintenance destination", async () => {
         const proposal = moveProposal({
             preview: {

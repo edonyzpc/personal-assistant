@@ -25,8 +25,11 @@ import {
     type ChatMemoryAdmissionEvidence,
 } from "../../pa/chat-memory-admission";
 import { verifyChatMemorySemanticReceipt, type ChatMemorySemanticProjection } from "../../pa/chat-memory-semantic-receipt";
+import type { ProviderRequestOptions } from "../ai-utils";
 
-export type CreateModelForExtraction = () => Promise<{ invoke: (prompt: string) => Promise<string> } | null>;
+export type CreateModelForExtraction = (admission: Pick<ProviderRequestOptions,
+    "prepareProviderRequest" | "onProviderRequestStart"> & { signal: AbortSignal }
+) => Promise<{ invoke: (prompt: string) => Promise<string> } | null>;
 
 export interface TypeAAdmissionBatch {
     semanticProjections?: ChatMemorySemanticProjection[];
@@ -328,6 +331,8 @@ export class MemoryExtractionScheduler {
     ): Promise<UserProfileSnapshot | null> {
         if (this.semanticTypeA) return this.runSemanticTypeAExtraction(conversationId, scheduledBaseline);
         if (this.admissionStopped) return null;
+        const sourceLifetime = this.chatHistoryManager.captureSourceLifetime?.(conversationId);
+        const isCurrent = () => !this.admissionStopped && (!sourceLifetime || sourceLifetime());
         const baselineOutcome = this.admitTypeACandidates
             ? scheduledBaseline ?? this.captureTypeAAdmissionBaselineOutcome()
             : undefined;
@@ -358,8 +363,23 @@ export class MemoryExtractionScheduler {
             chatMessages: collectChatMemorySources(conversationId, newTurns)
                 .map(({ text: _text, ...source }) => ({ ...source })),
         };
-        const extracted = await this.extractTypeACandidates(conversation, newTurns);
-        if (this.admissionStopped) return null;
+        const sourceIdentity = JSON.stringify(collectChatMemorySources(conversationId, newTurns));
+        const checkSources = async () => {
+            if (!isCurrent()) return false;
+            const currentTurns = await this.chatHistoryManager.getTurns(conversationId);
+            return isCurrent() && JSON.stringify(collectChatMemorySources(conversationId,
+                currentTurns.filter((turn) => turn.turnIndex > lastProcessedTurn))) === sourceIdentity;
+        };
+        const extracted = await this.extractTypeACandidates(conversation, newTurns, {
+            signal: this.admissionController.signal,
+            prepareProviderRequest: async () => {
+                if (!await checkSources()) throw new Error("Extraction source expired");
+            },
+            onProviderRequestStart: () => {
+                if (!isCurrent()) throw new Error("Extraction source expired");
+            },
+        });
+        if (!await checkSources()) return null;
         // An extractor or model adapter cannot bypass either admission route.
         const candidates = extracted.filter((candidate) => isChatMemoryRecordAdmissible(candidate, evidence));
         if (this.admitTypeACandidates) {
@@ -417,14 +437,22 @@ export class MemoryExtractionScheduler {
             const sources = collectChatMemorySemanticSources(conversationId, newTurns);
             if (sources.length === 0) return this.userProfileSnapshot;
             const sourceIdentity = JSON.stringify(sources);
-            const model = await this.createModelForExtraction();
-            if (!isCurrent() || !model) return null;
             const checkSources = async () => {
                 if (!isCurrent()) return false;
                 const currentTurns = await manager.getTurns(conversationId);
                 return isCurrent() && JSON.stringify(collectChatMemorySemanticSources(conversationId,
                     currentTurns.filter((turn) => turn.turnIndex > cursor))) === sourceIdentity;
             };
+            const model = await this.createModelForExtraction({
+                signal: this.admissionController.signal,
+                prepareProviderRequest: async () => {
+                    if (!await checkSources()) throw new Error("Semantic extraction source expired");
+                },
+                onProviderRequestStart: () => {
+                    if (!isCurrent()) throw new Error("Semantic extraction source expired");
+                },
+            });
+            if (!isCurrent() || !model) return null;
             if (!await checkSources()) return null;
             const extracted = await this.typeAExtractor.extractSemanticCandidatesWithLLM({ conversation, turns: newTurns, now: this.now }, async (prompt) => {
                 if (!isCurrent()) throw new Error("Semantic extraction source expired");
@@ -481,11 +509,12 @@ export class MemoryExtractionScheduler {
     private async extractTypeACandidates(
         conversation: PersistedConversation,
         turns: PersistedTurn[],
+        admission: Parameters<CreateModelForExtraction>[0],
     ): Promise<UserProfileCandidate[]> {
         const input = { conversation, turns, now: this.now };
         if (this.createModelForExtraction && !this.isMobileHidden()) {
             try {
-                const model = await this.createModelForExtraction();
+                const model = await this.createModelForExtraction(admission);
                 if (this.admissionStopped) return [];
                 if (model) {
                     return await this.typeAExtractor.extractCandidatesWithLLM(

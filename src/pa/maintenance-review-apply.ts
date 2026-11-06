@@ -179,6 +179,14 @@ export async function applyMaintenanceMoveProposal(
         return { ok: false, reason: "target_exists", message: "The target path already exists. Re-run Maintenance Review." };
     }
 
+    // Data Boundary settings can change while the adapter checks existence.
+    if (!host.isPathAllowed(oldPath)) {
+        return { ok: false, reason: "source_denied", message: "The source note is outside the current Data Boundary." };
+    }
+    if (!host.isPathAllowed(newPath)) {
+        return { ok: false, reason: "target_denied", message: "The target path is outside the current Data Boundary." };
+    }
+
     try {
         await host.rename(oldPath, newPath);
     } catch {
@@ -244,6 +252,11 @@ export async function undoMaintenanceMoveAction(
     }
     if (await host.exists(oldPath)) {
         return { ok: false, reason: "restore_target_exists", message: "The original path is occupied. Undo was not applied." };
+    }
+
+    // Undo must also respect a boundary change during the asynchronous reads.
+    if (!host.isPathAllowed(newPath) || !host.isPathAllowed(oldPath)) {
+        return { ok: false, reason: "boundary_denied", message: "The move can no longer be undone inside the current Data Boundary." };
     }
 
     try {

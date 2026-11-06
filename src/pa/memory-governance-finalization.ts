@@ -395,7 +395,11 @@ export class MemoryGovernanceFinalizationCoordinator {
                 delete migration.lastErrorCode;
                 delete migration.legacySourceStateHash;
                 delete migration.pendingLegacySourceHash;
-                for (const claim of draft.claims) delete claim.legacyCompatibility;
+                for (const claim of draft.claims) {
+                    if (claim.partition.kind === "vault" && claim.partition.key === this.opaqueVaultKey) {
+                        delete claim.legacyCompatibility;
+                    }
+                }
                 draft.rollbackPayloadEntries = draft.rollbackPayloadEntries
                     .filter((entry) => entry.migrationRunId !== lock.runId);
                 draft.migrationDeltas = draft.migrationDeltas

@@ -295,12 +295,25 @@ describe("DeviceMemoryGovernanceRecordRepository", () => {
     });
 
     it.each(["rolling_back", "rolled_back", "finalized"] as const)(
-        "fails closed during migration phase %s",
+        "fails closed when starting or writing during migration phase %s",
         async (phase) => {
             const state = createCompatibilityState([record("base")]);
             state.migrationStates["vault-a"].phase = phase;
             await expect(createAdapter(repositoryWithState(state), "vault-a", "source-a"))
                 .rejects.toBeInstanceOf(DeviceMemoryGovernanceRecordRepositoryError);
+
+            const device = repositoryWithState(createCompatibilityState([record("base")]));
+            const adapter = await createAdapter(device, "vault-a", "source-a");
+            await device.transact((draft) => {
+                draft.migrationStates["vault-a"].phase = phase;
+            });
+            const beforeWrite = await device.initialize();
+
+            await expect(adapter.write({ records: [record("base", { summary: "Changed" })] }))
+                .rejects.toMatchObject({ code: "migration_phase_blocked" });
+            expect(await device.initialize()).toEqual(beforeWrite);
+            expect(adapter.read().records).toEqual([record("base")]);
+            adapter.dispose();
         },
     );
 

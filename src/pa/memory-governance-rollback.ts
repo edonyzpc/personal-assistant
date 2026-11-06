@@ -396,8 +396,7 @@ function requireDeltaPayload(
     }
     const entry = payloads.get(delta.payloadEntryId);
     if (!entry || entry.entityId !== delta.entityId
-        || entry.checksum !== delta.payloadChecksum
-        || entry.checksum !== checksumLegacyRollbackValue(entry.value)) {
+        || entry.checksum !== delta.payloadChecksum) {
         throw new RollbackError("rollback_delta_payload_mismatch");
     }
     return entry;

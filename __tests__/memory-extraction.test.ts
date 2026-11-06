@@ -147,6 +147,7 @@ describe("TypeAUserProfileExtractor", () => {
 
     it("filters LLM-extracted one-off tool constraints before merging profile candidates", async () => {
         const extractor = new TypeAUserProfileExtractor();
+        const fallback = jest.spyOn(extractor, "extractCandidates");
         const candidates = await extractor.extractCandidatesWithLLM({
             conversation: {
                 id: "c-llm-no-web",
@@ -159,7 +160,8 @@ describe("TypeAUserProfileExtractor", () => {
             turns: [{
                 conversationId: "c-llm-no-web",
                 turnIndex: 1,
-                user: { role: "user", content: "不要联网，看一下杭州今天的天气。" },
+                user: { role: "user", content: "不要联网，看一下杭州今天的天气。",
+                    hostProvenance: { version: 1, messageId: "user-no-web", kind: "ordinary_user_statement" } },
                 assistant: { role: "assistant", content: "不联网时无法核验实时天气。" },
             }],
             now: () => new Date("2026-06-16T08:00:00.000Z"),
@@ -168,10 +170,12 @@ describe("TypeAUserProfileExtractor", () => {
                 text: "不要联网，看一下杭州今天的天气。",
                 kind: "user_correction",
                 confidence: "high",
+                sourceMessageIds: ["user-no-web"],
             }],
         }));
 
         expect(candidates).toHaveLength(0);
+        expect(fallback).not.toHaveBeenCalled();
     });
 
     it("promotes tentative inferred_behavior records to confirmed after 3 independent conversations", () => {

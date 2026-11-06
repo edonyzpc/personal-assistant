@@ -699,7 +699,18 @@ describe("B-140 T-08 Memory management observations", () => {
                 },
             },
         ];
+        const prepared = await prepareMemoryManagementProjection({
+            history,
+            prepareObservation: expected => port.prepareObservation(expected),
+        });
+        const originalHistory = structuredClone(history);
+        const preparedHistory = structuredClone(prepared.history);
         removeQueryItem("A");
+
+        await expect(prepared.binding.prepare())
+            .rejects.toThrow("Memory management projection changed before dispatch.");
+        expect(prepared.history).toEqual(preparedHistory);
+        expect(history).toEqual(originalHistory);
 
         const first = await prepareMemoryManagementProjection({
             history,

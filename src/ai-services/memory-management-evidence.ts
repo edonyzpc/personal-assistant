@@ -326,7 +326,7 @@ export async function prepareMemoryManagementProjection(options: {
                 if (signal?.aborted) throw new Error("Aborted");
                 const nextGuards = new Set<{ assertCurrent(): void }>();
                 const nextTranscript = transcript.map(cloneProjectionMessage);
-                const nextHistory = [...history];
+                const nextHistory = history.map(cloneProjectionHistoryMessage);
                 const nextToolContracts = nextTranscript.filter((message): message is Extract<PaAgentMessage, { role: "toolResult" }> =>
                     message.role === "toolResult" && message.content.metadata?.memoryManagementContractVersion === 1);
                 const nextAssistantContracts = nextTranscript.filter(message => (

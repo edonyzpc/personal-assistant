@@ -159,16 +159,6 @@ export class DeviceMemoryGovernanceRecordRepository implements MemoryGovernanceR
         this.assertActive();
         const transactionTime = this.now();
 
-        // Force a fresh read without advancing the adapter cache. The same
-        // checks run again inside the transaction to close the race window.
-        const fresh = await this.repository.initialize();
-        requireCompatibilityContext(
-            fresh,
-            this.opaqueVaultKey,
-            this.expectedSourceHash,
-            transactionTime,
-        );
-
         const result = await this.repository.transact((draft) => {
             const context = requireCompatibilityContext(
                 draft,
