@@ -203,6 +203,8 @@ interface PaAgentActionContextProjection extends PaAgentActionSummaryFact {
 }
 
 const opaqueId = z.string().regex(/^[A-Za-z0-9:_-]{1,256}$/);
+// Existing persisted action envelopes have no safe-integer cap.
+const storedNonnegativeInteger = z.number().nonnegative().refine(Number.isInteger);
 const actionStateSchema = z.object({
     schemaVersion: z.literal(1), owner: z.enum(['image', 'writing', 'ghost', 'operations']),
     operationId: opaqueId,
@@ -210,11 +212,11 @@ const actionStateSchema = z.object({
         'partial', 'failed', 'cancelled', 'expired', 'unknown', 'unavailable', 'undone', 'lost']),
     origin: z.object({ runId: opaqueId, turnId: opaqueId, assistantId: opaqueId,
         callId: opaqueId.optional(), resultId: opaqueId }).strict(),
-    revision: z.number().int().nonnegative(),
+    revision: storedNonnegativeInteger,
     inputLineage: z.unknown().refine(value => parseInputLineage(value) !== undefined),
     receipt: z.discriminatedUnion('kind', [
         z.object({ kind: z.literal('image-accepted'), taskId: opaqueId }).strict(),
-        z.object({ kind: z.literal('image-task'), taskId: opaqueId, taskRevision: z.number().int().nonnegative(),
+        z.object({ kind: z.literal('image-task'), taskId: opaqueId, taskRevision: storedNonnegativeInteger,
             state: z.enum(['prepared', 'not_submitted', 'submitting', 'submission_unknown', 'running',
                 'saving', 'completed', 'partial', 'failed', 'stopped', 'expired']) }).strict(),
         z.object({ kind: z.literal('operations-staged'), intentId: opaqueId }).strict(),
@@ -235,7 +237,7 @@ const actionStateSchema = z.object({
             status: z.enum(['prepared', 'outcome_unknown', 'needs_attention']),
             facts: z.custom<GhostOperationFacts>(isGhostOperationFacts).optional(),
             executionState: z.enum(['not_started', 'succeeded', 'failed', 'acceptance_unknown']).optional() }).strict(),
-        z.object({ kind: z.literal('ghost-operation'), operationId: opaqueId, operationRevision: z.number().int().positive(),
+        z.object({ kind: z.literal('ghost-operation'), operationId: opaqueId, operationRevision: z.number().positive().refine(Number.isInteger),
             state: z.enum(['preparing', 'prepared', 'draft_saved', 'updated', 'failed', 'ready', 'pending', 'outcome_unknown', 'succeeded_remote_pending_record', 'cleanup_pending', 'terminal']),
             facts: z.custom<GhostOperationFacts>(isGhostOperationFacts).optional(),
             verified: z.boolean() }).strict(),
@@ -893,7 +895,7 @@ export interface PaAgentActionStateBinding {
 }
 
 export function cloneActionStateBinding(value: unknown): PaAgentActionStateBinding | undefined {
-    const parsed = z.object({ conversationId: opaqueId, turnIndex: z.number().int().nonnegative(),
+    const parsed = z.object({ conversationId: opaqueId, turnIndex: storedNonnegativeInteger,
         runId: opaqueId, turnId: opaqueId }).strict().safeParse(value);
     return parsed.success ? { ...parsed.data } : undefined;
 }

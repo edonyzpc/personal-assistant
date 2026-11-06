@@ -228,12 +228,87 @@ describe("Share Card export", () => {
         expect(() => assertShareCardElementIsSelfContained(asElement(card))).not.toThrow();
     });
 
+    it.each([
+        ["href", "#outside", "external SVG reference"],
+        ["xlink:href", "#outside", "external xlink:href resource"],
+        ["fill", "url(#outside)", "external CSS resource"],
+    ])("rejects a %s fragment outside the card before SnapDOM can import its definition", async (attribute, value, error) => {
+        const document = new ShareCardTestDocument();
+        const card = document.createElement("div");
+        const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+        use.setAttribute(attribute, value);
+        card.appendChild(use);
+        document.body.appendChild(card);
+        const outside = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        outside.setAttribute("id", "outside");
+        const image = document.createElementNS("http://www.w3.org/2000/svg", "image");
+        image.setAttribute("href", "https://example.invalid/private.png");
+        outside.appendChild(image);
+        document.body.appendChild(outside);
+        const snapdomLike = jest.fn(async () => ({
+            toBlob: async () => new Blob(["png"], { type: "image/png" }),
+        })) as unknown as SnapdomLike;
+
+        await expect(createSnapdomShareCardCapture(snapdomLike)(asElement(card)))
+            .rejects.toThrow(error);
+        expect(snapdomLike).not.toHaveBeenCalled();
+    });
+
+    it("preserves definitions across SVGs inside the card and ordinary anchor text", () => {
+        const document = new ShareCardTestDocument();
+        const card = document.createElement("div");
+        const definitions = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        const paint = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+        paint.setAttribute("id", "paint");
+        definitions.appendChild(paint);
+        card.appendChild(definitions);
+        const graphic = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+        use.setAttribute("href", "#paint");
+        use.setAttribute("xlink:href", "#paint");
+        use.setAttribute("fill", "url(#paint)");
+        graphic.appendChild(use);
+        card.appendChild(graphic);
+        const anchor = document.createElement("a");
+        anchor.setAttribute("href", "#ordinary-note-heading");
+        anchor.textContent = "Read #outside as ordinary text";
+        card.appendChild(anchor);
+
+        expect(() => assertShareCardElementIsSelfContained(asElement(card))).not.toThrow();
+        expect(anchor.getAttribute("href")).toBe("#ordinary-note-heading");
+        expect(anchor.textContent).toBe("Read #outside as ordinary text");
+    });
+
+    it.each([
+        ["title", null],
+        ["g", "exclude"],
+        ["g", "placeholder"],
+    ] as const)("does not treat a definition under %s / %s as capture-local when SnapDOM discards it", (tagName, capture) => {
+        const document = new ShareCardTestDocument();
+        const card = document.createElement("div");
+        const parent = document.createElementNS("http://www.w3.org/2000/svg", tagName);
+        if (capture) parent.setAttribute("data-capture", capture);
+        const definition = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        definition.setAttribute("id", "discarded");
+        parent.appendChild(definition);
+        card.appendChild(parent);
+        const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+        use.setAttribute("href", "#discarded");
+        card.appendChild(use);
+
+        expect(() => assertShareCardElementIsSelfContained(asElement(card)))
+            .toThrow("external SVG reference");
+    });
+
     it("audits every computed and pseudo-element URL before invoking SnapDOM", async () => {
         const document = new ShareCardTestDocument();
         const card = document.createElement("div");
         const child = document.createElement("span");
         child.setAttribute("fill", "url(#paint)");
         card.appendChild(child);
+        const paint = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+        paint.setAttribute("id", "paint");
+        card.appendChild(paint);
         const getComputedStyle = jest.fn((_element: Element, pseudo: string | null) => {
             const values = pseudo === "::before"
                 ? new Map([["filter", "url(https://example.com/filter.svg#blur)"]])
@@ -269,6 +344,12 @@ describe("Share Card export", () => {
             } as unknown as CSSStyleDeclaration;
         });
         child.setAttribute("filter", "url(https://example.com/filter.svg#blur)");
+        expect(() => assertShareCardElementIsSelfContained(asElement(card)))
+            .toThrow("external CSS resource");
+
+        child.removeAttribute("fill");
+        child.removeAttribute("filter");
+        paint.remove();
         expect(() => assertShareCardElementIsSelfContained(asElement(card)))
             .toThrow("external CSS resource");
     });

@@ -33,7 +33,7 @@ describe("createHeadingAwareMarkdownChunks", () => {
         expect(chunks[0].content).toContain("Frontmatter:\ntags: [ai, memory]");
         expect(chunks[0].content).toContain("aliases: Project Memory");
         expect(chunks[0].metadata.frontmatterIncluded).toBe(true);
-        expect(chunks[0].metadata.chunkStrategy).toBe("heading-aware-v2");
+        expect(chunks[0].metadata.chunkStrategy).toBe("heading-aware-v3");
         expect(chunks[0].metadata.headingPath).toEqual(["Project"]);
         expect(chunks[0].metadata.startLine).toBe(5);
 
@@ -68,6 +68,40 @@ describe("createHeadingAwareMarkdownChunks", () => {
         expect(alpha?.content).toContain("Alpha details.");
         expect(alpha?.content).not.toContain("Beta details.");
         expect(beta?.content).toContain("Beta details.");
+    });
+
+    it.each([
+        ["```python", "~~~", "```"],
+        ["````md", "```", "`````"],
+        ["  ~~~text", "```", " ~~~~   "],
+        ["```", "``` trailing text", "```"],
+    ])("keeps code headings inside %s until a matching closing fence", (opening, inner, closing) => {
+        const section = ["# Root", opening, "# code comment", inner, "## still code", closing].join("\n");
+        const chunks = createHeadingAwareMarkdownChunks({
+            path: "code.md",
+            markdown: `${section}\n## Next\nActual section.`,
+            contentHash: "code-hash",
+            created: 1,
+            lastModified: 2,
+        });
+
+        // Chunk edges retain the existing whitespace trimming behavior.
+        expect(chunks.map((chunk) => chunk.content)).toEqual([section.trimEnd(), "## Next\nActual section."]);
+        expect(chunks.map((chunk) => chunk.metadata)).toEqual([
+            expect.objectContaining({ headingPath: ["Root"], startLine: 1, endLine: 6 }),
+            expect.objectContaining({ headingPath: ["Root", "Next"], startLine: 7, endLine: 8 }),
+        ]);
+    });
+
+    it("keeps an unclosed code fence in its original heading section", () => {
+        const markdown = "# Root\n```python\n# code comment\n## still code";
+        const chunks = createHeadingAwareMarkdownChunks({
+            path: "code.md", markdown, contentHash: "unclosed", created: 1, lastModified: 2,
+        });
+
+        expect(chunks).toHaveLength(1);
+        expect(chunks[0].content).toBe(markdown);
+        expect(chunks[0].metadata).toMatchObject({ headingPath: ["Root"], startLine: 1, endLine: 4 });
     });
 
     it("produces overlapping content between consecutive chunks when chunkOverlap > 0", () => {

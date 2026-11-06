@@ -124,29 +124,36 @@ const SAFE_CAPTURE_IMAGE_DATA_URI_RE = /^data:image\/(?:gif|jpeg|png|svg\+xml|we
 /** Defense in depth: SnapDOM must never become Share Card's resource loader. */
 export function assertShareCardElementIsSelfContained(element: HTMLElement): void {
     const elements = [element, ...Array.from(element.querySelectorAll("*"))];
+    // SnapDOM resolves missing SVG fragments from ownerDocument and imports
+    // those definitions after this audit. Only the audited card may supply them.
+    const fragmentIds = new Set<string>();
+    for (const current of elements.slice(1)) {
+        const id = current.getAttribute("id");
+        if (id && isCaptureFragmentDefinition(current, element)) fragmentIds.add(id);
+    }
     for (const current of elements) {
         for (const attributeName of current.getAttributeNames()) {
             const normalizedName = attributeName.toLowerCase();
             const value = current.getAttribute(attributeName)?.trim() ?? "";
             if (value.toLowerCase().includes("url(")) {
-                assertSelfContainedCssUrls(value);
+                assertSelfContainedCssUrls(value, fragmentIds);
             }
             if (normalizedName === "href") {
                 const isSvgReference = current.namespaceURI === "http://www.w3.org/2000/svg";
-                if (isSvgReference && !isSelfContainedResourceValue(value, true)) {
+                if (isSvgReference && !isSelfContainedResourceValue(value, fragmentIds)) {
                     throw new Error("Share Card capture contains an external SVG reference.");
                 }
                 continue;
             }
             if (normalizedName === "style") {
-                assertSelfContainedCssUrls(value);
+                assertSelfContainedCssUrls(value, fragmentIds);
                 continue;
             }
             if (!CAPTURE_RESOURCE_ATTRIBUTES.has(normalizedName)) continue;
             if (normalizedName === "srcset" && value.length > 0) {
                 throw new Error("Share Card capture contains a srcset resource.");
             }
-            if (!isSelfContainedResourceValue(value, normalizedName === "xlink:href")) {
+            if (!isSelfContainedResourceValue(value, normalizedName === "xlink:href" ? fragmentIds : undefined)) {
                 throw new Error(`Share Card capture contains an external ${normalizedName} resource.`);
             }
         }
@@ -160,7 +167,7 @@ export function assertShareCardElementIsSelfContained(element: HTMLElement): voi
                 if (propertyName) {
                     const propertyValue = computed.getPropertyValue(propertyName);
                     if (propertyValue.includes("url(")) {
-                        assertSelfContainedCssUrls(propertyValue);
+                        assertSelfContainedCssUrls(propertyValue, fragmentIds);
                     }
                 }
             }
@@ -168,19 +175,38 @@ export function assertShareCardElementIsSelfContained(element: HTMLElement): voi
     }
 }
 
-function isSelfContainedResourceValue(value: string, allowFragment = false): boolean {
+function isCaptureFragmentDefinition(target: Element, card: HTMLElement): boolean {
+    if (target.namespaceURI !== "http://www.w3.org/2000/svg") return false;
+    // The renderer permits static SVG attributes, including capture directives.
+    // A definition SnapDOM 2.23.2 discards cannot close a card-local reference.
+    let foreignObjects = 0;
+    for (let current: Element | null = target; current; current = current.parentElement) {
+        const tagName = current.tagName.toLowerCase();
+        const capture = current.getAttribute("data-capture");
+        if (tagName === "title"
+            || current.getAttribute("id") === "snapdom-sandbox"
+            || current.getAttribute("data-snapdom-sandbox") !== null
+            || capture === "exclude"
+            || (current !== target && capture === "placeholder")) return false;
+        if (tagName === "foreignobject" && ++foreignObjects > 1) return false;
+        if (current === card) break;
+    }
+    return true;
+}
+
+function isSelfContainedResourceValue(value: string, fragmentIds?: ReadonlySet<string>): boolean {
     if (value.length === 0) return true;
     if (SAFE_CAPTURE_IMAGE_DATA_URI_RE.test(value)) return true;
-    if (allowFragment && value.startsWith("#")) return true;
+    if (value.startsWith("#") && fragmentIds?.has(value.slice(1).trim())) return true;
     return false;
 }
 
-function assertSelfContainedCssUrls(cssValue: string): void {
+function assertSelfContainedCssUrls(cssValue: string, fragmentIds: ReadonlySet<string>): void {
     CSS_URL_RE.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = CSS_URL_RE.exec(cssValue)) !== null) {
         const value = match[2]?.trim() ?? "";
-        if (!isSelfContainedResourceValue(value, true)) {
+        if (!isSelfContainedResourceValue(value, fragmentIds)) {
             throw new Error("Share Card capture contains an external CSS resource.");
         }
     }

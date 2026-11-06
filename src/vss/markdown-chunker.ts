@@ -62,7 +62,7 @@ export function createHeadingAwareMarkdownChunks(options: HeadingAwareChunkOptio
                     endLine: piece.endLine,
                     headingPath: section.headingPath,
                     frontmatterIncluded: Boolean(frontmatterText),
-                    chunkStrategy: "heading-aware-v2",
+                    chunkStrategy: "heading-aware-v3",
                 },
             });
         }
@@ -102,10 +102,22 @@ function splitMarkdownIntoHeadingSections(content: string, contentStartLine: num
     const sections: SectionBlock[] = [];
     const headingStack: Array<{ level: number; text: string }> = [];
     let current: SectionBlock = { headingPath: [], lines: [] };
+    let codeFence: { marker: string; length: number } | null = null;
 
     for (let index = 0; index < rawLines.length; index++) {
         const text = rawLines[index];
-        const heading = parseMarkdownHeading(text);
+        const fence = text.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+        let heading: ReturnType<typeof parseMarkdownHeading> = null;
+        if (codeFence) {
+            if (fence && fence[1][0] === codeFence.marker
+                && fence[1].length >= codeFence.length && /^[\t ]*$/.test(fence[2])) {
+                codeFence = null;
+            }
+        } else if (fence && (fence[1][0] === "~" || !fence[2].includes("`"))) {
+            codeFence = { marker: fence[1][0], length: fence[1].length };
+        } else {
+            heading = parseMarkdownHeading(text);
+        }
         if (heading) {
             if (current.lines.some((line) => line.text.trim().length > 0)) {
                 sections.push(current);

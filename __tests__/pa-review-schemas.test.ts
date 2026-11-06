@@ -122,16 +122,21 @@ describe("PageletReviewResultSchema", () => {
         expect(result.success).toBe(false);
     });
 
-    it("rejects suggestion arrays longer than the size cap", () => {
-        const result = PageletReviewResultSchema.safeParse(
-            validResult({
-                suggestions: Array.from(
-                    { length: PAGELET_FIELD_LIMITS.suggestionsMax + 1 },
-                    () => validSuggestion(),
-                ),
-            }),
+    it.each([
+        { name: "runtime", schema: PageletReviewResultSchema },
+        { name: "structured provider", schema: PageletStructuredReviewResultSchema },
+    ])("rejects oversized $name suggestions before inspecting their contents", ({ schema }) => {
+        let inspectedSuggestions = 0;
+        const suggestions = Array.from(
+            { length: PAGELET_FIELD_LIMITS.suggestionsMax + 1 },
+            () => ({ ...validSuggestion({ related_notes: [] }),
+                get source_id() { inspectedSuggestions++; return "seg-1"; } }),
         );
+        const result = schema.safeParse(validResult({ suggestions, overall_remark: "" }));
         expect(result.success).toBe(false);
+        expect(inspectedSuggestions).toBe(0);
+        expect(schema.safeParse(validResult({ suggestions: suggestions.slice(1), overall_remark: "" })).success).toBe(true);
+        expect(inspectedSuggestions).toBeGreaterThan(0);
     });
 
     it("accepts empty suggestions[] (SDD §4.3 row 4: 'looks fine' state)", () => {

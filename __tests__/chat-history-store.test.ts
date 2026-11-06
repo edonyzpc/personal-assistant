@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "@jest/globals";
 import type { Vault } from "obsidian";
 import type { ImageAsset } from "../src/chat/image-types";
 import { hashWritingText, type WritingVersion } from "../src/chat/writing-types";
+import type { SaveReceipt } from "../src/chat/save-receipt-types";
 import { WritingVersionService } from "../src/chat/writing-versions";
 import { decodeNativeWritingOutput } from "../src/ai-services/writing-output";
 import type { GenerationInputSnapshotV1, GenerationInputSnapshotV2 } from "../src/ai-services/generation-input-snapshot";
@@ -1435,6 +1436,30 @@ describe.each(['memory', 'indexeddb'] as const)('multimodal turn transaction (%s
         await expect(store.appendTurn(makeTurn({ user: { role: 'user', content: 'x', images: [{}] as never } }))).rejects.toThrow();
         expect(await store.getTurns('conv-1')).toEqual([]);
     });
+    it('keeps legacy integer fields readable in stored Writing versions and save receipts', async () => {
+        const store = await open();
+        const legacyInteger = Number.MAX_SAFE_INTEGER + 1;
+        await store.putImageAsset(asset());
+        const text = 'Preserved legacy text';
+        const version: WritingVersion = { id: 'legacy-writing', requestId: 'legacy-request', messageId: 'legacy-message',
+            text, textHash: await hashWritingText(text), explanation: '', origin: 'ai_generated', conversationId: 'conv-1',
+            turnIndex: legacyInteger, createdAt: 1,
+            associatedImages: [{ ref: { assetId: 'image_one', contentHash: 'a'.repeat(64) }, ordinal: 1, label: 'photo' }],
+            backgroundSourceRefs: [], styleRevisionIds: [] };
+        const receipt: SaveReceipt = { id: 'legacy-save', operationId: 'legacy-save', writingVersionId: version.id,
+            textHash: version.textHash, targetNotePath: 'saved.md', origin: version.origin, createdAt: legacyInteger,
+            initialNoteHash: 'b'.repeat(64), noteContentHash: 'c'.repeat(64), noteState: 'pending', state: 'prepared',
+            attachments: [{ ref: version.associatedImages[0].ref, sourcePath: 'photo.png', sourceName: 'photo.png',
+                attachmentKind: 'original', mime: 'image/png', filename: 'photo.png', outputHash: 'a'.repeat(64),
+                exportPolicy: 'original', byteLength: legacyInteger, state: 'planned' }] };
+        await store.putWritingVersion(JSON.parse(JSON.stringify(version)));
+        await store.putSaveReceipt(JSON.parse(JSON.stringify(receipt)));
+        expect(await store.getWritingVersion(version.id)).toEqual(version);
+        expect(await store.listWritingVersions('conv-1')).toEqual([version]);
+        expect(await store.getSaveReceipt(receipt.id)).toEqual(receipt);
+        expect(await store.listSaveReceipts(version.id)).toEqual([receipt]);
+    });
+
     it('requires immutable writing identity in the same conversation and preserves a validated recovery envelope', async () => {
         const store = await open();
         await store.putImageAsset(asset());

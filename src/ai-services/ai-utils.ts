@@ -447,6 +447,8 @@ export class AIUtils {
         const options: ClientOptions = {
             baseURL: baseURL,
             dangerouslyAllowBrowser: true,
+            // PA owns diagnostic consent and filtering; OPENAI_LOG must not bypass them.
+            logLevel: 'off',
         };
 
         const resolution = this.resolveChatTransport(transport, baseURL);

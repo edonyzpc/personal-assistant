@@ -21,6 +21,7 @@ import {
     supportsDashScopeThinkingControl,
 } from '../src/ai-services/ai-utils';
 import { PaAgentContextSummarizer } from '../src/ai-services/context/PaAgentContextSummarizer';
+import { PageletStructuredReviewResultSchema } from '../src/pagelet/pa-review-schemas';
 import { writeFileSync } from 'node:fs';
 
 jest.mock('obsidian');
@@ -40,6 +41,95 @@ function createPlugin(settings: {
 }
 
 describe('native tool calling capability', () => {
+    it.each([
+        { aiProvider: 'openai', chatModelName: 'gpt-4o-mini',
+            baseURL: 'https://api.openai.com/v1', endpoint: '/responses' },
+        { aiProvider: 'qwen', chatModelName: 'qwen3.6-plus',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', endpoint: '/chat/completions' },
+    ])('preserves Pagelet strict schema and nullable results through SDK $endpoint requests', async settings => {
+        const payload = { schema_version: 1, detected_language: 'en', suggestions: [{
+            source_id: 'seg-1', kind: 'clarify', rationale: 'Explain the scope to the reader.',
+            proposed_action: 'Add a scope sentence after the opening paragraph.', related_notes: null,
+        }], overall_remark: null };
+        const content = JSON.stringify(payload);
+        const originalFetch = globalThis.fetch;
+        const offlineFetch = jest.fn<typeof fetch>(async () => new Response(JSON.stringify(
+            settings.endpoint === '/responses'
+                ? { id: 'resp_pagelet', object: 'response', created_at: 0, status: 'completed',
+                    model: settings.chatModelName, error: null, incomplete_details: null,
+                    output: [{ id: 'msg_pagelet', type: 'message', status: 'completed', role: 'assistant',
+                        content: [{ type: 'output_text', text: content, annotations: [] }] }],
+                    usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }, output_text: content }
+                : { id: 'chat_pagelet', object: 'chat.completion', created: 0, model: settings.chatModelName,
+                    choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content } }],
+                    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
+        ), { headers: { 'content-type': 'application/json' } }));
+        globalThis.fetch = offlineFetch;
+        try {
+            const aiUtils = new AIUtils({ settings, getAPIToken: async () => 'offline-token',
+                log: () => undefined } as never);
+            const model = await aiUtils.createChatModel(0.3, { transport: 'native' });
+            const structured = model.withStructuredOutput(PageletStructuredReviewResultSchema,
+                { name: 'pagelet_review', method: 'jsonSchema', strict: true });
+            expect(await structured.invoke('Review the synthetic paragraph.')).toEqual(payload);
+            expect(offlineFetch).toHaveBeenCalledTimes(1);
+            expect(String(offlineFetch.mock.calls[0][0])).toBe(settings.baseURL + settings.endpoint);
+            const body = JSON.parse(String(offlineFetch.mock.calls[0][1]?.body));
+            const format = settings.endpoint === '/responses'
+                ? body.text.format : body.response_format.json_schema;
+            expect(format).toMatchObject({ name: 'pagelet_review', strict: true });
+            const schema = format.schema;
+            expect(schema).toMatchObject({ type: 'object', additionalProperties: false,
+                required: expect.arrayContaining(['schema_version', 'detected_language', 'suggestions', 'overall_remark']) });
+            expect(schema.properties.suggestions).toMatchObject({ type: 'array', maxItems: 8 });
+            const suggestion = schema.properties.suggestions.items;
+            expect(suggestion).toMatchObject({ type: 'object', additionalProperties: false,
+                required: expect.arrayContaining(['source_id', 'kind', 'rationale', 'proposed_action', 'related_notes']) });
+            for (const [nullable, type] of [
+                [suggestion.properties.related_notes, 'array'], [schema.properties.overall_remark, 'string'],
+            ] as const) {
+                const alternatives = nullable.anyOf ?? [nullable];
+                const types = alternatives.flatMap((entry: { type: string | string[] }) => entry.type);
+                expect(types).toEqual(expect.arrayContaining([type, 'null']));
+            }
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
+    it.each([
+        { aiProvider: 'openai', chatModelName: 'gpt-4o-mini',
+            baseURL: 'https://api.openai.com/v1', endpoint: '/responses' },
+        { aiProvider: 'qwen', chatModelName: 'qwen3.6-plus',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', endpoint: '/chat/completions' },
+    ])('keeps SDK $endpoint error bodies out of console when the host requests SDK debug logging', async settings => {
+        const sentinel = 'synthetic-private-provider-error';
+        const environment = jest.replaceProperty(process, 'env', { OPENAI_LOG: 'debug' });
+        const debug = jest.spyOn(console, 'debug').mockImplementation(() => undefined);
+        const info = jest.spyOn(console, 'info').mockImplementation(() => undefined);
+        const originalFetch = globalThis.fetch;
+        const offlineFetch = jest.fn<typeof fetch>(async () => new Response(sentinel, {
+            status: 400, headers: { 'content-type': 'text/plain' },
+        }));
+        globalThis.fetch = offlineFetch;
+        try {
+            const aiUtils = new AIUtils({
+                settings: { ...settings, debug: false },
+                getAPIToken: async () => 'offline-token', log: () => undefined,
+            } as never);
+            const model = await aiUtils.createChatModel(0.8, { transport: 'native' });
+            await expect(model.invoke('synthetic request')).rejects.toThrow(sentinel);
+            expect(offlineFetch).toHaveBeenCalledTimes(1);
+            expect(String(offlineFetch.mock.calls[0][0])).toBe(settings.baseURL + settings.endpoint);
+            expect(JSON.stringify(debug.mock.calls)).not.toContain(sentinel);
+        } finally {
+            globalThis.fetch = originalFetch;
+            info.mockRestore();
+            debug.mockRestore();
+            environment.restore();
+        }
+    });
+
     it('routes exact official gpt-6.1-terra through the Responses adapter and request guard', async () => {
         const originalFetch = globalThis.fetch;
         const offlineFetch = jest.fn<typeof fetch>(async () => new Response(JSON.stringify({

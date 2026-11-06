@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { VSS_SCHEMA_VERSION } from '../src/vss/types';
 import type {
     SqliteWorkerMessage,
     SqliteWorkerRequest,
@@ -208,6 +209,178 @@ describe('sqlite worker OPFS lifecycle', () => {
         expect(actual.known).toMatchObject({ ok: true, result: { state: 'known', profileSignature: 'original-profile' } });
         expect(actual.damaged).toMatchObject({ ok: true, result: { state: 'unknown' } });
         expect(actual).toMatchObject({ unchanged: true, opened: 2, closed: 2 });
+    });
+
+    it('keeps incompatible SQLite indexes unchanged until an explicit reset', async () => {
+        // Use the installed SQLite engine and actual Worker, replacing only the
+        // OPFS constructor with an isolated in-memory database.
+        const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
+            import init from '@sqlite.org/sqlite-wasm';
+            import { build, stop } from 'esbuild';
+            const sqlite = await init();
+            const database = new sqlite.oo1.DB(':memory:');
+            globalThis.self = globalThis;
+            globalThis.schemaTestSqlite = { ...sqlite, installOpfsSAHPoolVfs: async () => ({
+                OpfsSAHPoolDb: class { constructor() { return database; } },
+                pauseVfs() {}, isPaused: () => false,
+            }) };
+            const pending = new Map();
+            globalThis.postMessage = response => pending.get(response.id)(response);
+            const compiled = await build({ entryPoints: ['src/vss/sqlite-worker.ts'], bundle: true, write: false,
+                format: 'esm', platform: 'node', target: 'node22', plugins: [{ name: 'sqlite-runtime', setup(builder) {
+                    builder.onResolve({ filter: new RegExp('^@sqlite[.]org/sqlite-wasm$') }, () => ({ path: 'engine', namespace: 'test-engine' }));
+                    builder.onLoad({ filter: /.*/, namespace: 'test-engine' }, () => ({ contents: 'export default async () => globalThis.schemaTestSqlite;' }));
+                } }] });
+            await import('data:text/javascript;base64,' + Buffer.from(compiled.outputFiles[0].contents).toString('base64'));
+            let nextId = 0;
+            const send = (type, payload = {}) => new Promise(resolve => {
+                const id = ++nextId; pending.set(id, resolve); globalThis.onmessage({ data: { id, type, payload } });
+            });
+            const profile = { provider: 'test', baseURL: '', model: 'test-model', dimensions: 2, distanceMetric: 'COSINE' };
+            const initialize = () => send('initialize', { profile, databaseName: 'isolated.sqlite3' });
+            const schema = () => database.selectValue("SELECT value FROM vss_meta WHERE key = 'schemaVersion'");
+            const fresh = await initialize();
+            const current = schema();
+            const cases = [];
+            const scenarios = [
+                { version: null, missing: [] }, { version: '2', missing: [] }, { version: '999', missing: [] },
+                { missing: ['vss_meta'] }, { missing: ['vss_meta', 'vss_files'] }, { missing: ['vss_chunks'] },
+            ];
+            for (const scenario of scenarios) {
+                await send('upsertFile', { fileState: { path: 'old.md', contentHash: 'hash', mtime: 1, size: 4 },
+                    chunks: [{ path: 'old.md', chunkIndex: 0, content: 'old source', contentHash: 'hash', created: 1, lastModified: 1, metadata: {} }],
+                    embeddings: [[1, 0]] });
+                const previousIdentity = database.selectValue("SELECT value FROM vss_meta WHERE key = 'databaseInstanceId'");
+                if (scenario.version === null) database.exec("DELETE FROM vss_meta WHERE key = 'schemaVersion'");
+                else if (scenario.version !== undefined) database.exec({
+                    sql: "UPDATE vss_meta SET value = ? WHERE key = 'schemaVersion'", bind: [scenario.version],
+                });
+                for (const table of scenario.missing) database.exec('DROP TABLE ' + table);
+                const before = sqlite.capi.sqlite3_js_db_export(database.pointer);
+                const opened = await initialize();
+                const verified = await send('verify');
+                const stats = await send('getStats');
+                const unchanged = Buffer.from(before).equals(Buffer.from(sqlite.capi.sqlite3_js_db_export(database.pointer)));
+                const oldContent = scenario.missing.includes('vss_chunks') ? null : database.selectValue('SELECT content FROM vss_chunks');
+                const reset = await send('reset');
+                cases.push({ ...scenario, opened, verified, stats, unchanged, oldContent, reset,
+                    schema: reset.ok ? schema() : null,
+                    remainingChunks: reset.ok ? database.selectValue('SELECT COUNT(*) FROM vss_chunks') : null,
+                    changedIdentity: reset.ok && previousIdentity !== database.selectValue("SELECT value FROM vss_meta WHERE key = 'databaseInstanceId'"),
+                    afterReset: await send('verify') });
+            }
+            await send('dispose');
+            stop();
+            process.stdout.write(JSON.stringify({ fresh, current, cases }));
+        `], { encoding: 'utf8' });
+        const actual = JSON.parse(stdout);
+        expect(actual.fresh).toMatchObject({ ok: true, result: 'ready' });
+        expect(actual.cases).toHaveLength(6);
+        for (const result of actual.cases) {
+            expect(result).toMatchObject({
+                opened: { ok: true, result: 'stale' }, verified: { ok: true, result: 'stale' },
+                stats: { ok: true, result: {
+                    status: 'stale', chunkCount: result.missing.includes('vss_chunks') ? 0 : 1,
+                    fileCount: result.missing.includes('vss_files') ? 0 : 1,
+                } },
+                unchanged: true, oldContent: result.missing.includes('vss_chunks') ? null : 'old source',
+                reset: { ok: true }, schema: '3', remainingChunks: 0, changedIdentity: true,
+                afterReset: { ok: true, result: 'ready' },
+            });
+            if (result.missing.includes('vss_meta')) {
+                expect(result.stats.result).not.toHaveProperty('databaseInstanceId');
+                expect(result.stats.result).not.toHaveProperty('chunkMutationEpoch');
+                expect(result.stats.result).not.toHaveProperty('indexMutationEpoch');
+                expect(result.stats.result).not.toHaveProperty('rebuildEpoch');
+            }
+        }
+        expect(actual.current).toBe('3');
+    });
+
+    it('preserves the OPFS pool and releases late handles when initialization fails', async () => {
+        // Exercise the installed browser SQLite implementation, including its
+        // real SAH-pool failure cleanup, with synthetic OPFS handles only.
+        const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
+            import { readFile } from 'node:fs/promises';
+            import { build, stop } from 'esbuild';
+            const browserRuntime = new URL('./index.mjs', import.meta.resolve('@sqlite.org/sqlite-wasm'));
+            const { default: init } = await import(browserRuntime.href);
+            const wasmBinary = await readFile(new URL(import.meta.resolve('@sqlite.org/sqlite-wasm/sqlite3.wasm')));
+            const bytes = new Uint8Array(4104);
+            bytes.set(new TextEncoder().encode('/memory.sqlite3'));
+            new DataView(bytes.buffer).setUint32(512, 0x180);
+            bytes.set([219, 230, 50, 104, 27, 215, 249, 217], 516);
+            bytes.set([1, 2, 3, 4, 5, 6, 7, 8], 4096);
+            const before = bytes.slice();
+            const removed = [];
+            let writes = 0, truncates = 0, lateClosed = 0, started = 0;
+            let bothStarted, rejectFirst, resolveLate;
+            const starting = new Promise(resolve => { bothStarted = resolve; });
+            const first = new Promise((_, reject) => { rejectFirst = reject; });
+            const late = new Promise(resolve => { resolveLate = resolve; });
+            const opened = promise => { if (++started === 2) bothStarted(); return promise; };
+            const lateHandle = {
+                getSize: () => bytes.length,
+                read: (out, options) => {
+                    const data = bytes.subarray(options.at, options.at + out.byteLength);
+                    new Uint8Array(out.buffer, out.byteOffset, out.byteLength).set(data); return data.length;
+                },
+                write: () => { writes++; return 0; }, truncate: () => { truncates++; }, flush() {},
+                close: () => { lateClosed++; },
+            };
+            const opaque = { async *[Symbol.asyncIterator]() {
+                yield ['busy', { kind: 'file', createSyncAccessHandle: () => opened(first) }];
+                yield ['late', { kind: 'file', createSyncAccessHandle: () => opened(late) }];
+            } };
+            const owned = { name: 'owned', getDirectoryHandle: async name => {
+                if (name !== '.opaque') throw Error('Unexpected child directory'); return opaque;
+            }, removeEntry: async (...args) => { removed.push(['owned', ...args]); } };
+            const root = {
+                getDirectoryHandle: async name => { if (name !== 'owned') throw Error('Unexpected pool'); return owned; },
+                getFileHandle: async name => {
+                    if (!name.startsWith('.opfs-sahpool-sync-check-')) throw Error('Unexpected probe');
+                    return { createSyncAccessHandle: async () => ({ close() {} }) };
+                },
+                removeEntry: async (name, ...args) => {
+                    if (!name.startsWith('.opfs-sahpool-sync-check-')) removed.push(['root', name, ...args]);
+                },
+            };
+            globalThis.FileSystemHandle = class {};
+            globalThis.FileSystemDirectoryHandle = class {};
+            globalThis.FileSystemFileHandle = class { createSyncAccessHandle() {} };
+            Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { storage: { getDirectory: async () => root } } });
+            globalThis.self = globalThis;
+            globalThis.poolTestInit = options => init({ ...options, wasmBinary });
+            let complete;
+            const response = new Promise(resolve => { complete = resolve; });
+            globalThis.postMessage = complete;
+            const compiled = await build({ entryPoints: ['src/vss/sqlite-worker.ts'], bundle: true, write: false,
+                format: 'esm', platform: 'node', target: 'node22', plugins: [{ name: 'sqlite-runtime', setup(builder) {
+                    builder.onResolve({ filter: new RegExp('^@sqlite[.]org/sqlite-wasm$') }, () => ({ path: 'engine', namespace: 'test-engine' }));
+                    builder.onLoad({ filter: /.*/, namespace: 'test-engine' }, () => ({ contents: 'export default options => globalThis.poolTestInit(options);' }));
+                } }] });
+            await import('data:text/javascript;base64,' + Buffer.from(compiled.outputFiles[0].contents).toString('base64'));
+            let finished = false;
+            response.then(() => { finished = true; });
+            globalThis.onmessage({ data: { id: 1, type: 'initialize', payload: {
+                profile: { provider: 'test', baseURL: '', model: 'model', dimensions: 2, distanceMetric: 'COSINE' },
+                databaseName: 'memory.sqlite3', opfsDirectory: '/owned', opfsVfsName: 'schema-pool-test',
+            } } });
+            await Promise.race([starting, response.then(result => { throw Error(JSON.stringify(result)); })]);
+            rejectFirst(Object.assign(new Error('Access handle busy'), { name: 'NoModificationAllowedError' }));
+            await new Promise(resolve => setImmediate(resolve));
+            const finishedBeforeLateHandle = finished;
+            resolveLate(lateHandle);
+            const result = await response;
+            await new Promise(resolve => setImmediate(resolve));
+            stop();
+            process.stdout.write(JSON.stringify({ result, finishedBeforeLateHandle, removed, writes, truncates, lateClosed,
+                unchanged: Buffer.from(before).equals(Buffer.from(bytes)) }));
+        `], { encoding: 'utf8' });
+        expect(JSON.parse(stdout)).toMatchObject({
+            result: { ok: false, error: { code: 'opfs-sahpool-locked' } },
+            finishedBeforeLateHandle: false, removed: [], writes: 0, truncates: 0, lateClosed: 1, unchanged: true,
+        });
     });
 
     it('pauses the OPFS SAH pool after closing the database on dispose', async () => {
@@ -446,6 +619,7 @@ describe('sqlite worker OPFS lifecycle', () => {
             expect(capturedConfig?.disable?.vfs?.['opfs-sahpool']).not.toBe(true);
             expect(installOpfsSAHPoolVfs).toHaveBeenCalledWith(expect.objectContaining({
                 name: 'opfs-sahpool-test',
+                preserveOnInitFailure: true,
             }));
             expect(warnSpy).not.toHaveBeenCalled();
         } finally {
@@ -981,7 +1155,11 @@ async function setupGraphRankingWorker(
     sqlRequests: Array<{ sql: string; bind?: unknown[] }>;
 }> {
     const sqlRequests: Array<{ sql: string; bind?: unknown[] }> = [];
-    const meta = new Map<string, string>([['chunkMutationEpoch', initialEpoch]]);
+    const meta = new Map<string, string>([
+        ['chunkMutationEpoch', initialEpoch],
+        ['schemaVersion', String(VSS_SCHEMA_VERSION)],
+        ['profileSignature', 'openai||model|2|COSINE'],
+    ]);
     let transactionGenerations: Map<string, string> | null = null;
     const db = {
         close: jest.fn(),
@@ -1009,6 +1187,10 @@ async function setupGraphRankingWorker(
                 resultRows?: unknown[];
             };
             sqlRequests.push(query);
+            if (query.sql.includes('sqlite_master')) {
+                query.resultRows?.push({ name: 'vss_meta' }, { name: 'vss_files' }, { name: 'vss_chunks' });
+                return;
+            }
             if (
                 query.sql.includes("pragma_table_info('vss_chunks')")
                 || query.sql.includes("pragma_table_info('vss_files')")

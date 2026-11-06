@@ -259,7 +259,7 @@ SOFTWARE.
 | `@kurkle/color` | `0.3.4` | `MIT` | `node_modules/@kurkle/color` |
 | `@langchain/core` | `1.3.2` | `MIT` | `node_modules/@langchain/core` |
 | `@langchain/openai` | `1.8.0` | `MIT` | `node_modules/@langchain/openai` |
-| `@sqlite.org/sqlite-wasm` | `3.53.0-build1` | `Apache-2.0` | `node_modules/@sqlite.org/sqlite-wasm` |
+| `@sqlite.org/sqlite-wasm` | `3.54.1-build1` | `Apache-2.0` | `node_modules/@sqlite.org/sqlite-wasm` |
 | `@standard-schema/spec` | `1.1.0` | `MIT` | `node_modules/@standard-schema/spec` |
 | `@tanstack/react-virtual` | `3.14.21` | `MIT` | `node_modules/@tanstack/react-virtual` |
 | `@tanstack/virtual-core` | `3.19.6` | `MIT` | `node_modules/@tanstack/virtual-core` |
@@ -297,7 +297,7 @@ SOFTWARE.
 | `semver` | `7.8.5` | `ISC` | `node_modules/semver` |
 | `sprintf-js` | `1.0.3` | `BSD-3-Clause` | `node_modules/sprintf-js` |
 | `uc.micro` | `3.0.0` | `MIT` | `node_modules/uc.micro` |
-| `zod` | `3.25.76` | `MIT` | `node_modules/zod` |
+| `zod` | `4.6.7` | `MIT` | `node_modules/zod` |
 | `zustand` | `5.0.15` | `MIT` | `node_modules/zustand` |
 
 If a runtime dependency lacks a lockfile license field, the release is blocked
@@ -418,7 +418,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~
 
-### @sqlite.org/sqlite-wasm@3.53.0-build1
+### @sqlite.org/sqlite-wasm@3.54.1-build1
 
 - License: `Apache-2.0`
 - Lockfile path: `node_modules/@sqlite.org/sqlite-wasm`
@@ -1923,7 +1923,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ~~~
 
-### zod@3.25.76
+### zod@4.6.7
 
 - License: `MIT`
 - Lockfile path: `node_modules/zod`

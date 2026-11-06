@@ -111,7 +111,8 @@ finding payload。来源准备不调用 provider、不搜索无关 Vault，也�
 
 Renderer 移除 script、runtime style、事件处理器、交互控件和外部资源属性。Capture 前再次
 递归审计 attribute、computed style 与 pseudo-element 中的资源 URL；除允许的 image data URL
-和 SVG fragment 外，发现残余外部 URI 即 fail closed。
+和指向卡片内、capture 后仍保留定义的 SVG fragment 外，发现残余外部 URI 即 fail closed。
+缺失或会被 capture 排除的 fragment 定义不得从宿主文档补入，避免间接加载未获准资源。
 
 ## Footnote Share Projection
 

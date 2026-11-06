@@ -1,4 +1,4 @@
-import { cloneActionStates, collectActionStates, projectActionStates, projectActionSummaryFacts, refreshGhostActionState, refreshImageActionState, refreshWritingSaveState, refreshWritingSaveStates,
+import { boundActionStates, cloneActionStates, collectActionStates, projectActionStates, projectActionSummaryFacts, refreshGhostActionState, refreshImageActionState, refreshWritingSaveState, refreshWritingSaveStates,
     type PaAgentActionState } from '../src/ai-services/pa-agent-result-facts';
 import { completeInputLineage } from '../src/ai-services/input-lineage';
 import type { ImageGenerationTask } from '../src/chat/image-generation-types';
@@ -114,6 +114,22 @@ function state(owner: PaAgentActionState['owner'], operationId: string, receipt:
         origin: { runId: 'run', turnId: 'turn', assistantId: 'assistant', callId: 'call', resultId: 'result' },
         inputLineage: completeInputLineage([{ kind: 'user-text', messageId: 'user' }]) };
 }
+
+it('restores legacy integer revisions and resource facts without discarding the action envelope', () => {
+    const legacyInteger = Number.MAX_SAFE_INTEGER + 1;
+    const image = { ...state('image', 'task', { kind: 'image-task', taskId: 'task',
+        taskRevision: legacyInteger, state: 'running' }, 'running'), revision: legacyInteger };
+    const ghost = { ...state('ghost', 'ghost-op', { kind: 'ghost-operation', operationId: 'ghost-op',
+        operationRevision: legacyInteger, state: 'failed', verified: false,
+        facts: { stage: 'resource', reason: 'site-upload-limit', postEffect: 'not_sent', uploadedCount: legacyInteger,
+            resource: { id: 'resource', role: 'body', actualBytes: legacyInteger, limitBytes: legacyInteger } },
+    }, 'failed'), revision: legacyInteger };
+    const stored = JSON.parse(JSON.stringify([image, ghost]));
+    const binding = { conversationId: 'conversation', turnIndex: legacyInteger, runId: 'run', turnId: 'turn' };
+    expect(boundActionStates(stored, binding, 'conversation', legacyInteger)).toEqual([image, ghost]);
+    expect(cloneActionStates([{ ...image, revision: 0.5 }, ghost])).toEqual([]);
+    expect(cloneActionStates([{ ...image, revision: -1 }, ghost])).toEqual([]);
+});
 
 it('projects unconfirmed image submission only from a matching owner task receipt', () => {
     const unknown = { ...state('image', 'task', { kind: 'image-task', taskId: 'task',

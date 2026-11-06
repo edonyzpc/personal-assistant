@@ -50,7 +50,6 @@ async function makeAnchoredCandidate(
             startLine: chunk.metadata.startLine as number,
             endLine: chunk.metadata.endLine as number,
             headingPath: chunk.metadata.headingPath as string[],
-            indexVersion: "heading-aware-v2",
         },
     }));
     const excerpt = documents.map((document) => document.content).join("\n---\n");
@@ -83,7 +82,7 @@ function latestSource(path: string, markdown: string, mtime = 10): LatestMemoryS
 
 describe("Phase 1 latest Memory source materialization", () => {
     it("rebuilds provider excerpts and records a current source snapshot", async () => {
-        const markdown = "# Launch\n\nPhase two starts Monday.";
+        const markdown = "# Launch\n```python\n# sample comment\n```\nPhase two starts Monday.";
         const candidate = await makeAnchoredCandidate("notes/launch.md", markdown);
 
         const current = await materializeCandidateFromLatestSource(
@@ -101,6 +100,11 @@ describe("Phase 1 latest Memory source materialization", () => {
             },
         });
         expect(current?.documents[0]?.source.path).toBe("notes/launch.md");
+        expect(current?.documents).toHaveLength(1);
+        expect(current?.documents[0]).toMatchObject({
+            content: markdown,
+            anchorMetadata: { headingPath: ["Launch"], startLine: 1, endLine: 5 },
+        });
     });
 
     it("fails closed on body/hash mutation or an incomplete anchor", async () => {

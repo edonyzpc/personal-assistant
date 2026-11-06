@@ -5540,15 +5540,25 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(plugin.getVSSFiles).toHaveBeenCalled();
     });
 
-    it('rebuilds when the local marker schema is stale', async () => {
+    it('keeps an old schema unavailable until rebuilding the local index', async () => {
         const { plugin, vssStateStore } = createPlugin();
         const index = new FakeVectorIndex();
         setMockSqliteIndex(index);
-        await vssStateStore.setMarker({
+        const oldMarker = {
             ...createReadyMarker({ chunkCount: 8, fileCount: 3 }),
             schemaVersion: VSS_SCHEMA_VERSION - 1,
-        });
+        };
+        await vssStateStore.setMarker(oldMarker);
         const vss = new VSS(plugin, 'cache');
+
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
+            reason: 'settings-changed', action: 'rebuild', requiresApproval: true,
+        });
+        await expect(vss.canAutoMaintain()).resolves.toBe(false);
+        await expect(vss.searchSimilarity('query')).resolves.toEqual([]);
+        await expect(vssStateStore.getMarker()).resolves.toEqual(oldMarker);
+        expect(index.reset).not.toHaveBeenCalled();
+        expect((vss as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
 
         await vss.rebuildLocalIndex();
         const stats = await vss.getStats();
@@ -5556,7 +5566,9 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(index.initialize).toHaveBeenCalled();
         expect(index.reset).toHaveBeenCalled();
         expect(stats.status).toBe('ready');
+        await expect(vssStateStore.getMarker()).resolves.toMatchObject({ schemaVersion: VSS_SCHEMA_VERSION });
         expect(plugin.getVSSFiles).toHaveBeenCalled();
+        await vss.dispose();
     });
 
     it('does not load legacy JSON fallback when SQLite is unavailable with old manifest/cache files', async () => {

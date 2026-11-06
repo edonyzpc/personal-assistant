@@ -21,7 +21,7 @@ import type {
     SqliteWorkerResponse,
     SqliteWorkerSuccess,
 } from "../src/vss/sqlite-worker-protocol";
-import type { VSSIndexStats } from "../src/vss/types";
+import { VSS_SCHEMA_VERSION, type VSSIndexStats } from "../src/vss/types";
 import { buildCharPhraseFtsQuery, getCharPhraseRuntimeCanaryFingerprint } from "../src/vss/lexical-normalizer";
 import { computePathEvidenceGeneration } from "../src/vss/path-evidence-generation";
 import { RETRIEVAL_CALIBRATION_PROFILE } from "../src/vss/retrieval-calibration";
@@ -83,6 +83,7 @@ function createInMemoryMockDb() {
     const lexicalScopePaths = new Set<string>();
     const meta = new Map<string, string>();
     let nextChunkId = 1;
+    let schemaCreated = false;
     let failNextLexicalInsert = false;
     let failNextLexicalRecreate = false;
     let failNextResetSchemaCreate = false;
@@ -191,6 +192,7 @@ function createInMemoryMockDb() {
         exec: jest.fn((request: unknown) => {
             if (typeof request === "string") {
                 const sql = request.trim();
+                if (sql.includes("CREATE TABLE IF NOT EXISTS vss_meta")) schemaCreated = true;
                 if (sql === "BEGIN" || sql === "BEGIN IMMEDIATE") {
                     transactionSnapshot ??= {
                         files: new Map(files),
@@ -725,8 +727,10 @@ function createInMemoryMockDb() {
 
             // sqlite_master check
             if (sql.includes("sqlite_master")) {
-                if (req.resultRows) {
-                    (req.resultRows as InMemoryRow[]).push({ name: "vss_meta" });
+                if (req.resultRows && (schemaCreated || meta.size > 0 || files.size > 0 || chunks.size > 0)) {
+                    (req.resultRows as InMemoryRow[]).push(
+                        { name: "vss_meta" }, { name: "vss_files" }, { name: "vss_chunks" },
+                    );
                 }
                 return;
             }
@@ -1417,6 +1421,8 @@ describe("B-125 lexical-only shadow migration", () => {
 
     it("keeps existing vectors ready, requires confirmation, and atomically activates CHAR-PHRASE", async () => {
         const { db, chunks, files, lexicalEntries, lexicalFieldEntries, meta } = createInMemoryMockDb();
+        meta.set("schemaVersion", String(VSS_SCHEMA_VERSION));
+        meta.set("profileSignature", "test||test-model|3|COSINE");
         chunks.set(1, {
             id: 1,
             path: "notes/召回.md",
@@ -1616,7 +1622,9 @@ describe("B-125 lexical-only shadow migration", () => {
     });
 
     it("drops an aborted shadow generation without touching indexed chunks", async () => {
-        const { db, chunks, lexicalEntries } = createInMemoryMockDb();
+        const { db, chunks, lexicalEntries, meta } = createInMemoryMockDb();
+        meta.set("schemaVersion", String(VSS_SCHEMA_VERSION));
+        meta.set("profileSignature", "test||test-model|3|COSINE");
         chunks.set(1, {
             id: 1,
             path: "note.md",
@@ -1666,7 +1674,9 @@ describe("B-125 lexical-only shadow migration", () => {
     });
 
     it("never materializes excluded chunk content into a scoped shadow batch", async () => {
-        const { db, chunks, lexicalEntries } = createInMemoryMockDb();
+        const { db, chunks, lexicalEntries, meta } = createInMemoryMockDb();
+        meta.set("schemaVersion", String(VSS_SCHEMA_VERSION));
+        meta.set("profileSignature", "test||test-model|3|COSINE");
         chunks.set(1, {
             id: 1,
             path: "allowed.md",
@@ -1917,6 +1927,8 @@ describe("B-125 lexical-only shadow migration", () => {
 
     it("cleans an interrupted shadow on the next Worker initialization", async () => {
         const { db, chunks, lexicalEntries, meta } = createInMemoryMockDb();
+        meta.set("schemaVersion", String(VSS_SCHEMA_VERSION));
+        meta.set("profileSignature", "test||test-model|3|COSINE");
         chunks.set(1, {
             id: 1,
             path: "note.md",
@@ -1972,6 +1984,8 @@ describe("B-125 lexical-only shadow migration", () => {
     it("keeps vector search ready when interrupted lexical cleanup itself fails", async () => {
         const fixture = createInMemoryMockDb();
         const { db, chunks, meta } = fixture;
+        meta.set("schemaVersion", String(VSS_SCHEMA_VERSION));
+        meta.set("profileSignature", "test||test-model|3|COSINE");
         chunks.set(1, {
             id: 1,
             path: "stable-vector.md",
@@ -2878,7 +2892,7 @@ describe("SPEC-A6 data safety: profile signature compatibility", () => {
 
         // Simulate pre-existing data with a known signature
         meta.set("profileSignature", "test||test-model|4|COSINE");
-        meta.set("schemaVersion", "1");
+        meta.set("schemaVersion", String(VSS_SCHEMA_VERSION));
 
         const workerScope = setupWorkerScope();
         await initializeWorker(workerScope, db, { dimensions: 4 });
@@ -2948,6 +2962,7 @@ describe("SPEC-A6 data safety: profile signature compatibility", () => {
             last_modified: 10,
         });
         meta.set("profileSignature", "test||test-model|3|COSINE");
+        meta.set("schemaVersion", String(VSS_SCHEMA_VERSION));
 
         const workerScope = setupWorkerScope();
         await initializeWorker(workerScope, db, { dimensions: 3 });
@@ -3014,6 +3029,7 @@ describe("SPEC-A6 data safety: profile signature compatibility", () => {
             });
         }
         meta.set("profileSignature", "test||test-model|3|COSINE");
+        meta.set("schemaVersion", String(VSS_SCHEMA_VERSION));
         const workerScope = setupWorkerScope();
         await initializeWorker(workerScope, db, { dimensions: 3 });
 
@@ -3041,7 +3057,7 @@ describe("SPEC-A6 data safety: profile signature compatibility", () => {
 
         // Simulate data indexed with a DIFFERENT model
         meta.set("profileSignature", "openai||old-model|1024|COSINE");
-        meta.set("schemaVersion", "1");
+        meta.set("schemaVersion", String(VSS_SCHEMA_VERSION));
         meta.set("lexicalRebuildId", "interrupted-shadow");
         meta.set("lexicalRebuildGeneration", "1");
         lexicalEntries[1].set(99, "c53ec c56de");

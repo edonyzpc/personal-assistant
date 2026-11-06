@@ -179,10 +179,18 @@ Durable tables include:
 - `vss_chunks_fts`: legacy single-field table retained for schema compatibility;
   the corrected lexical path does not query or silently backfill it.
 
-The current schema version is `VSS_SCHEMA_VERSION = 2`; lexical compatibility is
-tracked independently by a canonical SQLite `LexicalProfileMarker` rather than by
-bumping or resetting the embedding schema. The default embedding dimension is
-`1024`, and the default distance metric is cosine.
+The current schema version is `VSS_SCHEMA_VERSION = 3`, paired with
+`heading-aware-v3` chunk metadata. Fenced code does not introduce headings.
+Existing indexes with an older, missing or unknown schema stay stale until the
+user confirms rebuilding; initialization and marker recovery must not relabel
+their chunks as the current format. There is no parallel legacy chunker.
+Declining confirmation preserves the old index. Once an authorized rebuild has
+reset it, cancellation or failure uses the existing guarded recovery path rather
+than restoring the old cache; source Markdown remains unchanged.
+
+Lexical compatibility is tracked independently by a canonical SQLite
+`LexicalProfileMarker` rather than by bumping or resetting the embedding schema.
+The default embedding dimension is `1024`, and the default distance metric is cosine.
 
 ### Independent lexical generation
 

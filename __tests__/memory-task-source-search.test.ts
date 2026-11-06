@@ -15,7 +15,7 @@ function setup() {
     const hash = `hash:${markdown}`;
     const chunks = createHeadingAwareMarkdownChunks({ path, markdown, contentHash: hash, created: 10, lastModified: 10 });
     const raw = chunks.map(chunk => ({ score: 0.9, doc: { pageContent: chunk.content,
-        metadata: { ...chunk.metadata, path, chunkIndex: chunk.chunkIndex, contentHash: hash, indexVersion: 'heading-aware-v2' } } }));
+        metadata: { ...chunk.metadata, path, chunkIndex: chunk.chunkIndex, contentHash: hash } } }));
     const guard: TaskSourceReadGuard = { isCurrent: () => current, isMemoryAllowed: () => memoryAllowed,
         isPathAllowed: candidate => candidate === path,
         getNoteSearchScope: () => ({ allowedPaths: [path], excludedPaths: [] }) };

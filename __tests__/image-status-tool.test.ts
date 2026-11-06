@@ -6,6 +6,16 @@ import { createChatToolCapability } from '../src/ai-services/capability-adapter'
 import { PolicyEngine } from '../src/ai-services/policy-engine';
 
 describe('get_image_status tool', () => {
+    it('admits serialized legacy integer revisions and retry intervals without admitting fractions', () => {
+        const legacyInteger = Number.MAX_SAFE_INTEGER + 1;
+        const observation: ImageStatusObservation = { status: 'available', taskId: 'task', operationId: 'operation',
+            localState: 'running', revision: legacyInteger, updatedAt: '2026-11-05T00:00:00Z',
+            basis: 'local_snapshot', remoteQueryAvailable: false, nextAction: 'wait', retryAfterMs: legacyInteger };
+        expect(isImageStatusObservation(JSON.parse(JSON.stringify(observation)))).toBe(true);
+        expect(isImageStatusObservation({ ...observation, revision: 0.5 })).toBe(false);
+        expect(isImageStatusObservation({ ...observation, retryAfterMs: -1 })).toBe(false);
+    });
+
     it('declares a network read and accepts exactly one local identity without Host-owned fields', () => {
         const tool = createImageStatusTool({ read: jest.fn<ImageStatusHost['read']>() });
         expect(tool.permission).toBe('network-read');

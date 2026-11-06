@@ -123,15 +123,18 @@ export type GhostOperationFactStage = "source" | "metadata" | "resource" | "imag
 export type GhostOperationPostEffect = "not_sent" | "failed" | "unknown" | "saved";
 export type GhostOperationResourceRole = "body" | "cover" | "cover-and-body";
 
+// These facts survive in action receipts and retain the pre-Zod-4 integer range.
+const storedNonnegativeInteger = z.number().nonnegative().refine(Number.isInteger);
+
 export const ghostOperationFactsSchema = z.object({
     stage: z.enum(["source", "metadata", "resource", "image-upload", "post-save", "binding", "cleanup"]),
     reason: z.enum(ghostOperationFactReasons).optional(),
     httpStatus: z.number().int().min(100).max(599).optional(),
     postEffect: z.enum(["not_sent", "failed", "unknown", "saved"]),
-    uploadedCount: z.number().int().nonnegative(),
+    uploadedCount: storedNonnegativeInteger,
     resource: z.object({
         id: z.string().min(1).max(128), role: z.enum(["body", "cover", "cover-and-body"]),
-        actualBytes: z.number().int().nonnegative(), limitBytes: z.number().int().positive(),
+        actualBytes: storedNonnegativeInteger, limitBytes: z.number().positive().refine(Number.isInteger),
     }).strict().optional(),
 }).strict();
 export type GhostOperationFacts = z.infer<typeof ghostOperationFactsSchema>;

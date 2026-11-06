@@ -472,6 +472,18 @@ async function initialize(
             assertWorkerActive();
         }
 
+        // An existing index must keep its original format until VSS admits a
+        // confirmed rebuild. In particular, missing IndexedDB marker state must
+        // not let marker recovery silently stamp old chunks as the new format.
+        const existingTables = readIndexTables();
+        if (existingTables.size > 0 && (
+            existingTables.size !== 3
+            || getMeta("schemaVersion") !== String(VSS_SCHEMA_VERSION)
+        )) {
+            status = "stale";
+            return status;
+        }
+
         createSchema(db);
         initializeContinuityMetadata();
         // Lexical crash recovery is independent of the embedding profile. Run it
@@ -550,6 +562,7 @@ async function openOpfsDatabase(
             initialCapacity: 12,
             verbosity: 0,
             forceReinitIfPreviouslyFailed: true,
+            preserveOnInitFailure: true,
         });
     } catch (error) {
         if (isOpfsBusyError(error)) {
@@ -677,7 +690,7 @@ type OpfsReadHandle = {
     close(): void;
 };
 
-// @sqlite.org/sqlite-wasm 3.53.0 SAH-pool format. Only the VFS envelope is
+// @sqlite.org/sqlite-wasm 3.54.1 SAH-pool format. Only the VFS envelope is
 // decoded here; SQLite itself reads the database and its metadata in memory.
 const SAH_PATH_BYTES = 512;
 const SAH_CORPUS_BYTES = SAH_PATH_BYTES + 4;
@@ -3680,14 +3693,14 @@ function verify(): VSSIndexStats["status"] {
     const profile = activeProfile;
     if (!profile) return "uninitialized";
 
-    const rows: Array<Record<string, unknown>> = [];
-    database.exec({
-        sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'vss_meta'",
-        rowMode: "object",
-        resultRows: rows,
-    });
-    if (rows.length === 0) {
+    const tables = readIndexTables();
+    if (tables.size === 0) {
         status = "missing-local-index";
+        return status;
+    }
+
+    if (tables.size !== 3 || getMeta("schemaVersion") !== String(VSS_SCHEMA_VERSION)) {
+        status = "stale";
         return status;
     }
 
@@ -3712,6 +3725,7 @@ function verify(): VSSIndexStats["status"] {
 }
 
 function getStats(): VSSIndexStats {
+    const tables = readIndexTables();
     const pageSize = getNumberValue("PRAGMA page_size");
     const pageCount = getNumberValue("PRAGMA page_count");
     return {
@@ -3720,20 +3734,22 @@ function getStats(): VSSIndexStats {
         initDurationMs,
         lastRefreshDurationMs,
         lastSearchDurationMs,
-        chunkCount: getNumberValue("SELECT COUNT(*) FROM vss_chunks"),
-        fileCount: getNumberValue("SELECT COUNT(*) FROM vss_files"),
+        chunkCount: tables.has("vss_chunks") ? getNumberValue("SELECT COUNT(*) FROM vss_chunks") : 0,
+        fileCount: tables.has("vss_files") ? getNumberValue("SELECT COUNT(*) FROM vss_files") : 0,
         estimatedDbBytes: pageSize * pageCount,
         fallbackMode: false,
         lastErrorCode,
         lastVerifiedAt: new Date().toISOString(),
-        databaseInstanceId: getMeta(INDEX_META_DATABASE_INSTANCE_ID) ?? undefined,
-        chunkMutationEpoch: getChunkMutationEpoch(),
-        indexMutationEpoch: getPersistedEpoch(INDEX_META_MUTATION_EPOCH),
-        rebuildEpoch: getPersistedEpoch(INDEX_META_REBUILD_EPOCH),
-        lexicalMaintenanceEpoch: getPersistedEpoch(INDEX_META_LEXICAL_MAINTENANCE_EPOCH),
-        lexicalIncrementalMaintenanceEpoch: getPersistedEpoch(INDEX_META_LEXICAL_INCREMENTAL_MAINTENANCE_EPOCH),
-        lastLexicalMaintenanceKind: getMeta(INDEX_META_LAST_LEXICAL_MAINTENANCE_KIND) ?? undefined,
-        lastLexicalMaintenanceOperationId: getMeta(INDEX_META_LAST_LEXICAL_MAINTENANCE_OPERATION_ID) ?? undefined,
+        ...(tables.has("vss_meta") ? {
+            databaseInstanceId: getMeta(INDEX_META_DATABASE_INSTANCE_ID) ?? undefined,
+            chunkMutationEpoch: getChunkMutationEpoch(),
+            indexMutationEpoch: getPersistedEpoch(INDEX_META_MUTATION_EPOCH),
+            rebuildEpoch: getPersistedEpoch(INDEX_META_REBUILD_EPOCH),
+            lexicalMaintenanceEpoch: getPersistedEpoch(INDEX_META_LEXICAL_MAINTENANCE_EPOCH),
+            lexicalIncrementalMaintenanceEpoch: getPersistedEpoch(INDEX_META_LEXICAL_INCREMENTAL_MAINTENANCE_EPOCH),
+            lastLexicalMaintenanceKind: getMeta(INDEX_META_LAST_LEXICAL_MAINTENANCE_KIND) ?? undefined,
+            lastLexicalMaintenanceOperationId: getMeta(INDEX_META_LAST_LEXICAL_MAINTENANCE_OPERATION_ID) ?? undefined,
+        } : {}),
         lexicalProfileState,
         lexicalProfileId: lexicalProfileMarker?.profileId,
         lexicalGeneration: lexicalProfileMarker?.generation,
@@ -3752,12 +3768,13 @@ function reset(): void {
         status,
         lastErrorCode,
     };
-    const previousIndexMutationEpoch = getPersistedEpoch(INDEX_META_MUTATION_EPOCH);
-    const previousRebuildEpoch = getPersistedEpoch(INDEX_META_REBUILD_EPOCH);
-    const previousLexicalMaintenanceEpoch = getPersistedEpoch(INDEX_META_LEXICAL_MAINTENANCE_EPOCH);
-    const previousLexicalIncrementalMaintenanceEpoch = getPersistedEpoch(
-        INDEX_META_LEXICAL_INCREMENTAL_MAINTENANCE_EPOCH,
-    );
+    const hasMetadata = readIndexTables().has("vss_meta");
+    const previousIndexMutationEpoch = hasMetadata ? getPersistedEpoch(INDEX_META_MUTATION_EPOCH) : 0;
+    const previousRebuildEpoch = hasMetadata ? getPersistedEpoch(INDEX_META_REBUILD_EPOCH) : 0;
+    const previousLexicalMaintenanceEpoch = hasMetadata ? getPersistedEpoch(INDEX_META_LEXICAL_MAINTENANCE_EPOCH) : 0;
+    const previousLexicalIncrementalMaintenanceEpoch = hasMetadata
+        ? getPersistedEpoch(INDEX_META_LEXICAL_INCREMENTAL_MAINTENANCE_EPOCH)
+        : 0;
     const nextDatabaseInstanceId = createDatabaseInstanceId();
     database.exec("BEGIN IMMEDIATE");
     try {
@@ -4014,6 +4031,16 @@ function requireDb(): SQLiteDatabase {
         throw createWorkerError("sqlite-db-unavailable", "SQLite database is not initialized.");
     }
     return db;
+}
+
+function readIndexTables(): Set<string> {
+    const rows: Array<Record<string, unknown>> = [];
+    requireDb().exec({
+        sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('vss_meta', 'vss_files', 'vss_chunks')",
+        rowMode: "object",
+        resultRows: rows,
+    });
+    return new Set(rows.map(row => String(row.name)));
 }
 
 function getMeta(key: string): string | null {

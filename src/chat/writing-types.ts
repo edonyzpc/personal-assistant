@@ -43,7 +43,8 @@ const versionSchema = z.object({
     id, parentVersionId: id.optional(), requestId: id, messageId: id,
     text: z.string().min(1).max(1_000_000), textHash: z.string().regex(/^[a-f0-9]{64}$/),
     explanation: z.string().max(1_000_000), origin: z.enum(['ai_generated', 'user_edited']),
-    conversationId: id, turnIndex: z.number().int().nonnegative(), createdAt: z.number().finite().nonnegative(),
+    // Stored versions predate Zod's safe-integer cap; retain their accepted integer range.
+    conversationId: id, turnIndex: z.number().nonnegative().refine(Number.isInteger), createdAt: z.number().finite().nonnegative(),
     associatedImages: z.array(z.unknown()).max(2048), backgroundSourceRefs: z.array(z.unknown()).max(2048),
     styleRevisionIds: z.array(id).max(2048), scene: writingSceneSchema.optional(),
     referenceScope: z.literal('request').optional(),

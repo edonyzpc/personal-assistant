@@ -27,6 +27,9 @@ const blockingReason = z.enum(['credential_unavailable', 'connection_changed', '
     'transparent_input_needs_confirmation']);
 export type ImageStatusBlockingReason = z.infer<typeof blockingReason>;
 
+// Serialized observations retain the integer range accepted before Zod 4.
+const storedNonnegativeInteger = z.number().nonnegative().refine(Number.isInteger);
+
 /** Finite, body-free output also used when admitting a serialized status observation. */
 export const imageStatusObservationSchema = z.union([
     z.object({ status: z.literal('unavailable'), reason: z.literal('task_unavailable') }).strict(),
@@ -36,7 +39,7 @@ export const imageStatusObservationSchema = z.union([
         operationId: z.string().regex(/^[A-Za-z0-9:_-]{1,256}$/),
         localState: z.enum(['prepared', 'not_submitted', 'submitting', 'submission_unknown',
             'running', 'saving', 'completed', 'partial', 'failed', 'stopped', 'expired']),
-        revision: z.number().int().nonnegative(),
+        revision: storedNonnegativeInteger,
         updatedAt: z.string().max(64),
         basis: z.enum(['local_snapshot', 'provider_query']),
         providerState: z.enum(['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELED', 'UNKNOWN']).optional(),
@@ -45,7 +48,7 @@ export const imageStatusObservationSchema = z.union([
         blockingReason: blockingReason.optional(),
         checkedAt: z.string().max(64).optional(),
         nextAction: z.enum(['wait', 'needs_user', 'none']),
-        retryAfterMs: z.number().int().nonnegative().optional(),
+        retryAfterMs: storedNonnegativeInteger.optional(),
     }).strict(),
 ]);
 

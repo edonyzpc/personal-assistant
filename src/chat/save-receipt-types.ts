@@ -35,18 +35,20 @@ export interface SaveReceipt {
 }
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
+// Existing receipts accept integers beyond Zod 4's safe-integer cap.
+const storedNonnegativeInteger = z.number().nonnegative().refine(Number.isInteger);
 const attachmentSchema = z.object({
     ref: z.unknown(), sourcePath: z.string(), sourceName: z.string().min(1).max(512),
     attachmentKind: z.enum(['original', 'heic_jpeg']), mime: z.string().regex(/^image\/[a-z0-9.+-]+$/),
     transfer: z.enum(['move', 'reference']).optional(),
     filename: z.string().min(1).max(255).refine((name) => !name.includes('/') && !name.includes('\\')
         && !Array.from(name).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)),
-    outputHash: hash, exportPolicy: z.string().min(1).max(256), byteLength: z.number().int().nonnegative(),
+    outputHash: hash, exportPolicy: z.string().min(1).max(256), byteLength: storedNonnegativeInteger,
     plannedPath: z.string().optional(), writtenHash: hash.optional(), state: z.enum(['planned', 'written']),
 }).strict();
 const receiptSchema = z.object({
     id, operationId: id, writingVersionId: id, textHash: hash, targetNotePath: z.string(),
-    origin: z.enum(['ai_generated', 'user_edited']), createdAt: z.number().int().nonnegative(),
+    origin: z.enum(['ai_generated', 'user_edited']), createdAt: storedNonnegativeInteger,
     attachments: z.array(attachmentSchema).max(2048), initialNoteHash: hash, noteContentHash: hash,
     finalNoteHash: hash.optional(), noteState: z.enum(['pending', 'created', 'completed']),
     state: z.enum(['prepared', 'partial', 'completed', 'failed']), failureReason: z.string().max(128).optional(),
