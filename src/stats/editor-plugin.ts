@@ -122,6 +122,7 @@ class SectionWidget extends WidgetType {
 class SectionWordCountEditorPlugin implements PluginValue {
     decorations: DecorationSet;
     lineCounts: number[] = [];
+    private countComments: boolean | undefined;
 
     constructor(view: EditorView) {
         const plugin = view.state.field(pluginField);
@@ -135,6 +136,7 @@ class SectionWordCountEditorPlugin implements PluginValue {
     }
 
     calculateLineCounts(state: EditorState, plugin: EditorPluginHost) {
+        this.countComments = plugin.settings.countComments;
         const stripComments = !plugin.settings.countComments;
         let docStr = state.doc.toString();
 
@@ -158,6 +160,13 @@ class SectionWordCountEditorPlugin implements PluginValue {
         const { displaySectionCounts } = plugin.settings;
         const stripComments = !plugin.settings.countComments;
         let didSettingsChange = false;
+
+        if (displaySectionCounts && this.countComments !== plugin.settings.countComments) {
+            this.lineCounts = [];
+            this.calculateLineCounts(update.state, plugin);
+            this.decorations = this.mkDeco(update.view);
+            return;
+        }
 
         if (this.lineCounts.length && !displaySectionCounts) {
             this.lineCounts = [];

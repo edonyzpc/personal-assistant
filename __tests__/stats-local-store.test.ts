@@ -199,11 +199,15 @@ describe("StatsLocalStore", () => {
         await expect(store.initialize()).rejects.toThrow("open failed");
     });
 
-    it("rejects when IndexedDB upgrade is blocked", async () => {
+    it("rejects a blocked upgrade and closes its connection if it later opens", async () => {
         const fakeIndexedDb = new FakeIndexedDbFactory({ blockedOpen: true });
         const store = new IndexedDbStatsLocalStore("stats-test-db", fakeIndexedDb as unknown as IDBFactory);
 
         await expect(store.initialize()).rejects.toThrow("upgrade was blocked");
+
+        fakeIndexedDb.requests[0].onsuccess?.({} as Event);
+        expect(fakeIndexedDb.db.closeCalls).toBe(1);
+        await expect(store.getAllRecords()).rejects.toThrow("not initialized");
     });
 
     it("allows IndexedDB initialization to retry after a blocked open", async () => {
@@ -308,7 +312,7 @@ describe("StatsLocalStore", () => {
         try {
             await expect(store.initialize()).resolves.toBeUndefined();
             await expect(store.getAllRecords()).resolves.toEqual([]);
-            await expect(store.getAllFileCountEntries()).resolves.toEqual([]);
+            await expect(store.getAllFileCountEntries()).rejects.toMatchObject({ name: "NotFoundError" });
         } finally {
             consoleError.mockRestore();
         }
@@ -362,6 +366,7 @@ type FakeIndexedDbOptions = {
 
 class FakeIndexedDbFactory {
     readonly db: FakeIdbDatabase;
+    readonly requests: IDBOpenDBRequest[] = [];
     openCalls = 0;
 
     constructor(private readonly options: FakeIndexedDbOptions = {}) {
@@ -371,6 +376,7 @@ class FakeIndexedDbFactory {
     open(): IDBOpenDBRequest {
         this.openCalls += 1;
         const request = new FakeRequest(this.db) as unknown as IDBOpenDBRequest;
+        this.requests.push(request);
         queueMicrotask(() => {
             if (this.options.failOpen) {
                 (request as unknown as FakeRequest<FakeIdbDatabase>).error = new DOMException("open failed");
@@ -421,6 +427,9 @@ class FakeIdbDatabase {
     }
 
     transaction(storeName: string, _mode: IDBTransactionMode): IDBTransaction {
+        if (!this.storeNames.has(storeName)) {
+            throw new DOMException(`Missing object store: ${storeName}`, "NotFoundError");
+        }
         const transaction = new FakeTransaction(this, storeName);
         return transaction.withOptions(this.options) as unknown as IDBTransaction;
     }

@@ -27,6 +27,8 @@ export interface FileCountCacheEntry {
     path: string;
     mtime: number;
     size: number;
+    // Older cache rows have no policy identity and must be counted again.
+    countComments?: boolean;
     wordCount: number;
     charCount: number;
     sentenceCount: number;
@@ -220,6 +222,7 @@ export class IndexedDbStatsLocalStore implements StatsLocalStore {
     private openDatabase(): Promise<IDBDatabase> {
         return new Promise((resolve, reject) => {
             const request = this.indexedDb.open(this.dbName, STATS_LOCAL_DB_VERSION);
+            let blocked = false;
             request.onupgradeneeded = (event) => {
                 const db = request.result;
                 const oldVersion = event.oldVersion ?? 0;
@@ -250,6 +253,11 @@ export class IndexedDbStatsLocalStore implements StatsLocalStore {
             };
             request.onsuccess = () => {
                 const db = request.result;
+                // A blocked event does not cancel the underlying open request.
+                if (blocked) {
+                    db.close();
+                    return;
+                }
                 db.onversionchange = () => {
                     db.close();
                     if (this.db === db) {
@@ -260,7 +268,10 @@ export class IndexedDbStatsLocalStore implements StatsLocalStore {
                 resolve(db);
             };
             request.onerror = () => reject(request.error ?? new Error("Failed to open Statistics local store."));
-            request.onblocked = () => reject(new Error("Statistics local store upgrade was blocked by another open connection."));
+            request.onblocked = () => {
+                blocked = true;
+                reject(new Error("Statistics local store upgrade was blocked by another open connection."));
+            };
         });
     }
 

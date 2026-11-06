@@ -516,6 +516,7 @@ describe("StatsManager incremental snapshot", () => {
             path: file.path,
             mtime: file.stat?.mtime ?? 0,
             size: file.stat?.size ?? 0,
+            countComments: false,
             wordCount: 1,
             charCount: 5,
             sentenceCount: 1,
@@ -595,6 +596,20 @@ describe("StatsManager incremental snapshot", () => {
 
         expect(cachedRead).not.toHaveBeenCalled();
         manager.dispose();
+    });
+
+    it.each([true, undefined])("recounts a persisted cache with comment policy %s under the current policy", async (countComments) => {
+        const file = fakeFile("a.md", 100, 50);
+        const cachedRead = jest.fn(async () => "visible\n%% hidden words %%") as jest.Mock<(file: unknown) => Promise<string>>;
+        const preload = [entryFor(file, { wordCount: 3, countComments })];
+        const { manager } = setupHarness({ files: [file], cachedRead, preload });
+        try {
+            await runSnapshot(manager);
+            expect(cachedRead).toHaveBeenCalledWith(file);
+            expect(await manager.getTotalWords()).toBe(1);
+        } finally {
+            manager.dispose();
+        }
     });
 
     it("recounts only files with stale mtime/size while reusing matching entries", async () => {
@@ -780,7 +795,40 @@ describe("StatsManager incremental snapshot", () => {
         });
 
         expect(cachedRead).toHaveBeenCalled();
+        expect(await manager.getTotalWords()).toBe(1);
         manager.dispose();
+    });
+
+    it("keeps newer editor totals when a snapshot cache write completes after an edit", async () => {
+        const file = fakeFile("a.md", 1, 5);
+        const cachedRead = jest.fn(async () => "one") as jest.Mock<(file: unknown) => Promise<string>>;
+        const { manager, store, putSpy, triggerVaultEvent } = setupHarness({ files: [file], cachedRead });
+        let releaseWrite!: () => void;
+        const writePending = new Promise<void>((resolve) => { releaseWrite = resolve; });
+        let enteredWrite!: () => void;
+        const writeStarted = new Promise<void>((resolve) => { enteredWrite = resolve; });
+        try {
+            await runSnapshot(manager);
+            expect(await manager.getTotalWords()).toBe(1);
+            putSpy.mockImplementationOnce(async (entries) => {
+                enteredWrite();
+                await writePending;
+                await MemoryStatsLocalStore.prototype.putFileCountEntries.call(store, entries);
+            });
+            cachedRead.mockResolvedValue("one two");
+            await triggerVaultEvent("modify", file);
+            const refresh = invokeRefreshDirectly(manager);
+            await writeStarted;
+            await manager.change(file.path, () => "one two three", () => "one");
+            expect(await manager.getTotalWords()).toBe(3);
+            releaseWrite();
+            await refresh;
+            await manager.flush();
+            expect(await manager.getTotalWords()).toBe(3);
+        } finally {
+            releaseWrite();
+            manager.dispose();
+        }
     });
 
     it("clears the cache and re-reads everything on recalcTotals", async () => {

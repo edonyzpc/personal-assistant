@@ -745,7 +745,9 @@ export default class StatsManager {
 
     private async calcSnapshotIncremental(shouldCancel: CancelCheck = () => false): Promise<SnapshotCounts | null> {
         const mutationGeneration = this.fileCountMutationGeneration;
-        const shouldAbort = () => shouldCancel() || mutationGeneration !== this.fileCountMutationGeneration;
+        const countComments = this.host.settings.countComments;
+        const shouldAbort = () => shouldCancel() || mutationGeneration !== this.fileCountMutationGeneration
+            || countComments !== this.host.settings.countComments;
         const loaded = await this.loadFileCountCacheIfNeeded();
         if (shouldAbort()) return null;
 
@@ -774,6 +776,7 @@ export default class StatsManager {
         for (const file of files) {
             const cached = cacheView.get(file.path);
             if (cached
+                && cached.countComments === countComments
                 && cached.mtime === getFileMtime(file)
                 && cached.size === getFileSize(file)
                 && !this.dirtyFileCountPaths.has(file.path)) {
@@ -794,7 +797,7 @@ export default class StatsManager {
             if (shouldAbort()) return null;
             const counts = this.countText(text);
             accumulateFromCounts(totals, counts);
-            const entry = buildFileCountEntry(file, counts);
+            const entry = buildFileCountEntry(file, counts, countComments);
             newEntries.push(entry);
             this.fileCountCacheMap.set(file.path, entry);
             this.dirtyFileCountPaths.delete(file.path);
@@ -837,6 +840,7 @@ export default class StatsManager {
             }
         }
 
+        if (shouldAbort()) return null;
         totals.files = this.getTotalFiles();
         totals.totalPages = Number(totals.totalPages.toFixed(1));
         return totals;
@@ -907,11 +911,12 @@ function getFileSize(file: TFile): number {
     return file.stat?.size ?? 0;
 }
 
-function buildFileCountEntry(file: TFile, counts: ActivityCounts): FileCountCacheEntry {
+function buildFileCountEntry(file: TFile, counts: ActivityCounts, countComments: boolean): FileCountCacheEntry {
     return {
         path: file.path,
         mtime: getFileMtime(file),
         size: getFileSize(file),
+        countComments,
         wordCount: counts.words,
         charCount: counts.characters,
         sentenceCount: counts.sentences,

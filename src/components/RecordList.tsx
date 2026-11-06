@@ -214,29 +214,39 @@ const RecordList = ({ app, fileNames }: Props) => {
 
   useEffect(() => {
     let cancelled = false;
+    let settled = false;
     const lifecycle = new Component();
+    lifecycle.load();
     async function run() {
-      for (let idx = 0; idx < fileNames.length; idx++) {
-        const fileName = fileNames[idx];
-        const el = refs.current[idx];
-        if (!el) continue;
-        const fileString = await app.vault.adapter.read(fileName);
-        if (cancelled) return;
-        el.empty();
-        await renderMarkdown(app, fileString, el, fileName, lifecycle);
+      try {
+        for (let idx = 0; idx < fileNames.length; idx++) {
+          const fileName = fileNames[idx];
+          const el = refs.current[idx];
+          if (!el) continue;
+          const fileString = await app.vault.adapter.read(fileName);
+          if (cancelled) return;
+          const buffer = el.ownerDocument.win.createDiv();
+          await renderMarkdown(app, fileString, buffer, fileName, lifecycle);
+          if (cancelled) return;
+          el.replaceChildren(buffer);
 
-        const uri = getNoteUri(app, fileName);
-        el.onclick = (evt) => {
-          if (evt.target instanceof Element && evt.target.closest("a")) return;
-          location.href = uri;
-        };
-        el.classList.add("pa-record-wrapper-clickable");
+          const uri = getNoteUri(app, fileName);
+          el.onclick = (evt) => {
+            if (evt.target instanceof Element && evt.target.closest("a")) return;
+            location.href = uri;
+          };
+          el.classList.add("pa-record-wrapper-clickable");
+        }
+      } finally {
+        settled = true;
+        // Native renderers can register children after their awaited work.
+        if (cancelled) lifecycle.unload();
       }
     }
     void run();
     return () => {
       cancelled = true;
-      lifecycle.unload();
+      if (settled) lifecycle.unload();
     };
   }, [app, fileNames]);
 
