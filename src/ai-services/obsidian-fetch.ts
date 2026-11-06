@@ -402,9 +402,10 @@ export const obsidianFetch = async (
     init: RequestInit = {},
     control: ObsidianFetchControl = {},
 ): Promise<Response> => {
-    throwIfAborted(init.signal);
-
     const request = getRequest(input);
+    const signal = init.signal === undefined ? request?.signal : init.signal;
+    throwIfAborted(signal);
+
     const headers = mergeHeaders(request, init.headers);
     const body = init.body !== undefined
         ? await normalizeBody(init.body)
@@ -431,29 +432,29 @@ export const obsidianFetch = async (
     const dispatch = () => {
         return traceProviderDispatch(() => requestUrl(requestParam), 'obsidian', control.onProviderRequestTrace,
             body, control.isProviderRequestTraceEnabled,
-            { call: control.agentDebugCall, diagnostic: control.onProviderRequestDiagnostic, signal: init.signal });
+            { call: control.agentDebugCall, diagnostic: control.onProviderRequestDiagnostic, signal });
     };
     let response;
     try {
         response = control.providerRequestScope
             ? await control.providerRequestScope.startRequest(
             dispatch,
-            init.signal,
+            signal,
             control.onProviderRequestStart,
             control.prepareProviderRequest,
         )
             : await (async () => {
-            throwIfAborted(init.signal);
+            throwIfAborted(signal);
             if (control.prepareProviderRequest) {
                 await withAbort(
-                    prepareProviderAdmission(() => control.prepareProviderRequest!(init.signal)),
-                    init.signal,
+                    prepareProviderAdmission(() => control.prepareProviderRequest!(signal)),
+                    signal,
                 );
             }
-            throwIfAborted(init.signal);
+            throwIfAborted(signal);
             runProviderAdmission(control.onProviderRequestStart);
-            throwIfAborted(init.signal);
-            return await withAbort(dispatch(), init.signal);
+            throwIfAborted(signal);
+            return await withAbort(dispatch(), signal);
         })();
     } catch (error) {
         control.onProviderRequestFailed?.();

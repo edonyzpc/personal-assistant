@@ -57,18 +57,19 @@ describe('frontmatter tag merging', () => {
 });
 
 describe('AI summary generation', () => {
-    it('awaits frontmatter writes and stores normalized summary tags', async () => {
+    it.each([false, true])('writes normalized summary tags to the command note (view changed=%s)', async viewChanges => {
         const frontmatter: Record<string, unknown> = { tags: 'daily, notes' };
+        const commandFile = { path: 'note.md' };
+        const view = { file: commandFile };
         let writeFinished = false;
+        const processFrontMatter = jest.fn(async (_file: unknown, apply: (value: Record<string, unknown>) => void) => {
+            await Promise.resolve();
+            apply(frontmatter);
+            writeFinished = true;
+        });
         const service = new AIService({
             app: {
-                fileManager: {
-                    processFrontMatter: jest.fn(async (_file: unknown, apply: (value: Record<string, unknown>) => void) => {
-                        await Promise.resolve();
-                        apply(frontmatter);
-                        writeFinished = true;
-                    }),
-                },
+                fileManager: { processFrontMatter },
             },
             log: jest.fn(),
         } as never);
@@ -76,15 +77,18 @@ describe('AI summary generation', () => {
             createAIThinkingNotice: () => ({ notice: { hide: jest.fn() } }),
             getDocumentContent: (markdown: string) => ({ content: markdown }),
         };
-        (service as unknown as { callLLM: () => Promise<string> }).callLLM = jest.fn(async () =>
-            '```json\n{"summary":"Generated summary","keywords":["notes","ai"]}\n```');
+        (service as unknown as { callLLM: () => Promise<string> }).callLLM = jest.fn(async () => {
+            if (viewChanges) view.file = { path: 'another-note.md' };
+            return '```json\n{"summary":"Generated summary","keywords":["notes","ai"]}\n```';
+        });
 
         await service.generateSummary(
             { getValue: () => 'note body' } as never,
-            { file: { path: 'note.md' } } as never,
+            view as never,
         );
 
         expect(writeFinished).toBe(true);
+        expect(processFrontMatter).toHaveBeenCalledWith(commandFile, expect.any(Function));
         expect(frontmatter).toEqual({
             'AI Summary': 'Generated summary',
             tags: ['daily', 'notes', 'ai'],

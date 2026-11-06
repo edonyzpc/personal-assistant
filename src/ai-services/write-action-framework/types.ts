@@ -218,8 +218,7 @@ export interface DebugEvent {
  * - NoopDebugObserver: production 默认，零开销
  * - ConsoleDebugObserver: 开发默认，console.debug 输出
  *
- * 未来 production audit 接入时（见 framework SDD §10 升级触发），可注入 PersistentAuditObserver
- * 实现而无需改 framework 内核。
+ * DEC-046 已取消历史 production audit 扩展计划；此接口不授权持久化日志或访问旧 audit 路径。
  */
 export interface DebugObserver {
     emit(event: DebugEvent): void;

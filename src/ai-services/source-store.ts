@@ -12,8 +12,9 @@ const SECRET_QUERY_PARAM = /(?:api[_-]?key|token|secret|signature|authorization|
 const HTML_TAG_PATTERN = /<[^>]*>/g;
 
 export function normalizeSourceRecord(input: SourceRecordInput): SourceRecord | null {
-    const title = normalizeSourceText(input.title, MAX_SOURCE_TITLE_CHARS);
-    const snippet = normalizeSourceText(input.snippet, MAX_SOURCE_SNIPPET_CHARS);
+    const { title: rawTitle, snippet: rawSnippet, ...fields } = input;
+    const title = normalizeSourceText(rawTitle, MAX_SOURCE_TITLE_CHARS);
+    const snippet = normalizeSourceText(rawSnippet, MAX_SOURCE_SNIPPET_CHARS);
     const webUrl = input.kind === "web-source" && input.url
         ? sanitizeWebSourceUrl(input.url)
         : input.url;
@@ -25,7 +26,7 @@ export function normalizeSourceRecord(input: SourceRecordInput): SourceRecord | 
     const citationEligible = input.citationEligible ?? (input.kind === "memory-reference" || input.kind === "web-source");
 
     return {
-        ...input,
+        ...fields,
         dedupKey,
         ...(title ? { title } : {}),
         ...(snippet ? { snippet } : {}),

@@ -27,7 +27,7 @@
 
 import { Component, MarkdownRenderer, Modal, Platform, Setting, type App } from "obsidian";
 
-import { setPlatformTimeout } from "../../platform-dom";
+import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../../platform-dom";
 import type { ConfirmationOutcome, PreviewSpec } from "./types";
 
 /** Captures the user's verdict plus diagnostics for debug emit. */
@@ -98,6 +98,7 @@ export function createMutexPreviewRenderer(inner: PreviewRenderer): PreviewRende
 export class WriteActionPreviewModal extends Modal {
     private settled = false;
     private readonly renderHost = new Component();
+    private confirmationTimer: PlatformTimeoutHandle | undefined;
 
     constructor(
         app: App,
@@ -163,7 +164,10 @@ export class WriteActionPreviewModal extends Modal {
                     .onClick(() => this.resolveWith("confirmed", renderWarnings));
                 if (isMobile) {
                     button.buttonEl.disabled = true;
-                    setPlatformTimeout(() => { button.buttonEl.disabled = false; }, 500);
+                    this.confirmationTimer = setPlatformTimeout(() => {
+                        this.confirmationTimer = undefined;
+                        button.buttonEl.disabled = false;
+                    }, 500);
                 }
             })
             .addButton((button) => {
@@ -176,6 +180,10 @@ export class WriteActionPreviewModal extends Modal {
     }
 
     onClose(): void {
+        if (this.confirmationTimer !== undefined) {
+            clearPlatformTimeout(this.confirmationTimer);
+            this.confirmationTimer = undefined;
+        }
         this.contentEl.empty();
         this.renderHost.unload();
         // Modal closed without resolving — SDD §2.1 maps ✕ / click-outside / ESC

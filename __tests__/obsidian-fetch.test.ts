@@ -194,14 +194,30 @@ describe('obsidianFetch', () => {
         expect(response.ok).toBe(false);
     });
 
-    it('rejects before requestUrl when already aborted', async () => {
+    it.each(['init', 'Request'] as const)('rejects before requestUrl when %s is already aborted', async source => {
         const controller = new AbortController();
         controller.abort();
+        mockedRequestUrl.mockResolvedValueOnce(successfulResponse());
+        const input = source === 'Request'
+            ? new Request('https://example.test/abort', { signal: controller.signal })
+            : 'https://example.test/abort';
 
-        await expect(obsidianFetch('https://example.test/abort', {
+        await expect(obsidianFetch(input, source === 'init' ? {
             signal: controller.signal,
-        })).rejects.toMatchObject({ name: 'AbortError' });
+        } : undefined)).rejects.toMatchObject({ name: 'AbortError' });
         expect(mockedRequestUrl).not.toHaveBeenCalled();
+    });
+
+    it.each(['null', 'live'] as const)('allows an explicit %s signal to override the Request signal', async override => {
+        const controller = new AbortController();
+        controller.abort();
+        const request = new Request('https://example.test/override', { signal: controller.signal });
+        mockedRequestUrl.mockResolvedValueOnce(successfulResponse());
+
+        await expect(obsidianFetch(request, {
+            signal: override === 'null' ? null : new AbortController().signal,
+        })).resolves.toBeInstanceOf(Response);
+        expect(mockedRequestUrl).toHaveBeenCalledTimes(1);
     });
 
     it('does not dispatch a same-scope request until a locally-aborted request physically settles', async () => {
@@ -409,10 +425,13 @@ describe('obsidianFetch', () => {
         expect(mockedRequestUrl).not.toHaveBeenCalled();
     });
 
-    it('cancels while physical dispatch preparation is pending and never restores the late result', async () => {
+    it.each(['init', 'Request'] as const)('cancels from %s while dispatch preparation is pending and never restores the late result', async source => {
         mockedRequestUrl.mockResolvedValue(successfulResponse());
         const gate = deferred<void>();
         const controller = new AbortController();
+        const request = new Request('https://example.test/cancelled', { signal: controller.signal });
+        const signal = source === 'Request' ? request.signal : controller.signal;
+        const prepare = jest.fn((_signal?: AbortSignal | null) => gate.promise);
         const onProviderRequestStart = jest.fn();
         const onProviderRequestDiagnostic = jest.fn();
         const control: Parameters<typeof obsidianFetch>[2] = {
@@ -420,22 +439,19 @@ describe('obsidianFetch', () => {
             onProviderRequestStart,
             onProviderRequestDiagnostic,
         };
-        (control as { prepareProviderRequest?: (signal?: AbortSignal | null) => Promise<void> })
-            .prepareProviderRequest = signal => {
-                expect(signal).toBe(controller.signal);
-                return gate.promise;
-            };
+        control.prepareProviderRequest = prepare;
 
-        const pending = obsidianFetch('https://example.test/cancelled', {
+        const pending = obsidianFetch(source === 'Request' ? request : request.url, {
             method: 'POST',
             body: '{}',
-            signal: controller.signal,
+            ...(source === 'init' ? { signal } : {}),
         }, control);
         await flushMicrotasks();
         controller.abort();
         await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
         gate.resolve();
         await Promise.resolve();
+        expect(prepare).toHaveBeenCalledWith(signal);
         expect(onProviderRequestStart).not.toHaveBeenCalled();
         expect(onProviderRequestDiagnostic).not.toHaveBeenCalled();
         expect(mockedRequestUrl).not.toHaveBeenCalled();

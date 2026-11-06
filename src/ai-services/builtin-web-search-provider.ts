@@ -162,7 +162,7 @@ export async function requestBailianWebSearchMcp(
     return {
         status: toolCall.status,
         body: normalizeMcpWebSearchResponse(toolCall.body),
-        rawBodyBytes: JSON.stringify(toolCall.body).length,
+        rawBodyBytes: toolCall.rawBodyBytes,
     };
 }
 
@@ -296,7 +296,7 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
             if (response.status >= 400) {
                 return unavailableResult(describeWebSearchFailure(response, this.redactor), parsed.query, []);
             }
-            const serializedBytes = response.rawBodyBytes ?? JSON.stringify(response.body).length;
+            const serializedBytes = response.rawBodyBytes ?? new TextEncoder().encode(JSON.stringify(response.body)).byteLength;
             if (serializedBytes > this.policy.maxResponseBytes) {
                 return unavailableResult("WebSearch response exceeded the configured size budget.", parsed.query, []);
             }
@@ -588,7 +588,7 @@ async function postMcpJsonRpc(
     payload: Record<string, unknown>,
     context: BuiltinWebSearchRequestContext,
     sessionId?: string,
-): Promise<{ status: number; headers: Headers; body: unknown }> {
+): Promise<{ status: number; headers: Headers; body: unknown; rawBodyBytes?: number }> {
     const disabled = () => ({ status: 403, headers: new Headers(), body: { error: "WebSearch is disabled." } });
     if (context.isEnabled?.() === false) {
         return disabled();
@@ -625,6 +625,7 @@ async function postMcpJsonRpc(
         status: response.status,
         headers: response.headers,
         body: parseMcpResponseBody(text),
+        rawBodyBytes: new TextEncoder().encode(text).byteLength,
     };
 }
 

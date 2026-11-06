@@ -527,7 +527,6 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
 
             let result: AgentCapabilityResult;
             const execStartedAt = now();
-            const executeAttempted = true;
             try {
                 result = await capability.executeWrite(input, context, hooks);
             } catch (error) {
@@ -551,7 +550,7 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
                     runId,
                     turnId,
                     confinement.normalizedPath,
-                    executeAttempted && rollbackAllowed,
+                    rollbackAllowed,
                 );
                 return failure(
                     capability,
@@ -604,7 +603,7 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
                 runId,
                 turnId,
                 confinement.normalizedPath,
-                executeAttempted,
+                true,
             );
             return result;
 

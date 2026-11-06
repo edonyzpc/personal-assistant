@@ -1987,7 +1987,9 @@ export class PaAgentLoop {
                 resolve();
             };
             this.options.signal?.addEventListener("abort", finish, { once: true });
-            const timer: PlatformTimeoutHandle = setPlatformTimeout(finish, retryAfterMs);
+            // The next loop guard stops an expired run instead of retrying early.
+            const waitMs = Math.min(retryAfterMs, this.wallClockRemainingMs() ?? retryAfterMs);
+            const timer: PlatformTimeoutHandle = setPlatformTimeout(finish, waitMs);
             timerStarted = true;
         });
         this.debug("provider_retry_wait:end", { retryAfterMs, phaseInstanceId, aborted: this.isAborted(),

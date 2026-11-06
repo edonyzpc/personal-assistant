@@ -65,6 +65,22 @@ describe("source record normalization", () => {
         });
     });
 
+    it.each([
+        { title: '<b></b>', snippet: '<img src="provider-image">' },
+        { title: ' \n ', snippet: '\t ' },
+    ])("omits source text that becomes empty after normalization: %j", ({ title, snippet }) => {
+        const record = normalizeSourceRecord({
+            kind: "web-source",
+            url: "https://example.com/result",
+            title,
+            snippet,
+        });
+
+        expect(record).toMatchObject({ url: "https://example.com/result", citationEligible: true });
+        expect(record).not.toHaveProperty("title");
+        expect(record).not.toHaveProperty("snippet");
+    });
+
     it("clones source metadata without sharing the nested object", () => {
         const metadata = { sourceDependency: true };
         const record = cloneSourceRecord({

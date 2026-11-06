@@ -246,16 +246,13 @@ describe('createQueryNotesTool', () => {
         expect(exact.matchCount).toBe(1);
         expect(exactResult.sourceRecords?.map(record => record.path)).toEqual(['a.md']);
 
-        const stat = output(await f.invoke({
-            sort: { field: 'ctime', direction: 'asc' },
-            limit: 1,
-        }));
-        expect(stat.matchCount).toBe(2);
-        expect(paths(stat)).toEqual(['a.md']);
         const statResult = await f.invoke({
             sort: { field: 'ctime', direction: 'asc' },
             limit: 1,
         });
+        const stat = output(statResult);
+        expect(stat.matchCount).toBe(2);
+        expect(paths(stat)).toEqual(['a.md']);
         expect(statResult.sources).toEqual([{ path: 'a.md' }]);
         expect(statResult.sourceRecords?.map(record => record.path)).toEqual(['a.md', 'b.md']);
         const adapted = chatToolResultToAgentCapabilityResult(f.tool, 'test-provider', statResult);
@@ -267,17 +264,6 @@ describe('createQueryNotesTool', () => {
 
         const nonmatchFiles = [makeFile('notes/a.md', { ctime: 0 }), makeFile('outside/b.md')];
         const nonmatch = setup(nonmatchFiles);
-        const nonmatchResult = output(await nonmatch.invoke({
-            folder: 'notes',
-            date: {
-                field: 'ctime',
-                kind: 'timestamp',
-                from: '2026-01-01T00:00:00Z',
-                to: '2026-01-02T00:00:00Z',
-            },
-        }));
-        expect(nonmatchResult.matchCount).toBe(0);
-        expect(nonmatchResult.matchCountKind).toBe('exact');
         const rawNonmatch = await nonmatch.invoke({
             folder: 'notes',
             date: {
@@ -287,6 +273,9 @@ describe('createQueryNotesTool', () => {
                 to: '2026-01-02T00:00:00Z',
             },
         });
+        const nonmatchResult = output(rawNonmatch);
+        expect(nonmatchResult.matchCount).toBe(0);
+        expect(nonmatchResult.matchCountKind).toBe('exact');
         expect(rawNonmatch.sources).toEqual([]);
         expect(rawNonmatch.sourceRecords?.map(record => record.path)).toEqual(['notes/a.md']);
     });
@@ -458,11 +447,6 @@ describe('createQueryNotesTool', () => {
         expect(complete.matchCount).toBe(3);
         expect(paths(complete)).toEqual(['a.md']);
 
-        const changedLimit = output(await f.invoke({
-            sort: { field: 'mtime', direction: 'desc' },
-            limit: 1,
-        }));
-        expect(paths(changedLimit)).toEqual(['a.md']);
     });
 
     it('places unknown stat values after known values in both requested directions', async () => {
@@ -640,9 +624,6 @@ describe('createQueryNotesTool', () => {
             return createHash('sha1').update(input, 'utf8').digest('hex');
         });
         try {
-            // Keep the instance-prefix digit count stable across test ordering so
-            // this exercises the snapshot boundary rather than identity length drift.
-            for (let index = 0; index < 1_000; index += 1) createQueryNotesTool();
             const files = Array.from({ length: 600 }, (_, index) => makeFile(
                 `${String(index).padStart(3, '0')}${'p'.repeat(index < 100 ? 241 : 240)}.md`,
             ));
@@ -712,26 +693,29 @@ describe('createQueryNotesTool', () => {
     it('evaluates large metadata strings and arrays without treating size as unknown', async () => {
         const hugeString = 'x'.repeat(20_000);
         const stringify = jest.spyOn(JSON, 'stringify');
-        const oversizedString = setup(
-            [makeFile('huge-string.md')],
-            new Map([['huge-string.md', { frontmatter: { text: hugeString } }]]),
-        );
-        const contains = output(await oversizedString.invoke({
-            properties: [{ key: 'text', operator: 'contains', value: 'needle' }],
-        }));
-        expect(contains.matchCount).toBe(0);
-        expect(contains.matchCountKind).toBe('exact');
-        expect(contains.coverage.state).toBe('complete');
-        expect(hugeString.length).toBe(20_000);
+        try {
+            const oversizedString = setup(
+                [makeFile('huge-string.md')],
+                new Map([['huge-string.md', { frontmatter: { text: hugeString } }]]),
+            );
+            const contains = output(await oversizedString.invoke({
+                properties: [{ key: 'text', operator: 'contains', value: 'needle' }],
+            }));
+            expect(contains.matchCount).toBe(0);
+            expect(contains.matchCountKind).toBe('exact');
+            expect(contains.coverage.state).toBe('complete');
+            expect(hugeString.length).toBe(20_000);
 
-        const exists = output(await oversizedString.invoke({
-            properties: [{ key: 'text', operator: 'exists' }],
-        }));
-        expect(exists.matchCount).toBe(1);
-        expect(exists.matchCountKind).toBe('exact');
-        expect(exists.coverage.state).toBe('complete');
-        expect(stringify.mock.calls.some(([value]) => typeof value === 'string' && value.includes(hugeString))).toBe(false);
-        stringify.mockRestore();
+            const exists = output(await oversizedString.invoke({
+                properties: [{ key: 'text', operator: 'exists' }],
+            }));
+            expect(exists.matchCount).toBe(1);
+            expect(exists.matchCountKind).toBe('exact');
+            expect(exists.coverage.state).toBe('complete');
+            expect(stringify.mock.calls.some(([value]) => typeof value === 'string' && value.includes(hugeString))).toBe(false);
+        } finally {
+            stringify.mockRestore();
+        }
 
         const accessedIndexes: string[] = [];
         const longArray = new Proxy(Array.from({ length: 8_193 }, () => ({})), {

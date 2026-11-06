@@ -238,6 +238,7 @@ export class OperationsIntentController {
         const virtualTargets = new Map<string, VirtualTarget>();
         const initialReadKinds = new Map<string, TaskSourceReadKind>();
         const prepared: PreparedOperation[] = [];
+        const preparedImages = new Map<string, NoteImageRemovalPrivatePreparation>();
 
         // Validate the complete target list before a guarded batch reads any
         // baseline. The guard stays local to this call, including concurrent runs.
@@ -363,7 +364,7 @@ export class OperationsIntentController {
                     createId: () => operationId,
                 });
                 assertReadAllowed(path, readKind);
-                this.noteImageProposals.set(operationId, preparation.privatePreparation);
+                preparedImages.set(operationId, preparation.privatePreparation);
                 prepared.push(preparation.operation);
                 const target = virtualTargets.get(path) ?? { exists: true, content: null };
                 target.content = preparation.operation.expectedAfter;
@@ -418,6 +419,9 @@ export class OperationsIntentController {
             assertCurrent();
             this.scheduleExpiration(intent);
             assertCurrent();
+            for (const [operationId, preparation] of preparedImages) {
+                this.noteImageProposals.set(operationId, preparation);
+            }
             this.emit({ type: "intent-staged", intent });
             return intent;
         } catch (error) {
@@ -528,6 +532,7 @@ export class OperationsIntentController {
         this.clearExpiration(intentId);
         const cancelled = replaceIntentState(intent, "cancelled");
         this.intents.delete(intentId);
+        for (const operation of intent.operations) this.noteImageProposals.delete(operation.id);
         this.terminalStates.set(intentId, { state: "cancelled", runId: intent.runId });
         this.emit({ type: "intent-cancelled", intent: cancelled });
         return cancelled;
@@ -839,7 +844,11 @@ export class OperationsIntentController {
             return { ...base, status: "unavailable", failureCategory: "boundary_denied" };
         }
         try {
-            await this.undoExisting(receipt);
+            await this.undoExisting(receipt, () => {
+                if (!proposal.revalidateUndo()) {
+                    throw new OperationsControllerError("boundary_denied", "The original source is no longer allowed during Undo.");
+                }
+            });
             return {
                 ...base,
                 status: "undone",
@@ -855,7 +864,7 @@ export class OperationsIntentController {
                 status: normalized.category === "stale_target" ? "stale" : "failed",
                 failureCategory: normalized.category,
                 message: normalized.message,
-                undoAvailable: true,
+                undoAvailable: normalized.category !== "boundary_denied" && !this.disposed,
             };
         }
     }
@@ -984,9 +993,14 @@ export class OperationsIntentController {
             const noteFile = this.vault.getAbstractFileByPath(receipt.path);
             if (!noteFile) throw new StaleTargetError("The modified note no longer exists.");
             this.markSelfWrite?.(receipt.path);
-            noteRestoreAttempted = true;
             await this.vault.process(noteFile, current => {
+                this.assertUsable();
+                this.assertPathAllowed(receipt.path);
+                if (!proposal.revalidateUndo()) {
+                    throw new OperationsControllerError("boundary_denied", "The original source is no longer allowed during Undo.");
+                }
                 if (current !== receipt.expectedAfter) throw new StaleTargetError();
+                noteRestoreAttempted = true;
                 return receipt.before ?? "";
             });
             this.undoStore.markUsed(receipt.id);
@@ -1008,7 +1022,7 @@ export class OperationsIntentController {
                 ...base,
                 status: normalized.category === "stale_target" || normalized.category === "target_collision"
                     ? "stale"
-                    : normalized.category === "boundary_denied" ? "unavailable" : "unknown",
+                    : normalized.category === "boundary_denied" || normalized.category === "cancelled" ? "unavailable" : "unknown",
                 failureCategory: normalized.category,
                 message: normalized.category === "stale_target"
                     ? "The attachment was restored, but the note changed. Recovery remains available."
@@ -1019,10 +1033,10 @@ export class OperationsIntentController {
                         { key: "note", status: noteRestoreAttempted && normalized.category !== "stale_target" ? "unknown" : "applied" },
                         { key: "attachment", status: "restored" },
                     ],
-                    undoAvailable: normalized.category !== "boundary_denied",
+                    undoAvailable: normalized.category !== "boundary_denied" && !this.disposed,
                 } : restoreAttempted ? { effects: [
                     { key: "note", status: "applied" }, { key: "attachment", status: "unknown" }],
-                    undoAvailable: normalized.category !== "boundary_denied" } : {}),
+                    undoAvailable: normalized.category !== "boundary_denied" && !this.disposed } : {}),
             };
         } finally {
             if (leased) this.noteImageRemovalResources.releaseLease(receipt.id);
@@ -1128,6 +1142,8 @@ export class OperationsIntentController {
         this.terminalStates.clear();
         this.contextResults.clear();
         this.contextUndone.clear();
+        this.contextUndoResults.clear();
+        this.noteImageProposals.clear();
         this.expiredIntentIds.clear();
         for (const receipt of this.undoStore.listAvailable()) {
             if (receipt.kind === REMOVE_NOTE_IMAGE_TOOL_NAME) this.noteImageRemovalResources?.retire(receipt.id);
@@ -1798,16 +1814,21 @@ export class OperationsIntentController {
         if (!file) throw new StaleTargetError("The created note no longer exists.");
         const current = await this.readFreshFile(file);
         if (current !== receipt.expectedAfter) throw new StaleTargetError("The created note changed and cannot be undone safely.");
+        this.assertUsable();
+        this.assertPathAllowed(receipt.path);
         this.markSelfWrite?.(receipt.path);
         await this.trashFile(file);
     }
 
-    private async undoExisting(receipt: UndoReceipt): Promise<void> {
+    private async undoExisting(receipt: UndoReceipt, assertSourceCurrent?: () => void): Promise<void> {
         if (receipt.before === null) throw new OperationsControllerError("undo_unavailable", "Undo baseline is unavailable.");
         const file = this.resolveFile(receipt.path);
         if (!file) throw new StaleTargetError("The target note no longer exists.");
         this.markSelfWrite?.(receipt.path);
         await this.vault.process(file, (current) => {
+            this.assertUsable();
+            this.assertPathAllowed(receipt.path);
+            assertSourceCurrent?.();
             if (current !== receipt.expectedAfter) throw new StaleTargetError("The note changed after the write and cannot be undone safely.");
             return receipt.before!;
         });
@@ -1902,6 +1923,7 @@ export class OperationsIntentController {
         if (!intent || intent.state !== "pending") return;
         this.clearExpiration(intentId);
         this.intents.delete(intentId);
+        for (const operation of intent.operations) this.noteImageProposals.delete(operation.id);
         this.expiredIntentIds.set(intentId, intent.runId);
         this.emit({ type: "intent-expired", intentId });
     }

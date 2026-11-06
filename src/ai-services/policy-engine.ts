@@ -122,12 +122,6 @@ export class PolicyEngine {
                     reason: `permission ${capability.permission} is not allowed for non-action capabilities`,
                 };
             }
-            if (capability.permission === "memory-management" && !fixedMemoryManagement) {
-                return {
-                    allowed: false,
-                    reason: "memory-management permission is reserved for manage_memory",
-                };
-            }
             if (capability.requiresConfirmation !== false) {
                 return { allowed: false, reason: "non-action capabilities must not require confirmation" };
             }

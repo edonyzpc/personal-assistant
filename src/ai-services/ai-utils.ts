@@ -464,7 +464,9 @@ export class AIUtils {
             // Keep native fetch and its propagating AbortSignal. The SDK may
             // await serialization/retry backoff after prompt preparation.
             options.fetch = (input, init) => {
-                const signal = init?.signal ?? (typeof Request !== 'undefined' && input instanceof Request ? input.signal : undefined);
+                const signal = init?.signal === undefined
+                    ? (typeof Request !== 'undefined' && input instanceof Request ? input.signal : undefined)
+                    : init.signal;
                 throwIfAborted(signal ?? undefined);
                 if (providerRequestOptions.prepareProviderRequest) {
                     return (async () => {

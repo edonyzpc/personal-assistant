@@ -327,12 +327,12 @@ describe("BuiltinWebSearchProvider", () => {
         expect(provider.inflightRequests.size).toBe(0);
     });
 
-    it("returns recoverable unavailable for oversized responses", async () => {
+    it.each([["ASCII", "x".repeat(200)], ["UTF-8", "中".repeat(50)]])("returns recoverable unavailable for oversized %s response bytes", async (_encoding, snippet) => {
         const provider = createProvider({
-            policy: createPolicy({ maxResponseBytes: 30 }),
+            policy: createPolicy({ maxResponseBytes: 150 }),
             request: async () => ({
                 status: 200,
-                body: { results: [{ title: "A", url: "https://example.com/a", snippet: "x".repeat(200) }] },
+                body: { results: [{ title: "A", url: "https://example.com/a", snippet }] },
             }),
         });
         const registry = createPaidCapabilityRegistry();
@@ -514,6 +514,18 @@ describe("BuiltinWebSearchProvider", () => {
         requestUrlMock.mockReset();
         const providerRequestScope = createProviderRequestScope();
         const startRequest = jest.spyOn(providerRequestScope, "startRequest");
+        const rawToolResponse = "\n  " + JSON.stringify({
+            jsonrpc: "2.0",
+            id: "tools-call",
+            result: {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        results: [{ title: "Result", url: "https://example.com/result", snippet: "中文摘要" }],
+                    }),
+                }],
+            },
+        }) + "\n";
         requestUrlMock
             .mockResolvedValueOnce(mockObsidianResponse({
                 text: JSON.stringify({ jsonrpc: "2.0", id: "initialize", result: {} }),
@@ -536,22 +548,7 @@ describe("BuiltinWebSearchProvider", () => {
                 }),
             }))
             .mockResolvedValueOnce(mockObsidianResponse({
-                text: JSON.stringify({
-                    jsonrpc: "2.0",
-                    id: "tools-call",
-                    result: {
-                        content: [{
-                            type: "text",
-                            text: JSON.stringify({
-                                results: [{
-                                    title: "Result",
-                                    url: "https://example.com/result",
-                                    snippet: "Snippet",
-                                }],
-                            }),
-                        }],
-                    },
-                }),
+                text: rawToolResponse,
             }));
 
         const response = await requestBailianWebSearchMcp({
@@ -562,12 +559,12 @@ describe("BuiltinWebSearchProvider", () => {
 
         expect(response).toEqual({
             status: 200,
-            rawBodyBytes: expect.any(Number),
+            rawBodyBytes: Buffer.byteLength(rawToolResponse, 'utf8'),
             body: {
                 results: [{
                     title: "Result",
                     url: "https://example.com/result",
-                    snippet: "Snippet",
+                    snippet: "中文摘要",
                     score: undefined,
                 }],
             },
@@ -684,7 +681,7 @@ describe("BuiltinWebSearchProvider", () => {
         }
     });
 
-    it("loads on mobile through the Obsidian requestUrl transport", async () => {
+    it("exports its capability when loaded for mobile", async () => {
         const provider = createProvider();
         const loadSpy = jest.spyOn(provider, "load");
         const registry = createPaidCapabilityRegistry();

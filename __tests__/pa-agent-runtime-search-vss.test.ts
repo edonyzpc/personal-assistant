@@ -842,10 +842,26 @@ describe("MemorySearchTool searchVss contract", () => {
         const { plugin, calls } = makePlugin({
             policyModelName: "",
             retrievalOptimizationFlags: { graphPpr: false },
-            searchHybrid: async () => [{
-                score: 0.9,
-                doc: { pageContent: "root chunk", metadata: { path: "notes/a.md", chunkIndex: 0 } },
-            }],
+            graphBoundarySource: {
+                getEpoch: () => "graph-epoch-1",
+                resolvedLinks: new Map([["notes/a.md", new Set(["notes/b.md"])]]),
+                classifyPath: () => "allowed_markdown",
+                canonicalizePath: (path) => path,
+            },
+            searchHybrid: async ({ options }) => {
+                if (options?.queryEmbeddingOut) {
+                    options.queryEmbeddingOut.value = [0.1, 0.2];
+                    options.queryEmbeddingOut.profileSignature = "profile-v1";
+                    options.queryEmbeddingOut.sourceEpoch = "source-epoch-1";
+                }
+                return [directRawResult("notes/a.md")];
+            },
+            rankGraphCandidates: async (_embedding, paths, control) => ({
+                requestId: control.requestId,
+                runEpoch: control.runEpoch,
+                sourceEpoch: control.sourceEpoch,
+                paths: paths.map((path: string) => rankedPath(path, 0.8)),
+            }),
             getChunksByPath: async ({ paths }) => paths.map((path) => ({
                 score: 1,
                 doc: { pageContent: `linked chunk ${path}`, metadata: { path, chunkIndex: 0 } },
@@ -861,6 +877,7 @@ describe("MemorySearchTool searchVss contract", () => {
 
         expect(plugin.vss.searchHybrid).toHaveBeenCalledTimes(1);
         expect(calls.map((call) => call.prompt)).toEqual(["hello world"]);
+        expect(plugin.memorySearch.rankGraphCandidates).not.toHaveBeenCalled();
         expect(plugin.vss.getChunksByPath).not.toHaveBeenCalled();
         expect(result.candidates.map((candidate: { path: string }) => candidate.path)).toEqual(["notes/a.md"]);
     });
@@ -880,7 +897,14 @@ describe("MemorySearchTool searchVss contract", () => {
                     classifyPath: () => "allowed_markdown",
                     canonicalizePath: (path) => path,
                 },
-                searchHybrid: async () => [directRawResult(seedPath)],
+                searchHybrid: async ({ options }) => {
+                    if (options?.queryEmbeddingOut) {
+                        options.queryEmbeddingOut.value = [0.1, 0.2];
+                        options.queryEmbeddingOut.profileSignature = "profile-v1";
+                        options.queryEmbeddingOut.sourceEpoch = "source-epoch-1";
+                    }
+                    return [directRawResult(seedPath)];
+                },
                 rankGraphCandidates: async (_embedding, paths, control) => ({
                     requestId: control.requestId,
                     runEpoch: control.runEpoch,

@@ -56,7 +56,7 @@ describe("Context Pager", () => {
         ])).toBeUndefined();
     });
 
-    it("builds a read-only pager state from retrieval outcomes without raw excerpts", () => {
+    it("preserves retrieval source hashes without persisting excluded titles", () => {
         const outcome: RetrievalOutcome = {
             id: "retrieval-1",
             status: "partial_evidence",
@@ -92,12 +92,17 @@ describe("Context Pager", () => {
             path: "notes/current.md",
             excerptHash: "abc123",
         });
-        expect(JSON.stringify(state.persistedTrace)).not.toContain("raw prompt");
+        expect(state.persistedTrace.skippedSourceRefs[0]).toEqual({
+            path: "private/secret.md",
+            reason: "privacy excluded",
+            excerptHash: "def456",
+        });
+        expect(JSON.stringify(state.persistedTrace)).not.toContain("Excluded note");
         expect(hasForbiddenPersistedTextFields(state.persistedTrace)).toBe(false);
     });
 
     it("builds chat context traces from existing context-used metadata", () => {
-        const state = createContextPagerStateFromChatContextUsed("chat-run", [
+        const contextUsed = [
             {
                 category: "memory",
                 label: "Selected Memory",
@@ -115,7 +120,8 @@ describe("Context Pager", () => {
                 detail: "Tool unavailable",
                 statusOnly: true,
             },
-        ]);
+        ];
+        const state = createContextPagerStateFromChatContextUsed("chat-run", contextUsed);
 
         expect(state.summary).toMatchObject({
             usedSourceCount: 1,
@@ -125,11 +131,7 @@ describe("Context Pager", () => {
         expect(state.persistedTrace.usedSourceRefs.map((ref) => ref.path)).toEqual(["notes/current.md"]);
         expect(state.persistedTrace.usedMemoryRefs.map((ref) => ref.id)).toEqual(["memory/profile.md"]);
         const withReduction = createContextPagerState({
-            ...createContextTraceFromChatContextUsed("chat-run", [
-                { category: "memory", label: "Selected Memory", sources: [{ path: "memory/profile.md" }] },
-                { category: "current-note", label: "Current note", sources: [{ path: "notes/current.md" }] },
-                { category: "tool-unavailable", label: "Search unavailable", detail: "Tool unavailable", statusOnly: true },
-            ]),
+            ...createContextTraceFromChatContextUsed("chat-run", contextUsed),
             reduction: { historyCompressed: true, toolContextReduced: true, budgetLimited: true },
         });
         expect(withReduction.summary).toEqual(state.summary);

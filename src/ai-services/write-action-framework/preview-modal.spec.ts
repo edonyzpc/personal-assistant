@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
+import { Platform } from "obsidian";
 
 /**
  * Per-suite obsidian mock: provides a richer Modal + Setting than the project's
@@ -6,7 +7,7 @@ import { beforeEach, describe, expect, it, jest } from "@jest/globals";
  * wiring without booting a real Obsidian app. Pattern lifted from
  * `__tests__/memory-manager.test.ts`.
  */
-type SettingButton = { text?: string; cta?: boolean; click?: () => void };
+type SettingButton = { text?: string; cta?: boolean; click?: () => void; buttonEl: { disabled: boolean } };
 const mockSettingGroups: SettingButton[][] = [];
 
 // Use `any` to dodge jest.Mock<UnknownFunction> strict-typing for arbitrary
@@ -102,9 +103,10 @@ jest.mock("obsidian", () => ({
             setButtonText: (t: string) => unknown;
             onClick: (fn: () => void) => unknown;
         }) => void): this {
-            const record: SettingButton = {};
+            const record: SettingButton = { buttonEl: { disabled: false } };
             this.buttons.push(record);
             const btn = {
+                buttonEl: record.buttonEl,
                 setCta: () => {
                     record.cta = true;
                     return btn;
@@ -263,6 +265,38 @@ describe("WriteActionPreviewModal (PreviewSpec section rendering)", () => {
         modal.onOpen();
         modal.onClose();
         expect(outcomes).toEqual(["cancelled"]);
+    });
+
+    it("keeps the mobile confirmation delay and cancels it when the modal closes early", () => {
+        jest.useFakeTimers();
+        const wasMobile = Platform.isMobile;
+        Platform.isMobile = true;
+        const ready = new WriteActionPreviewModal({} as never, buildSpec(), jest.fn());
+        const closed = new WriteActionPreviewModal({} as never, buildSpec(), jest.fn());
+        try {
+            ready.onOpen();
+            const readyButton = mockSettingGroups.at(-1)![0].buttonEl;
+            expect(readyButton.disabled).toBe(true);
+            jest.advanceTimersByTime(499);
+            expect(readyButton.disabled).toBe(true);
+            jest.advanceTimersByTime(1);
+            expect(readyButton.disabled).toBe(false);
+            ready.onClose();
+
+            closed.onOpen();
+            const closedButton = mockSettingGroups.at(-1)![0].buttonEl;
+            expect(closedButton.disabled).toBe(true);
+            closed.onClose();
+            expect(jest.getTimerCount()).toBe(0);
+            jest.advanceTimersByTime(500);
+            expect(closedButton.disabled).toBe(true);
+        } finally {
+            ready.onClose();
+            closed.onClose();
+            jest.clearAllTimers();
+            Platform.isMobile = wasMobile;
+            jest.useRealTimers();
+        }
     });
 
     it("captures aborted outcome via forceResolve (external signal)", () => {

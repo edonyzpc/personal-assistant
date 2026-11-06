@@ -2093,12 +2093,10 @@ export class PaAgentRuntime {
             writingHistoryCapability.executionMode = 'sequential';
             if (!commandCapabilities.register(writingHistoryCapability)) throw new Error('Writing history capability unavailable');
         }
-        let additionalProvidersLoaded = false;
         await recordStartupTimingAsync(
             "capability_preload",
             () => traceAgentPhase(debug, 'capability_preload', () => this.loadAdditionalCapabilityProviders(`${runId}:capability-preload`, options.signal)),
         );
-        additionalProvidersLoaded = true;
         const hostContext = await recordStartupTimingAsync(
             "host_context",
             () => traceAgentPhase(debug, 'host_context', () => this.loadCanonicalHostContextForRun(options, runId, options.signal)),
@@ -2185,7 +2183,6 @@ export class PaAgentRuntime {
             availableMetaToolNames,
         });
 
-        const loadAdditionalCapabilityProviders = this.loadAdditionalCapabilityProviders.bind(this);
         const toolRegistry = this.toolRegistry;
         const planner = this.planner;
         const contextManager = this.contextManager;
@@ -2541,10 +2538,6 @@ export class PaAgentRuntime {
                 let debugProviderCompletion: string | undefined;
                 let debugStreamPhaseId: string | undefined;
                 try {
-                if (!additionalProvidersLoaded) {
-                    additionalProvidersLoaded = true;
-                    await loadAdditionalCapabilityProviders(input.turnId, input.signal);
-                }
                 const activeToolUseConstraints = toolConstraintsFromAgentControlSnapshot(input.controlSnapshot)
                     ?? toolUseConstraints;
                 const exportFilter = {

@@ -367,6 +367,54 @@ describe("OperationsIntentController", () => {
         controller.dispose();
     });
 
+    it.each([
+        ["vault_create", "boundary"],
+        ["vault_create", "dispose"],
+        ["vault_append", "boundary"],
+        ["vault_append", "dispose"],
+    ] as const)("stops %s Undo when %s changes before the actual effect", async (name, stop) => {
+        const vault = new MemoryVault();
+        if (name === "vault_append") vault.files.set("notes/a.md", "before");
+        let allowed = true;
+        const controller = makeController(vault, { isPathAllowed: () => allowed });
+        try {
+            const intent = await controller.stageIntent({
+                runId: "run", turnId: "turn",
+                operations: [{ toolCallId: "call", name, input: { path: "notes/a.md", content: "after" } }],
+            });
+            const execution = await controller.executeIntent(intent.id);
+            const written = vault.files.get("notes/a.md")!;
+            const revoke = () => {
+                if (stop === "boundary") allowed = false;
+                else controller.dispose();
+            };
+            if (name === "vault_create") {
+                vault.adapter.read.mockImplementationOnce(async () => {
+                    await Promise.resolve();
+                    revoke();
+                    return written;
+                });
+            } else {
+                vault.process.mockImplementationOnce(async (file, change) => {
+                    await Promise.resolve();
+                    revoke();
+                    const next = change(vault.files.get(file.path)!);
+                    vault.files.set(file.path, next);
+                    return next;
+                });
+            }
+
+            expect(await controller.undo(execution.operations[0]!.receiptId!)).toMatchObject({
+                status: "failed",
+                failureCategory: stop === "boundary" ? "boundary_denied" : "cancelled",
+            });
+            expect(vault.files.get("notes/a.md")).toBe(written);
+            expect(vault.trashFile).not.toHaveBeenCalled();
+        } finally {
+            controller.dispose();
+        }
+    });
+
     it("does not retain a staged intent when aborted or disposed during an awaited read", async () => {
         for (const stop of ["abort", "dispose"] as const) {
             const vault = new MemoryVault();

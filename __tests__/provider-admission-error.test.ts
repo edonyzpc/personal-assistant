@@ -66,6 +66,24 @@ describe('physical provider admission with the installed SDK', () => {
         expect(obsidianNetwork).not.toHaveBeenCalled();
     });
 
+    it('lets an explicit null override a Request signal before native preparation and admission', async () => {
+        const controller = new AbortController();
+        controller.abort();
+        const request = new Request('https://fixture.invalid/v1/chat/completions', { signal: controller.signal });
+        const prepare = jest.fn(async () => undefined);
+        const admission = jest.fn();
+        const model = await utils.createChatModel(0, {
+            transport: 'native', prepareProviderRequest: prepare, onProviderRequestStart: admission,
+        });
+        network.mockResolvedValueOnce(new Response(successBody));
+        const configuredFetch = model.clientConfig.fetch!;
+
+        await expect(configuredFetch(request, { signal: null })).resolves.toBeInstanceOf(Response);
+        expect(prepare).toHaveBeenCalledWith(null);
+        expect(admission).toHaveBeenCalledTimes(1);
+        expect(network).toHaveBeenCalledWith(request, { signal: null });
+    });
+
     it.each([429, 500])('retains HTTP %s retries and rechecks admission for each dispatch', async status => {
         const retryHeaders: Record<string, string> = status === 429
             ? { 'content-type': 'application/json', 'retry-after': '0' }

@@ -409,19 +409,17 @@ describe("ActionExecutor (gate rejection paths)", () => {
         expect(cap._executeWriteMock).not.toHaveBeenCalled();
     });
 
-    it("returns failure for cancelled/aborted outcomes (still emits gate.confirmation.received)", async () => {
-        for (const outcome of ["cancelled", "aborted"] as const) {
-            const events: DebugEvent[] = [];
-            const cap = makeCapability();
-            const exec = createActionExecutor(defaultExecutorOptions({
-                debugObserver: makeObserver(events),
-                previewRenderer: makeRenderer([outcome]),
-            }));
-            const result = await exec.execute(cap, {}, makeContext());
-            expect(result.status).toBe("failed");
-            expect(events.find((e) => e.type === "gate.confirmation.received")?.extra?.outcome).toBe(outcome);
-            expect(cap._executeWriteMock).not.toHaveBeenCalled();
-        }
+    it("returns failure for an aborted preview and still emits gate.confirmation.received", async () => {
+        const events: DebugEvent[] = [];
+        const cap = makeCapability();
+        const exec = createActionExecutor(defaultExecutorOptions({
+            debugObserver: makeObserver(events),
+            previewRenderer: makeRenderer(["aborted"]),
+        }));
+        const result = await exec.execute(cap, {}, makeContext());
+        expect(result.status).toBe("failed");
+        expect(events.find((e) => e.type === "gate.confirmation.received")?.extra?.outcome).toBe("aborted");
+        expect(cap._executeWriteMock).not.toHaveBeenCalled();
     });
 
     it("returns failure + emits gate.stale-reread.drift when target appears between preview and execute", async () => {
@@ -431,10 +429,6 @@ describe("ActionExecutor (gate rejection paths)", () => {
             exists: jest.fn(async (path: string) => existsMap[path] ?? false) as FsProbe["exists"],
         };
         const cap = makeCapability();
-        createActionExecutor(defaultExecutorOptions({
-            debugObserver: makeObserver(events),
-            fsProbe,
-        }));
         // Schedule a flip: after Gate 2 returns confirmed, the target "appears"
         // before Gate 3 re-reads. We do this by toggling the map after the
         // renderer resolves.

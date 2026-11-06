@@ -8,9 +8,8 @@ import {
 import type { DebugEvent, DebugEventType } from "./types";
 
 /**
- * Canonical list of every DebugEventType (framework SDD §2.4). Asserted in the
- * `ALL_DEBUG_EVENT_TYPES` test below to catch any future drift between
- * `types.ts` and the runtime emitters.
+ * Declared event inputs for the observer contract (framework SDD §2.4).
+ * Runtime integration tests separately exercise the actual gate emitters.
  */
 const ALL_DEBUG_EVENT_TYPES: DebugEventType[] = [
     "gate.target-confinement.ok",
@@ -36,7 +35,7 @@ function buildEvent(type: DebugEventType, extra: Partial<DebugEvent> = {}): Debu
 }
 
 describe("NoopDebugObserver", () => {
-    it("is a constant-time no-op for every event type", () => {
+    it("accepts every declared event type without throwing", () => {
         const obs = new NoopDebugObserver();
         for (const type of ALL_DEBUG_EVENT_TYPES) {
             expect(() => obs.emit(buildEvent(type))).not.toThrow();
@@ -48,9 +47,12 @@ describe("NoopDebugObserver", () => {
         // Spy console.debug to verify NoopDebugObserver does NOT touch it.
         // eslint-disable-next-line no-console
         const spy = jest.spyOn(console, "debug").mockImplementation(() => undefined);
-        NOOP_DEBUG_OBSERVER.emit(buildEvent("execute.ok"));
-        expect(spy).not.toHaveBeenCalled();
-        spy.mockRestore();
+        try {
+            NOOP_DEBUG_OBSERVER.emit(buildEvent("execute.ok"));
+            expect(spy).not.toHaveBeenCalled();
+        } finally {
+            spy.mockRestore();
+        }
     });
 });
 
@@ -58,12 +60,9 @@ describe("ConsoleDebugObserver (framework SDD §2.4)", () => {
     it("emits each of the 10 DebugEventTypes via the injected logger", () => {
         const logger = jest.fn();
         const obs = new ConsoleDebugObserver(logger);
-        const seen = new Set<DebugEventType>();
         for (const type of ALL_DEBUG_EVENT_TYPES) {
             obs.emit(buildEvent(type));
-            seen.add(type);
         }
-        expect(seen.size).toBe(10);
         expect(logger).toHaveBeenCalledTimes(10);
     });
 
@@ -93,9 +92,12 @@ describe("ConsoleDebugObserver (framework SDD §2.4)", () => {
     it("defaults to console.debug when no logger supplied (smoke)", () => {
         // eslint-disable-next-line no-console
         const spy = jest.spyOn(console, "debug").mockImplementation(() => undefined);
-        const obs = new ConsoleDebugObserver();
-        obs.emit(buildEvent("rollback.ok"));
-        expect(spy).toHaveBeenCalledTimes(1);
-        spy.mockRestore();
+        try {
+            const obs = new ConsoleDebugObserver();
+            obs.emit(buildEvent("rollback.ok"));
+            expect(spy).toHaveBeenCalledTimes(1);
+        } finally {
+            spy.mockRestore();
+        }
     });
 });

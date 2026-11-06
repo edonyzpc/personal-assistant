@@ -5,7 +5,6 @@ import {
     buildObsidianOperationsPlannerGuidance,
     getObsidianOperationsCatalogSection,
 } from '../src/ai-services/obsidian-operations-capability-catalog';
-import { CapabilityRegistry } from '../src/ai-services/capability-registry';
 
 describe('Obsidian Operations capability catalog', () => {
     it('contains the required local sections', () => {
@@ -78,12 +77,4 @@ describe('Obsidian Operations capability catalog', () => {
         expect(guidance.join('\n')).toContain('untrusted read-only context');
     });
 
-    it('does not register Obsidian Operations tools during SPEC-01', () => {
-        const registry = new CapabilityRegistry();
-
-        expect(registry.has('inspect_obsidian_note')).toBe(false);
-        expect(registry.has('read_canvas_summary')).toBe(false);
-        expect(registry.has('search_vault_snippets')).toBe(false);
-        expect(registry.has('list_vault_tags')).toBe(false);
-    });
 });

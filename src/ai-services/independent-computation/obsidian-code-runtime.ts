@@ -472,7 +472,6 @@ export function createExecuteObsidianCodeRuntime(host: ObsidianCodeRuntimeHost):
                 "not_started",
             );
         }
-        let ownerStarted = false;
         const ownerPromise = executor.execute({
             runId: host.runId,
             turnId: host.turnId,
@@ -484,7 +483,6 @@ export function createExecuteObsidianCodeRuntime(host: ObsidianCodeRuntimeHost):
             ...(activeDeadlineAt === undefined ? {} : { outerToolDeadlineAt: activeDeadlineAt }),
             inputLineage: childLineage,
         });
-        ownerStarted = true;
         record.ownerPending = true;
         pendingOwnerCount++;
         pendingOwners.push(ownerPromise.then(() => undefined).catch(() => undefined).finally(() => {
@@ -532,30 +530,27 @@ export function createExecuteObsidianCodeRuntime(host: ObsidianCodeRuntimeHost):
                 return finishChild(record, timeoutResult);
             }
             return finishChild(record, raced);
-        } catch (error) {
+        } catch {
             ownerPromise.catch(() => undefined);
-            if (ownerStarted) {
-                const retrySafety = executor.getRetrySafety?.(toolName)
-                    ?? (effect ? "side_effect" : "read_only");
-                const unknownResult: PaAgentToolExecutionResult = {
-                    outcome: "recoverable_error",
-                    executionState: retrySafety === "side_effect" ? "acceptance_unknown" : "failed",
-                    promptText: `Tool ${toolName} started, then the host executor threw after entering the owner boundary.`,
-                    includeInNextPrompt: true,
-                    ...(retrySafety === "side_effect" ? {
-                        recovery: {
-                            code: "operation_acceptance_unknown",
-                            allowedActions: ["query_operation", "needs_user"],
-                        },
-                    } : {}),
-                    metadata: {
-                        outcome: "recoverable_error",
-                        reason: "composed_child_owner_exception",
+            const retrySafety = executor.getRetrySafety?.(toolName)
+                ?? (effect ? "side_effect" : "read_only");
+            const unknownResult: PaAgentToolExecutionResult = {
+                outcome: "recoverable_error",
+                executionState: retrySafety === "side_effect" ? "acceptance_unknown" : "failed",
+                promptText: `Tool ${toolName} started, then the host executor threw after entering the owner boundary.`,
+                includeInNextPrompt: true,
+                ...(retrySafety === "side_effect" ? {
+                    recovery: {
+                        code: "operation_acceptance_unknown",
+                        allowedActions: ["query_operation", "needs_user"],
                     },
-                };
-                return finishChild(record, unknownResult);
-            }
-            throw error;
+                } : {}),
+                metadata: {
+                    outcome: "recoverable_error",
+                    reason: "composed_child_owner_exception",
+                },
+            };
+            return finishChild(record, unknownResult);
         } finally {
             if (timer !== undefined) clearTimeout(timer);
             signal?.removeEventListener("abort", abortParent);

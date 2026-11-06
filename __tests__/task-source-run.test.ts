@@ -1076,6 +1076,8 @@ describe('Task source run host', () => {
             ].map(({ role, content, dependencies }) => ({ role, content,
                 inputLineage: { schemaVersion: 1, completeness: 'complete', dependencies },
                 hostProvenance: { version: 1, messageId: `from-${origin}`, kind: 'ai_draft' },
+                runSourceSelection: { schemaVersion: 1, scope: origin, selectionId: `original-${origin}`,
+                    userMessageId: `from-${origin}` },
             })) as ChatMessage[];
             history.push({ role: 'assistant', content: 'UNKNOWN' });
             for (const [target, expected] of [

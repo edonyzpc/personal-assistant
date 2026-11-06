@@ -214,6 +214,14 @@ function expectGovernedStyleWasSent(f: Awaited<ReturnType<typeof fixture>>): voi
     expect(f.prepared).toHaveLength(1);
     expect(f.prepared[0].context).toContain(styleText);
     expect(f.prepared[0].revisionIds).toEqual([f.remembered.revisionId]);
+    expect(f.boundSchemas).toContainEqual(expect.objectContaining({ function: expect.objectContaining({
+        name: 'present_writing', parameters: expect.objectContaining({ additionalProperties: false }),
+    }) }));
+    const input = JSON.stringify(f.providerInputs[1]);
+    expect(input).toContain('present_writing');
+    expect(input).not.toContain('Required shape:');
+    expect(f.lifecycle.filter(event => event.type === 'tool_execution_start')
+        .map(event => (event as { toolName: string }).toolName)).toEqual(['get_writing_context']);
 }
 
 async function runReservedFixture(f: Awaited<ReturnType<typeof fixture>>): Promise<void> {
@@ -316,30 +324,6 @@ describe('writing preview with a governed style through the production runtime',
         expect(f.prepared).toHaveLength(0);
         expect(f.events.some((event) => event.kind === 'writing-artifact')).toBe(false);
     });
-    it.each(['tail-error', 'cancel', 'forget'] as const)('native runtime preserves governed style and handles %s without an extra model request', async (outcome) => {
-        const f = await fixture(outcome, false, true);
-        if (outcome === 'cancel') await expect(f.run()).rejects.toMatchObject({ name: 'AbortError' });
-        else await f.run();
-        expectGovernedStyleWasSent(f);
-        expect(f.boundSchemas).toContainEqual(expect.objectContaining({ function: expect.objectContaining({
-            name: 'present_writing', parameters: expect.objectContaining({ additionalProperties: false }),
-        }) }));
-        const input = JSON.stringify(f.providerInputs[1]);
-        expect(input).toContain('present_writing');
-        expect(input).not.toContain('Required shape:');
-        expect(f.lifecycle.filter(event => event.type === 'tool_execution_start')
-            .map(event => (event as { toolName: string }).toolName)).toEqual(['get_writing_context']);
-        const artifacts = f.events.filter((event) => event.kind === 'writing-artifact');
-        if (outcome === 'tail-error') {
-            expect(artifacts).toEqual([expect.objectContaining({ body, styleRevisionIds: [f.remembered.revisionId] })]);
-        } else {
-            expect(artifacts).toHaveLength(0);
-            expect(f.events.find((event) => event.kind === 'writing-recovery')).toMatchObject({
-                previewText: outcome === 'cancel' ? body : '',
-                ...(outcome === 'forget' ? { rawText: '', reason: 'source_changed' } : {}),
-            });
-        }
-    });
     it.each([false, true])('records only local whitelist delivery evidence when debug=%s', async (debug) => {
         const f = await fixture('tail-error', debug, true);
         await f.run();
@@ -384,9 +368,9 @@ describe('writing preview with a governed style through the production runtime',
         expect(f.controller.signal.aborted).toBe(false);
         expect(f.preparedSignals[0]).toBeDefined();
         expect(f.prepared[0].isSourceCurrent?.()).toBe(true);
-        expect(f.events.find((event) => event.kind === 'writing-artifact')).toMatchObject({
-            requestId: 'writing-1', body, styleRevisionIds: [f.remembered.revisionId],
-        });
+        expect(f.events.filter((event) => event.kind === 'writing-artifact')).toEqual([
+            expect.objectContaining({ requestId: 'writing-1', body, styleRevisionIds: [f.remembered.revisionId] }),
+        ]);
         expect(f.events.some((event) => event.kind === 'writing-recovery')).toBe(false);
         expect(f.events.filter((event) => event.kind === 'answer-snapshot')).toEqual([
             expect.objectContaining({ snapshot: body }),

@@ -9,9 +9,8 @@
  *   - {@link ConsoleDebugObserver} — development default; routes to console.debug
  *     with a stable `[write-action-framework]` prefix for grep-ability.
  *
- * Future Operations Agent mode (v2+) may inject a `PersistentAuditObserver`
- * implementing the same `DebugObserver` interface without changing framework
- * internals (framework SDD §10 upgrade trigger).
+ * DEC-046 retired the historical production-audit extension plan. This hook
+ * does not authorize persistent audit storage or access to old audit paths.
  */
 
 import type { DebugEvent, DebugObserver } from "./types";

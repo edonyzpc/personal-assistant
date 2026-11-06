@@ -468,16 +468,20 @@ describe('Agent Debug service', () => {
     });
 
     it('invalidates visible content before awaiting deletion and blocks late old details', async () => {
-        const { service } = setup(); await service.initialize();
+        const { service, store } = setup(); await service.initialize();
         const recorder = service.startRun({ conversationId: 'c', prompt: 'question', provider: 'p', model: 'm' });
         recorder.observe({ nodeId: 'call', kind: 'llm', phase: 'receiving', reasoning: 'sensitive' });
+        expect((await service.getContents(recorder.captureId)).some(content => content.text === 'sensitive')).toBe(true);
         const changed = jest.fn(); service.subscribe(changed);
         const deleting = service.invalidateConversation('c', { permanent: true });
         expect(changed).toHaveBeenCalledWith({ invalidated: true });
-        expect(service.getSessionDetails(recorder.captureId, 'call')).toEqual([]);
+        expect(await service.getContents(recorder.captureId)).toEqual([]);
         await deleting;
+        const writes = store.writeBatch.mock.calls.length;
         recorder.observe({ nodeId: 'call', kind: 'llm', phase: 'receiving', reasoning: 'late' });
-        expect(service.getSessionDetails(recorder.captureId, 'call')).toEqual([]);
+        await service.flush();
+        expect(store.writeBatch).toHaveBeenCalledTimes(writes);
+        expect(await service.getContents(recorder.captureId)).toEqual([]);
         await service.dispose();
     });
 
@@ -514,16 +518,18 @@ describe('Agent Debug service', () => {
         await service.dispose();
     });
 
-    it('removes remote-deleted live runs and session detail after control revision changes', async () => {
+    it('removes remote-deleted live runs and stops late writes after control revision changes', async () => {
         const { service, store, generation } = setup(); await service.initialize();
         const recorder = service.startRun({ conversationId: 'c', prompt: 'old', provider: 'p', model: 'm' });
         recorder.observe({ nodeId: 'call', kind: 'llm', phase: 'receiving', reasoning: 'old reasoning' });
+        expect((await service.getContents(recorder.captureId)).some(content => content.text === 'old reasoning')).toBe(true);
         generation.revision = 1; store.isRunAllowed.mockResolvedValue(false);
         await service.refreshGeneration();
         expect(await service.listRuns()).toEqual([]);
-        expect(service.getSessionDetails(recorder.captureId, 'call')).toEqual([]);
+        const writes = store.writeBatch.mock.calls.length;
         recorder.observe({ nodeId: 'call', kind: 'llm', phase: 'receiving', reasoning: 'late reasoning' });
-        expect(service.getSessionDetails(recorder.captureId, 'call')).toEqual([]);
+        await service.flush();
+        expect(store.writeBatch).toHaveBeenCalledTimes(writes);
         await service.dispose();
     });
 

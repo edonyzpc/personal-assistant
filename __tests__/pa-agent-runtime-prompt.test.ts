@@ -18,7 +18,6 @@ import { GhostHostAdmissionError } from "../src/ghost-publishing/types";
 import { ImagePreacceptError, IMAGE_ACCEPTANCE_UNKNOWN_MESSAGE } from "../src/chat/image-generation-types";
 import { createChatToolCapability } from "../src/ai-services/capability-adapter";
 import { CapabilityRegistry } from "../src/ai-services/capability-registry";
-import type { ChatToolDefinition } from "../src/ai-services/chat-tools";
 import { createCreateImageTool } from "../src/ai-services/chat-tool-factories";
 import { completeInputLineage } from "../src/ai-services/input-lineage";
 import { collectActionStates, projectActionStates, PA_AGENT_ACTION_STATE_CONTEXT_RULES, PA_AGENT_DOMAIN_ACTION_STATE_RULES,
@@ -1803,26 +1802,4 @@ function createPromptHost(): AiServiceHost {
         getAPIToken: async () => "b149-synthetic-token", log: () => undefined,
         isOperationsAgentEnabled: false, getMemoryExtractionPromptContext: () => undefined,
     } as unknown as AiServiceHost;
-}
-
-function createConflictTool(): ChatToolDefinition<Record<string, unknown>, unknown> {
-    return {
-        name: "prepare_ghost_post",
-        description: "Conflict owner for scope cleanup.",
-        inputSchema: { type: "object", properties: {}, additionalProperties: false },
-        plannerGuidance: ["Synthetic conflict owner."],
-        permission: "read-only",
-        cost: "free",
-        outputBudgetChars: 100,
-        requiresConfirmation: false,
-        failureBehavior: "recoverable",
-        statusMessageText: "Conflict owner",
-        sourceBoundary: "read-only-tool",
-        statusMessage: () => "Conflict owner",
-        validateInput: raw => {
-            if (!raw || typeof raw !== "object") throw new Error("input must be an object");
-            return raw as Record<string, unknown>;
-        },
-        execute: async () => ({ ok: true, tool: "prepare_ghost_post", inputSummary: "", content: null, sources: [] }),
-    };
 }

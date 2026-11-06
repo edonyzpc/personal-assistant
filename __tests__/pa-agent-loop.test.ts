@@ -638,6 +638,52 @@ describe("PaAgentLoop", () => {
         }
     });
 
+    it("ends at an explicit run deadline during Retry-After without dispatching another attempt", async () => {
+        jest.useFakeTimers();
+        let pending: Promise<unknown> | undefined;
+        try {
+            const release = jest.fn();
+            const acquire = jest.fn(async () => ({ release }));
+            let attempts = 0;
+            const loop = new PaAgentLoop({
+                runId: "retry-after-run-deadline",
+                userInput: "complete the bounded task",
+                maxWallClockMs: 100,
+                finalizationReserveMs: 0,
+                turnLeaseProvider: acquire,
+                model: { stream: async function* () {
+                    attempts += 1;
+                    throw Object.assign(new Error("rate limited"), {
+                        status: 429,
+                        headers: { "retry-after": "2" },
+                    });
+                } },
+            });
+            let completed = false;
+            const resultPromise = loop.run().then((result) => {
+                completed = true;
+                return result;
+            });
+            pending = resultPromise;
+            await jest.advanceTimersByTimeAsync(99);
+            expect(completed).toBe(false);
+            expect(release).toHaveBeenCalledTimes(1);
+            await jest.advanceTimersByTimeAsync(1);
+            expect(completed).toBe(true);
+            expect(await resultPromise).toMatchObject({
+                status: "incomplete",
+                endPayload: { reason: "wall_clock_exceeded" },
+            });
+            expect(attempts).toBe(1);
+            expect(acquire).toHaveBeenCalledTimes(1);
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            await jest.runOnlyPendingTimersAsync();
+            await pending;
+            jest.useRealTimers();
+        }
+    });
+
     it("normalizes a plain numeric Retry-After as seconds before SDK classification", async () => {
         jest.useFakeTimers();
         try {

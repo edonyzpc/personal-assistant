@@ -1856,21 +1856,18 @@ describe("B-140 T-07 vault observation physical integration", () => {
             goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
             facts: [{ text: "Keep the earlier dependency.", sourceMessages: [2] }],
         });
-        let answerPrepareWrapped = false;
+        let sourceChangedBeforePreparation = false;
         const f = fixture(body => (body.stream
-            ? { text: "must not dispatch" }
+            ? { text: "Answer from the accepted snapshot" }
             : { text: summaryText }));
         const installed = await installReadHistory(f, "A_STABLE_HISTORY", "B_CHANGED_BEFORE_ANSWER");
-        f.afterModelCreated(isSummary => {
+        f.beforeModelCreated((isSummary, options) => {
             if (isSummary) return;
-            const options = f.modelSpecifications[f.modelSpecifications.length - 1]?.options as {
-                prepareProviderRequest?: (signal?: AbortSignal | null) => Promise<void>;
-            };
             const originalPrepare = options.prepareProviderRequest;
             if (!originalPrepare) throw new Error("answer model did not expose physical preparation");
-            answerPrepareWrapped = true;
             options.prepareProviderRequest = async signal => {
                 installed.contents.set("notes/b.md", "B_CHANGED_BEFORE_ANSWER CHANGED");
+                sourceChangedBeforePreparation = true;
                 await originalPrepare(signal);
             };
         });
@@ -1881,7 +1878,7 @@ describe("B-140 T-07 vault observation physical integration", () => {
             historyBudgetChars: 1200,
             chatHistory: installed.history,
         });
-        expect(answerPrepareWrapped).toBe(true);
+        expect(sourceChangedBeforePreparation).toBe(true);
         expect(f.requests.some(request => (
             request.stream
             && requestText(request).includes("B_CHANGED_BEFORE_ANSWER")
@@ -1977,12 +1974,12 @@ describe("B-140 T-07 vault observation physical integration", () => {
         ]);
     });
 
-    it("fails closed when the vault evidence epoch changes in the final synchronous admission window", async () => {
+    it("retains the accepted history when the ordinary vault evidence epoch changes after preparation", async () => {
         let epoch = "vault-epoch-1";
         let epochChanged = false;
         const f = fixture(() => {
-            if (!epochChanged) return { error: new Error("old serialized payload dispatched") };
-            return { text: "safe reprepared answer" };
+            if (!epochChanged) throw new Error("The preparation hook did not change the evidence epoch");
+            return { text: "Answer from the accepted snapshot" };
         });
         const installed = await installReadHistory(f, "A_CURRENT_HISTORY", "B_INDEPENDENT_HISTORY");
         (f.host as { getMemoryEvidenceEpoch?: unknown }).getMemoryEvidenceEpoch = () => epoch;
@@ -2009,10 +2006,12 @@ describe("B-140 T-07 vault observation physical integration", () => {
         }).then(() => ({ ok: true }), () => ({ ok: false }));
         expect(wrapperReached).toBe(true);
         expect(outcome.ok).toBe(true);
-        expect(f.requests.length).toBeGreaterThan(0);
+        expect(f.requests).toHaveLength(1);
+        expect(requestText(f.requests[0])).toContain("A_CURRENT_HISTORY");
+        expect(requestText(f.requests[0])).toContain("B_INDEPENDENT_HISTORY");
     });
 
-    it("does not resend stale serialized history on an SDK 429 physical retry", async () => {
+    it("retains the accepted serialized history on an SDK 429 physical retry", async () => {
         let contents: Map<string, string> | undefined;
         const f = fixture((_body, index) => {
             if (index === 0) {

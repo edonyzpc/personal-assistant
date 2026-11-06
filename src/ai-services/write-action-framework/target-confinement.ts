@@ -341,7 +341,10 @@ export function validateTargetConfinementSync(
     // 13. Custom reject patterns (caller extensibility; runs after built-in checks).
     if (config.rejectPatterns) {
         for (const pattern of config.rejectPatterns) {
-            if (pattern.test(normalized) || pattern.test(candidate)) {
+            // Stateful flags must not let an earlier check affect this path
+            // or change a caller-owned pattern's next use.
+            const matcher = new RegExp(pattern.source, pattern.flags);
+            if (matcher.test(normalized) || matcher.test(candidate)) {
                 return {
                     ok: false,
                     reason: "custom_pattern_rejected",

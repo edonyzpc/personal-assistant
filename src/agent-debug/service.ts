@@ -14,7 +14,6 @@ interface RunState {
     seq: number;
     segment: number;
     contentAllowed: boolean;
-    text: Map<string, string>;
     events: DebugEvent[];
     usage: Map<string, DebugUsage>;
     calls: Set<string>;
@@ -127,7 +126,7 @@ export class AgentDebugService implements AgentDebugPort {
         this.lastEnabled = enabled;
         for (const state of this.states.values()) {
             if (state.finished) continue;
-            state.segment++; state.text.clear(); state.run.collection = enabled ? 'partial' : 'stopped';
+            state.segment++; state.run.collection = enabled ? 'partial' : 'stopped';
             state.run.status = enabled ? 'running' : 'unknown';
             state.run.endedAt = enabled ? undefined : this.now();
             state.run.expiresAt = this.now() + this.budgets.retentionMs;
@@ -154,7 +153,7 @@ export class AgentDebugService implements AgentDebugPort {
                 expiresAt: startedAt + this.budgets.retentionMs, status: 'running', collection: this.enabled() ? 'recording' : 'partial',
                 eventCount: 0, accountedBytes: 0, lastCommittedSeq: 0, hasGap: !this.enabled(), contentVersion: 2 },
             generation: this.cloneGeneration(), seq: 0, segment: 0, contentAllowed: true,
-            text: new Map(), events: [], usage: new Map(), calls: new Set(), dispatchedAt: new Map(), unknownAttemptCost: false,
+            events: [], usage: new Map(), calls: new Set(), dispatchedAt: new Map(), unknownAttemptCost: false,
             startedMonotonic: this.monotonicNow(),
             discardedThrough: 0, textCommitted: false,
         };
@@ -553,7 +552,7 @@ export class AgentDebugService implements AgentDebugPort {
         this.visibilityEpoch++;
         this.collector.clear(); this.volatileContents.clear(); this.volatileRunBytes.clear(); this.volatileBytes = 0;
         for (const state of this.states.values()) {
-            state.contentAllowed = false; state.segment++; state.text.clear();
+            state.contentAllowed = false; state.segment++;
             state.events = state.events.map(event => ({ ...event, contentIds: [], label: undefined, details: undefined, errorSummary: undefined, availability: 'cleared' }));
             state.run.hasGap = true;
         }

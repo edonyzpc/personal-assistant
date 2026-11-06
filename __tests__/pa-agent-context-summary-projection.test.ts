@@ -474,11 +474,18 @@ describe("lossless tool projection with semantic summaries", () => {
 
     it("rejects stale Memory evidence summaries when source records change", () => {
         const tool = result("old");
+        tool.content.metadata = { retrySafety: 'read_only', outcome: 'success' };
         const summaries = summariesFor(tool, JSON.stringify({ findings: ["stale memory statement"] }));
-        tool.content.sourceRecords![0].metadata = { revision: 2 };
         const transcript = transcriptFor(tool);
+        const current = compactor.microCompact(transcript, {
+            maxObservationChars: 500, protectedRecentTurns: 0, summaries,
+        });
+        expect(findResult(current.transcript, tool.id).content.metadata?.contextSemanticSummaryUsed).toBe(true);
+        expect(findResult(current.transcript, tool.id).content.promptText).toContain("stale memory statement");
+
+        tool.content.sourceRecords![0].metadata = { revision: 2 };
         const projected = compactor.microCompact(transcript, {
-            maxObservationChars: 500, summaries, canonicalTranscript: transcript,
+            maxObservationChars: 500, protectedRecentTurns: 0, summaries, canonicalTranscript: transcript,
         });
 
         expect(findResult(projected.transcript, tool.id).content.promptText).not.toContain("stale memory statement");

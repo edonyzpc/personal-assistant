@@ -7,6 +7,7 @@ import {
 import { enforceToolOutputBudget } from "../src/ai-services/chat-tool-registry";
 import { chatToolResultToPaAgentToolExecutionResult } from "../src/ai-services/pa-agent-host-tools";
 import type { ChatToolRegistryDefinition } from "../src/ai-services/chat-tool-types";
+import { createChatToolCapability } from "../src/ai-services/capability-adapter";
 import { computeContentHash } from "../src/vss-helpers";
 
 jest.mock("obsidian");
@@ -220,10 +221,17 @@ describe("search_vault_snippets multi-match source locating", () => {
         });
     });
 
-    it("rejects retired cursors before execution", () => {
-        expect(() => searchTool.validateInput({ query: "needle", cursor: "legacy" }))
-            .toThrow("rerun the same complete query without cursor");
-    });
+    it.each([{ query: "needle" }, { q: "needle" }])(
+        "rejects retired cursors through argument preparation for %j", query => {
+            const capability = createChatToolCapability(searchTool, { providerId: "snippet-test" });
+            const prepared = capability.prepareAndValidate!({ ...query, cursor: "legacy" }, { userInput: "needle" });
+
+            expect(prepared.ok).toBe(false);
+            if (!prepared.ok) {
+                expect(prepared.error.message).toContain("rerun the same complete query without cursor");
+            }
+        },
+    );
 
     it("marks an actually unknown size partial while a large readable note is searchable", async () => {
         const unknownSize = await execute(hostWithFile({ stat: undefined }), {

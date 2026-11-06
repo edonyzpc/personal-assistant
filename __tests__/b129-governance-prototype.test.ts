@@ -28,7 +28,6 @@ import {
 } from "../src/pa/memory-governance-persistence";
 import { MemoryGovernanceCoordinator } from "../src/pa/memory-governance-coordinator";
 import { MAX_GOVERNED_MEMORY_CONTEXT_CHARS, selectGovernedMemoryUse } from "../src/pa/memory-use-projection";
-import { TypeAUserProfileExtractor } from "../src/ai-services/memory-extraction/type-a-extractor";
 import { MemoryExtractionScheduler, type TypeAAdmissionBatch } from "../src/ai-services/memory-extraction/extraction-scheduler";
 import { MemoryUserProfileStore } from "../src/ai-services/memory-extraction/profile-store";
 import type { ChatHistoryManager } from "../src/chat/chat-history-manager";
@@ -421,9 +420,10 @@ describe("B-129 G-05a: bounded exact examples within shared Memory and turn budg
 });
 
 describe("B-129 G-05a: real Type A baseline plus proposed dual admission evidence", () => {
-    it.each(["governed", "legacy"] as const)("protects the actual scheduler %s route from the previously unbound AI extraction", async (route) => {
+    it.each(["governed", "legacy"] as const)("excludes legacy writing-only turns before model invocation on the actual scheduler %s route", async (route) => {
         const store = new MemoryUserProfileStore();
         const admission = jest.fn(async (_batch: TypeAAdmissionBatch) => ({ status: "processed" as const }));
+        const invoke = jest.fn(async () => { throw new Error("Writing-only turns must not reach the model"); });
         const scheduler = new MemoryExtractionScheduler({
             app: {} as App,
             userProfileStore: store,
@@ -435,13 +435,12 @@ describe("B-129 G-05a: real Type A baseline plus proposed dual admission evidenc
                     assistant: { role: "assistant", content: "海边的风很轻。" } }],
             } as unknown as ChatHistoryManager,
             now: () => new Date(NOW),
-            createModelForExtraction: async () => ({ invoke: async () => JSON.stringify({
-                extractions: [{ text: "I prefer concise answers", kind: "user_explicit", confidence: "high" }],
-            }) }),
+            createModelForExtraction: async () => ({ invoke }),
             ...(route === "governed" ? { admitTypeACandidates: admission } : {}),
         });
         try {
             await scheduler.runTypeAExtraction("conversation");
+            expect(invoke).not.toHaveBeenCalled();
             if (route === "governed") {
                 expect(admission).toHaveBeenCalledTimes(1);
                 const batch = admission.mock.calls[0][0];
@@ -455,19 +454,6 @@ describe("B-129 G-05a: real Type A baseline plus proposed dual admission evidenc
         } finally {
             scheduler.dispose();
         }
-    });
-
-    it("prevents the previously demonstrated LLM user_explicit label from becoming a legacy/global candidate", async () => {
-        const extractor = new TypeAUserProfileExtractor();
-        const candidates = await extractor.extractCandidatesWithLLM({
-            conversation: { id: "conversation", title: "fixture", createdAt: NOW, updatedAt: NOW, turnCount: 1, preview: "" },
-            turns: [{ conversationId: "conversation", turnIndex: 0,
-                user: { role: "user", content: "这次图片文案短一点" },
-                assistant: { role: "assistant", content: "海边的风很轻。" } }], now: () => new Date(NOW),
-        }, async () => JSON.stringify({ extractions: [{ text: "I prefer concise answers", kind: "user_explicit", confidence: "high" }] }));
-        const merged = extractor.mergeCandidates(null, candidates, new Date(NOW));
-        expect(merged.records).toEqual([]);
-        expect(candidates).toEqual([]);
     });
 
     it("rejects forged style evidence on both proposed routes while retaining ordinary preferences in the same batch", () => {

@@ -847,7 +847,7 @@ describe("B-160 note image removal execution", () => {
         }
     });
 
-    it("preserves the applied-note fact when disposal occurs during the note write", async () => {
+    it("persists the applied-note fact when disposal occurs during the Agent note write", async () => {
         const h = await fixture();
         const intent = await h.stage("delete");
         const historyService = new ChatService({ log: jest.fn() } as never, h.session);
@@ -904,56 +904,6 @@ describe("B-160 note image removal execution", () => {
         expect(lateState.actions?.map(action => `${action.effect?.key}:${action.effect?.status}`))
             .toEqual(["note:applied", "attachment:not_started"]);
         expect(lateState.operationsUndoAvailable).toBe(false);
-        expect(historyService.getVisibleOperationsStatus(intent.id, "run-execution")).toMatchObject({
-            available: false,
-            undoAvailable: false,
-        });
-    });
-
-    it("persists an Agent-initiated execution that settles after ChatService disposal", async () => {
-        const h = await fixture();
-        const intent = await h.stage("delete");
-        const historyService = new ChatService({ log: jest.fn() } as never, h.session);
-        const store = new MemoryChatHistoryStore();
-        const manager = new ChatHistoryManager({ store });
-        await manager.initialize();
-        const pending = pendingAction(intent.id);
-        const conversation = await manager.startConversation("Remove the fixture image");
-        await store.appendTurn({ conversationId: conversation.id, turnIndex: 0,
-            user: { role: "user", content: "Remove the fixture image" },
-            assistant: { role: "assistant", content: "Review the proposal", actionStates: [pending],
-                actionStateBinding: { conversationId: conversation.id, turnIndex: 0,
-                    runId: pending.origin.runId, turnId: pending.origin.turnId } } });
-        historyService.registerOperationsContextPersistence(intent.id, async execution => {
-            await manager.updateActionStatesForOperation(conversation.id, pending.origin.runId, "operations", intent.id,
-                states => states.map(state => execution
-                    ? applyOperationsExecutionResult(state, execution) ?? state
-                    : historyService.refreshOperationsActionState(state)));
-        });
-        let releaseProcess!: () => void;
-        const originalProcess = h.vault.process.getMockImplementation();
-        if (!originalProcess) throw new Error("missing process implementation");
-        let noteWriteStarted!: () => void;
-        const started = new Promise<void>(resolve => { noteWriteStarted = resolve; });
-        h.vault.process.mockImplementationOnce(async (file, change) => {
-            const written = await originalProcess(file, change);
-            noteWriteStarted();
-            await new Promise<void>(resolve => { releaseProcess = resolve; });
-            return written;
-        });
-        const executed = historyService.executeOperationsIntentFromAgent({
-            intentId: intent.id,
-            runId: "run-execution",
-            taskSourceReadGuard: h.guard,
-        });
-        await started;
-        historyService.dispose();
-        h.service.dispose();
-        releaseProcess();
-        const result = await executed;
-        expect(result.state).toBe("partial");
-        const lateState = (await store.getTurns(conversation.id))[0].assistant.actionStates![0];
-        expect(lateState).toMatchObject({ phase: "partial", operationsUndoAvailable: false });
         expect(historyService.getVisibleOperationsStatus(intent.id, "run-execution")).toMatchObject({
             available: false,
             undoAvailable: false,
@@ -1067,6 +1017,35 @@ describe("B-160 note image removal execution", () => {
         expect(h.vault.attached).toBe(false);
         expect(h.readAttachmentFile).toHaveBeenCalledTimes(binaryReadsBeforeUndo);
         expect(h.restoreAttachmentFile).not.toHaveBeenCalled();
+    });
+
+    it.each(["keep", "delete"] as const)("preserves the note when %s Undo loses source authority before its process callback", async attachmentAction => {
+        const h = await fixture();
+        const intent = await h.stage(attachmentAction);
+        const execution = await h.session.confirm(intent.id);
+        const process = h.vault.process.getMockImplementation()!;
+        h.vault.process.mockImplementationOnce(async (file, change) => {
+            await Promise.resolve();
+            h.revokeAncestor();
+            return await process(file, change);
+        });
+
+        const [undo] = await h.session.undoMany([execution.operations[0].receiptId!]);
+        expect(undo).toMatchObject({
+            status: attachmentAction === "delete" ? "unavailable" : "failed",
+            failureCategory: "boundary_denied",
+            undoAvailable: false,
+        });
+        expect(h.vault.notes.get(NOTE_PATH)).toBe(AFTER);
+        expect(h.vault.attached).toBe(true);
+        expect(h.restoreAttachmentFile).toHaveBeenCalledTimes(attachmentAction === "delete" ? 1 : 0);
+        if (attachmentAction === "delete") {
+            expect(undo).toMatchObject({
+                checkpoint: "attachment-restored",
+                effects: [{ key: "note", status: "applied" }, { key: "attachment", status: "restored" }],
+            });
+            expect(h.vault.attachment.bytes).toEqual(BYTES);
+        }
     });
 
     it("stops before Trash when disposal occurs during the final attachment verification read", async () => {

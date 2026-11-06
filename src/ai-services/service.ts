@@ -140,6 +140,7 @@ export class AIService {
     async generateSummary(editor: Editor, view: MarkdownView): Promise<void> {
         const { notice } = this.aiUtils.createAIThinkingNotice();
         try {
+            const file = view.file;
             const markdown = editor.getValue();
             const { content } = this.aiUtils.getDocumentContent(markdown);
             const result = await this.callLLM(content, this.getSummaryPrompt());
@@ -154,8 +155,8 @@ export class AIService {
                 return;
             }
 
-            if (view.file) {
-                await this.plugin.app.fileManager.processFrontMatter(view.file, frontmatter => {
+            if (file) {
+                await this.plugin.app.fileManager.processFrontMatter(file, frontmatter => {
                     frontmatter['AI Summary'] = summaryResponse.summary;
                     frontmatter['tags'] = mergeFrontmatterTags(frontmatter['tags'], summaryResponse.keywords);
                 });

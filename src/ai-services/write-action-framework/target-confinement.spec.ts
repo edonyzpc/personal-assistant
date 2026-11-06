@@ -375,6 +375,20 @@ describe("validateTargetConfinementSync (framework SDD §2.2)", () => {
         });
     });
 
+    it("keeps repeated normalized path checks independent of caller RegExp state", () => {
+        const pattern = /^\.pagelet\/secret/g;
+        const cfg: ConfinementConfig = { ...baseConfig, rejectPatterns: [pattern] };
+        const results = [
+            validateTargetConfinementSync(".pagelet\\secret.md", cfg),
+            validateTargetConfinementSync(".pagelet\\secret.md", cfg),
+        ];
+        expect(results).toMatchObject([
+            { ok: false, reason: "custom_pattern_rejected" },
+            { ok: false, reason: "custom_pattern_rejected" },
+        ]);
+        expect(pattern.lastIndex).toBe(0);
+    });
+
     it("normalizes leading './' and collapses duplicate slashes", () => {
         const result = validateTargetConfinementSync("./.pagelet//deep///file.md", baseConfig);
         expect(result).toEqual({ ok: true, normalizedPath: ".pagelet/deep/file.md" });

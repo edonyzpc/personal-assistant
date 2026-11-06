@@ -87,7 +87,7 @@ export class NoteImageRemovalResourceOwner {
         const retained: RetainedSnapshot = {
             ...input,
             bytes: input.bytes,
-            timer: setTimeout(() => this.expire(input.receiptId), Math.max(0, input.expiresAt - this.now())),
+            timer: setTimeout(() => this.retire(input.receiptId), Math.max(0, input.expiresAt - this.now())),
             leased: 0,
             expiredPending: false,
         };
@@ -144,16 +144,6 @@ export class NoteImageRemovalResourceOwner {
             else this.removeSnapshot(snapshot.receiptId);
         }
         this.reservations.clear();
-    }
-
-    private expire(receiptId: string): void {
-        const snapshot = this.snapshots.get(receiptId);
-        if (!snapshot) return;
-        if (snapshot.leased > 0) {
-            snapshot.expiredPending = true;
-            return;
-        }
-        this.removeSnapshot(receiptId);
     }
 
     private removeSnapshot(receiptId: string): void {
