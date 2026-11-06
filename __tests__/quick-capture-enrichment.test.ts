@@ -8,6 +8,10 @@ import {
 } from "../src/quick-capture-enrichment";
 import { hasForbiddenPersistedTextFields, type ReviewQueueCreateInput, type ReviewQueueItem } from "../src/pa";
 import type { QuickCapturePostProcessInput } from "../src/quick-capture";
+import { QuickCapturePluginIntegration, type QuickCaptureIntegrationDependencies } from "../src/capture/plugin-integration";
+import { confirmUserAction } from "../src/confirm";
+
+jest.mock("../src/confirm", () => ({ confirmUserAction: jest.fn() }));
 
 const captureInput: QuickCapturePostProcessInput = {
     captureId: "qc-test-1",
@@ -38,6 +42,64 @@ function okItem(input: ReviewQueueCreateInput): ReviewQueueItem {
 }
 
 describe("Quick Capture enrichment", () => {
+    it.each(["disabled-after-disclosure", "excluded-after-factory", "ask-at-dispatch", "excluded-at-retry", "allowed", "ask-disclosed"] as const)(
+        "checks live post-processing permission: %s", async (scenario) => {
+            const settings = {
+                targetPath: "", fileFormat: "", author: "", noteTemplate: "",
+                quickCapture: {
+                    enabled: true, destination: "daily" as const, inboxPath: "Inbox.md",
+                    postProcessingEnabled: true,
+                    postProcessingDisclosureAccepted: scenario !== "disabled-after-disclosure",
+                },
+            };
+            let decision: "allow" | "ask" | "deny" = scenario === "ask-disclosed" ? "ask" : "allow";
+            type Admission = Parameters<QuickCaptureIntegrationDependencies["createChatModel"]>[0];
+            const dispatch = jest.fn();
+            const createChatModel = jest.fn(async (admission?: Admission) => {
+                if (scenario === "excluded-after-factory") decision = "deny";
+                return {
+                    invoke: async () => {
+                        await admission?.prepareProviderRequest?.();
+                        if (scenario === "ask-at-dispatch") decision = "ask";
+                        admission?.onProviderRequestStart?.();
+                        dispatch();
+                        if (scenario === "excluded-at-retry") {
+                            decision = "deny";
+                            await admission?.prepareProviderRequest?.();
+                            admission?.onProviderRequestStart?.();
+                            dispatch();
+                        }
+                        return { content: "[]", response_metadata: { finish_reason: "stop" } };
+                    },
+                };
+            });
+            jest.mocked(confirmUserAction).mockImplementation(async () => {
+                if (scenario === "disabled-after-disclosure") settings.quickCapture.postProcessingEnabled = false;
+                return true;
+            });
+            const integration = new QuickCapturePluginIntegration({
+                app: {} as never, getSettings: () => settings,
+                translate: () => "", log: jest.fn(),
+                decideDataBoundaryForPath: () => ({ decision, reason: "test-policy" }) as never,
+                createChatModel, recordProviderCost: jest.fn(),
+                createReviewQueueItem: jest.fn() as never,
+                saveSettings: jest.fn(async () => undefined),
+                maybeShowOnboardingNudge: jest.fn(async () => undefined),
+            });
+            // Exercise the integration owner. The model port invokes the physical-request
+            // hooks, whose transport ordering is covered by the provider admission suites.
+            const run = (integration as unknown as {
+                postProcess(input: QuickCapturePostProcessInput): Promise<void>;
+            }).postProcess(captureInput);
+            if (scenario === "allowed" || scenario === "ask-disclosed") await expect(run).resolves.toBeUndefined();
+            else await expect(run).rejects.toThrow("Quick Capture post-processing is no longer allowed");
+            expect(dispatch).toHaveBeenCalledTimes(
+                scenario === "allowed" || scenario === "ask-disclosed" || scenario === "excluded-at-retry" ? 1 : 0,
+            );
+            if (scenario === "disabled-after-disclosure") expect(createChatModel).not.toHaveBeenCalled();
+        },
+    );
+
     it("parses bounded suggestions but queues only durable review actions", () => {
         const suggestions = parseQuickCaptureEnrichmentResponse(`{
   "suggestions": [

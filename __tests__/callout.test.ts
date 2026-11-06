@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { MarkdownView } from 'obsidian';
 import type { App } from 'obsidian';
 import type { Callout } from 'obsidian-callout-manager';
@@ -85,8 +85,14 @@ const infoCallout: Callout = {
 };
 
 describe('CalloutModal', () => {
+    let originalNavigator: PropertyDescriptor | undefined;
     beforeEach(() => {
+        originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
         mockNoticeMessages.length = 0;
+    });
+    afterEach(() => {
+        if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
+        else delete (globalThis as unknown as { navigator?: unknown }).navigator;
     });
 
     it('falls back to the built-in default callouts when Callout Manager is unavailable', () => {

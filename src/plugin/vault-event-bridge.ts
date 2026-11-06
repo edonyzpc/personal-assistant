@@ -133,9 +133,6 @@ export class VaultEventBridge {
     }
 
     isLikelyStartupReplayMemoryEvent(file: TFile): boolean {
-        if (typeof this.memoryEventGateStartedAt !== "number" || !Number.isFinite(this.memoryEventGateStartedAt)) {
-            this.memoryEventGateStartedAt = Date.now();
-        }
         if (Date.now() - this.memoryEventGateStartedAt > MEMORY_STARTUP_EVENT_REPLAY_WINDOW_MS) {
             return false;
         }

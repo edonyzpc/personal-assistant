@@ -7,7 +7,7 @@ export interface RecordActionDependencies {
 }
 
 export function joinRecordPaths(...strings: string[]): string {
-    const parts = strings.map((value) => String(value).trim()).filter((value) => value != null);
+    const parts = strings.map((value) => String(value).trim());
     return normalizePath(parts.join('/'));
 }
 

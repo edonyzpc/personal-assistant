@@ -111,9 +111,9 @@ describe("CalloutIntegration", () => {
         initialized.then(() => { settledWithoutTimerAdvance = true; });
         await Promise.resolve();
         await Promise.resolve();
-        await jest.advanceTimersByTimeAsync(2_000);
-
         expect(settledWithoutTimerAdvance).toBe(true);
+        expect(jest.getTimerCount()).toBe(0);
+        await jest.advanceTimersByTimeAsync(2_000);
         expect(harness.getApi).not.toHaveBeenCalled();
         expect(harness.owner.getCallouts()).toBeUndefined();
     });

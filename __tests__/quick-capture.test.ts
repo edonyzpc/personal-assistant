@@ -417,7 +417,9 @@ describe("QuickCaptureService", () => {
         const service = makeService(harness.app, { destination: "current-file" }, undefined, undefined, undefined, { recordIndexPath: "Index/Thoughts.md" });
         await service.captureText("current capture");
         expect(harness.files.get("Index/Thoughts.md")!.content).toBe("# Index");
-        expect(harness.vault.process).not.toHaveBeenCalled();
+        expect(harness.vault.process).not.toHaveBeenCalledWith(
+            harness.files.get("Index/Thoughts.md")!.file, expect.any(Function),
+        );
     });
 
     it("writes single-line text to the Record Note with template by default", async () => {
@@ -432,7 +434,7 @@ describe("QuickCaptureService", () => {
         expect(createdContent).toContain("subject: #capture");
         expect(createdContent).toContain("# 2026-06-28");
         expect(createdContent).toContain("# 2026-06-28\n\nremember the launch lesson\n");
-        expect(harness.vault.modify).not.toHaveBeenCalled();
+        expect(harness.vault.process).not.toHaveBeenCalled();
         expect(mockNotices).toEqual(["Saved to Record Note"]);
     });
 
@@ -443,7 +445,7 @@ describe("QuickCaptureService", () => {
         await expect(service.captureText("  \n\t  ")).resolves.toEqual({ status: "empty" });
 
         expect(harness.vault.create).not.toHaveBeenCalled();
-        expect(harness.vault.modify).not.toHaveBeenCalled();
+        expect(harness.vault.process).not.toHaveBeenCalled();
         expect(mockNotices).toEqual([]);
     });
 
@@ -460,6 +462,38 @@ describe("QuickCaptureService", () => {
         );
         expect(harness.vault.create).not.toHaveBeenCalled();
         expect(mockNotices).toEqual(["Saved to Inbox"]);
+    });
+
+    it("preserves an external edit while an existing-note append is pending", async () => {
+        const path = "Inbox/Quick Capture.md";
+        const harness = makeAppHarness({ [path]: "Original\n" });
+        let entered!: () => void;
+        const started = new Promise<void>((resolve) => { entered = resolve; });
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        harness.vault.read.mockImplementationOnce(async (file) => {
+            const snapshot = harness.files.get(file.path)!.content;
+            entered();
+            await gate;
+            return snapshot;
+        });
+        const process = harness.vault.process.getMockImplementation()!;
+        harness.vault.process.mockImplementationOnce(async (file, update) => {
+            entered();
+            await gate;
+            return process(file, update);
+        });
+        const capture = makeService(harness.app, { destination: "inbox" }).captureText("New capture");
+        try {
+            await started;
+            harness.files.get(path)!.content = "Original\nExternal edit\n";
+            release();
+            await capture;
+            expect(harness.files.get(path)!.content).toBe("Original\nExternal edit\n\nNew capture\n");
+        } finally {
+            release();
+            await Promise.allSettled([capture]);
+        }
     });
 
     it("serializes concurrent appends to the same target note", async () => {
@@ -481,7 +515,7 @@ describe("QuickCaptureService", () => {
             "second fragment",
             "",
         ].join("\n"));
-        expect(harness.vault.modify).toHaveBeenCalledTimes(2);
+        expect(harness.vault.process).toHaveBeenCalledTimes(2);
     });
 
     it("appends to the current file only when that destination is selected", async () => {
@@ -551,7 +585,7 @@ describe("QuickCaptureService", () => {
             '---\ntitle: "2026-06-28"\nauthor: "Writer"\n---\n# 2026-06-28\n\n#capture\n\n**first**\n\n- second\n',
         );
         expect(harness.vault.create).toHaveBeenCalledTimes(1);
-        expect(harness.vault.modify).toHaveBeenCalledTimes(1);
+        expect(harness.vault.process).toHaveBeenCalledTimes(1);
     });
 
     it("rejects protected vault paths before writing", async () => {
@@ -566,13 +600,13 @@ describe("QuickCaptureService", () => {
         await expect(service.captureText("should not write")).rejects.toThrow("Quick Capture target is not allowed");
 
         expect(harness.vault.create).not.toHaveBeenCalled();
-        expect(harness.vault.modify).not.toHaveBeenCalled();
+        expect(harness.vault.process).not.toHaveBeenCalled();
         expect(postProcessCapture).not.toHaveBeenCalled();
         expect(onCaptureSaved).not.toHaveBeenCalled();
         expect(mockNotices).toEqual(["Could not save Quick Capture."]);
     });
 
-    it.each(["create", "modify"] as const)(
+    it.each(["create", "process"] as const)(
         "schedules both success callbacks only after the deferred %s persists", async (operation) => {
             const harness = operation === "create"
                 ? makeAppHarness()
@@ -582,7 +616,7 @@ describe("QuickCaptureService", () => {
             const service = makeService(harness.app, {
                 postProcessingEnabled: true,
             }, postProcessCapture, undefined, onCaptureSaved);
-            const writeMock = (operation === "create" ? harness.vault.create : harness.vault.modify) as jest.Mock<
+            const writeMock = (operation === "create" ? harness.vault.create : harness.vault.process) as jest.Mock<
                 (...args: unknown[]) => Promise<unknown>
             >;
             const originalWrite = writeMock.getMockImplementation();
@@ -634,7 +668,7 @@ describe("QuickCaptureService", () => {
         },
     );
 
-    it.each(["create", "modify"] as const)(
+    it.each(["create", "process"] as const)(
         "suppresses both success callbacks when the real %s rejects", async (operation) => {
             const harness = operation === "create"
                 ? makeAppHarness()
@@ -644,7 +678,7 @@ describe("QuickCaptureService", () => {
             const service = makeService(harness.app, {
                 postProcessingEnabled: true,
             }, postProcessCapture, undefined, onCaptureSaved);
-            const writeMock = (operation === "create" ? harness.vault.create : harness.vault.modify) as jest.Mock<
+            const writeMock = (operation === "create" ? harness.vault.create : harness.vault.process) as jest.Mock<
                 (...args: unknown[]) => Promise<unknown>
             >;
             writeMock.mockRejectedValueOnce(new Error("disk failed"));
@@ -678,10 +712,11 @@ describe("QuickCaptureService", () => {
         expect(createdContent).toContain("\n\none tap context\n");
     });
 
-    it("does not let post-processing failure block the raw save", async () => {
+    it.each(["sync", "async"] as const)("does not let %s post-processing failure block the raw save", async (mode) => {
         const harness = makeAppHarness();
-        const postProcessCapture = jest.fn(async () => {
-            throw new Error("provider failed");
+        const postProcessCapture = jest.fn(() => {
+            if (mode === "sync") throw new Error("provider failed");
+            return Promise.reject(new Error("provider failed"));
         });
         const service = makeService(harness.app, {
             postProcessingEnabled: true,

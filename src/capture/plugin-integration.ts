@@ -6,6 +6,7 @@ import { estimateTokens } from "../pagelet/pa-review-cost";
 import type { DataBoundaryDecision } from "../pa/contracts";
 import type { ReviewQueueCreateInput, ReviewQueueItem, ReviewQueueResult } from "../pa";
 import { assertProviderCompletion, readProviderText } from "../ai-services/provider-result";
+import type { ProviderRequestOptions } from "../ai-services/ai-utils";
 import {
     QuickCaptureService,
     type QuickCapturePostProcessInput,
@@ -37,7 +38,7 @@ export interface QuickCaptureIntegrationDependencies {
     translate(key: PluginMessageKey, params?: Readonly<Record<string, string | number>>, fallback?: string): string;
     log(message: string, ...args: unknown[]): void;
     decideDataBoundaryForPath(path: string): DataBoundaryDecision;
-    createChatModel(): Promise<QuickCaptureChatModel | null>;
+    createChatModel(admission: Pick<ProviderRequestOptions, "prepareProviderRequest" | "onProviderRequestStart">): Promise<QuickCaptureChatModel | null>;
     recordProviderCost(usage: QuickCaptureProviderCost): void;
     createReviewQueueItem(input: ReviewQueueCreateInput): Promise<ReviewQueueResult<ReviewQueueItem>>;
     saveSettings(): Promise<void>;
@@ -73,9 +74,7 @@ export class QuickCapturePluginIntegration {
                 set: (value) => { this.draft = value; },
                 clear: () => { this.draft = ""; },
             },
-            onCaptureSaved: () => {
-                void this.dependencies.maybeShowOnboardingNudge();
-            },
+            onCaptureSaved: () => this.dependencies.maybeShowOnboardingNudge(),
             postProcessCapture: (input) => this.postProcess(input),
         });
         return this.service;
@@ -94,16 +93,29 @@ export class QuickCapturePluginIntegration {
             return;
         }
         const requiresRunDisclosure = boundaryDecision.decision === "ask";
+        let runDisclosureAccepted = false;
+        const assertCurrentAdmission = (): void => {
+            const currentSettings = this.dependencies.getSettings();
+            const currentBoundary = this.dependencies.decideDataBoundaryForPath(input.path);
+            if (!currentSettings.quickCapture.postProcessingEnabled
+                || currentBoundary.decision === "deny"
+                || (currentBoundary.decision === "ask" && !runDisclosureAccepted)) {
+                throw new Error("Quick Capture post-processing is no longer allowed");
+            }
+        };
         await runQuickCaptureEnrichment(input, {
             disclosureAccepted: settings.quickCapture.postProcessingDisclosureAccepted && !requiresRunDisclosure,
             dataBoundarySnapshotId: boundaryDecision.reason,
             provider: settings.aiProvider,
             model: settings.chatModelName,
-            requestDisclosure: () => confirmUserAction(this.dependencies.app, {
-                title: this.dependencies.translate("plugin.quickCapture.disclosure.title"),
-                message: this.dependencies.translate("plugin.quickCapture.disclosure.message"),
-                confirmText: this.dependencies.translate("plugin.quickCapture.disclosure.confirm"),
-            }),
+            requestDisclosure: async () => {
+                runDisclosureAccepted = await confirmUserAction(this.dependencies.app, {
+                    title: this.dependencies.translate("plugin.quickCapture.disclosure.title"),
+                    message: this.dependencies.translate("plugin.quickCapture.disclosure.message"),
+                    confirmText: this.dependencies.translate("plugin.quickCapture.disclosure.confirm"),
+                });
+                return runDisclosureAccepted;
+            },
             markDisclosureAccepted: async () => {
                 const currentSettings = this.dependencies.getSettings();
                 if (currentSettings.quickCapture.postProcessingDisclosureAccepted) return;
@@ -111,8 +123,13 @@ export class QuickCapturePluginIntegration {
                 await this.dependencies.saveSettings();
             },
             invokeModel: async (prompt) => {
-                const model = await this.dependencies.createChatModel();
+                assertCurrentAdmission();
+                const model = await this.dependencies.createChatModel({
+                    prepareProviderRequest: assertCurrentAdmission,
+                    onProviderRequestStart: assertCurrentAdmission,
+                });
                 if (!model) return null;
+                assertCurrentAdmission();
                 const result = await model.invoke(prompt);
                 assertProviderCompletion(result);
                 const currentSettings = this.dependencies.getSettings();
@@ -125,7 +142,10 @@ export class QuickCapturePluginIntegration {
                 });
                 return text;
             },
-            createReviewQueueItem: (queueInput) => this.dependencies.createReviewQueueItem(queueInput),
+            createReviewQueueItem: (queueInput) => {
+                assertCurrentAdmission();
+                return this.dependencies.createReviewQueueItem(queueInput);
+            },
             now: () => new Date(),
             log: (...args) => this.dependencies.log(args[0], ...args.slice(1)),
         });

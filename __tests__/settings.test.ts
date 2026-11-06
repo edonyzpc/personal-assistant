@@ -5415,9 +5415,7 @@ describe('Phase 4 P1 UX', () => {
         expect(plugin.cancelActiveMemoryPreparation).not.toHaveBeenCalled();
     });
 
-    it.each([
-        ['toggle', true], ['toggle', false],
-    ] as const)('keeps a pending %s disabled after reopening and synchronizes the current control on success=%p', async (kind, succeeds) => {
+    it.each([true, false])('keeps a pending toggle disabled after reopening and synchronizes the current control on success=%p', async (succeeds) => {
         (globalThis as typeof globalThis & { __paToggleSetValueEmitsChange?: boolean }).__paToggleSetValueEmitsChange = true;
         const plugin = makePlugin({ retrievalHabitProfile: { enabled: false, state: { aggregates: [] } } });
         setMockConfirmDecision(true);
@@ -5431,27 +5429,25 @@ describe('Phase 4 P1 UX', () => {
         const container = new MockContainerEl('div');
         tab.containerEl = container as never;
         const control = () => {
-            const row = [...getMockSettingRecords()].reverse().find((candidate) => candidate.name === (
-                kind === 'toggle' ? pluginT('plugin.settings.retrievalHabit.enabled.name') : 'Generated notes'))!;
-            return kind === 'toggle' ? row.toggles[0] : row.dropdowns[0];
+            const row = [...getMockSettingRecords()].reverse().find((candidate) => candidate.name ===
+                pluginT('plugin.settings.retrievalHabit.enabled.name'))!;
+            return row.toggles[0];
         };
         tab.display();
         const original = control();
-        const saving = kind === 'toggle'
-            ? (original as MockToggleRecord).onChange!(true)
-            : (original as MockDropdownRecord).onChange!('include-generated');
+        const saving = original.onChange!(true);
         for (let index = 0; index < 4; index += 1) await Promise.resolve();
         expect(plugin.saveSettingsPermissions).toHaveBeenCalledTimes(1);
         tab.hide();
         tab.display();
         const reopened = control();
         expect(reopened).not.toBe(original);
-        expect(reopened).toMatchObject({ value: kind === 'toggle' ? false : 'exclude-generated', disabled: true });
+        expect(reopened).toMatchObject({ value: false, disabled: true });
         if (succeeds) resolveSave();
         else rejectSave(new Error('disk unavailable'));
         await saving;
         expect(reopened).toMatchObject({
-            value: kind === 'toggle' ? succeeds : succeeds ? 'include-generated' : 'exclude-generated', disabled: false,
+            value: succeeds, disabled: false,
         });
         expect(plugin.saveSettingsPermissions).toHaveBeenCalledTimes(1);
     });

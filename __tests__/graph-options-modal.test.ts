@@ -1,9 +1,7 @@
-import { Notice, type App } from 'obsidian';
+import { Notice, Platform, type App } from 'obsidian';
 import { GraphOptionsModal, mountGraphOptionsEditor, type GraphOptions } from '../src/settings/graph-options-modal';
 import { pluginT } from '../src/locales/plugin';
 import { DomStubNode, findAllByClass, findAllByTag } from './helpers/dom-stub';
-
-(jest.requireMock('obsidian') as { Platform: { isDesktop: boolean } }).Platform.isDesktop = true;
 
 class ModalElement extends DomStubNode {
     onclick?: () => void | Promise<void>;
@@ -80,14 +78,17 @@ function setup() {
 
 describe('GraphOptionsModal', () => {
     it('hides desktop-only opening choices on mobile', async () => {
-        const { Platform } = jest.requireMock('obsidian') as { Platform: { isDesktop: boolean } };
-        const previous = Platform.isDesktop;
-        Platform.isDesktop = false;
-        const h = setup();
-        Platform.isDesktop = previous;
+        const platform = Platform as { isDesktop: boolean };
+        const previous = platform.isDesktop;
+        platform.isDesktop = false;
+        let h: ReturnType<typeof setup>;
+        try { h = setup(); }
+        finally { platform.isDesktop = previous; }
 
-        expect(h.root.textContent).not.toContain(pluginT('plugin.settings.graph.options.openAs'));
-        expect(h.root.textContent).not.toContain(pluginT('plugin.settings.graph.initialSize.desc'));
+        expect(nodes(h.root, 'select').some(node => node.getAttribute('aria-label')
+            === pluginT('plugin.settings.graph.options.openAs'))).toBe(false);
+        expect(nodes(h.root, 'p').some(node => node.textContent
+            === pluginT('plugin.settings.graph.initialSize.desc'))).toBe(false);
         const autoColors = label(h.root, 'plugin.settings.graph.autoColors.name');
         expect(autoColors.checked).toBe(false);
         toggle(autoColors, true);
@@ -113,6 +114,9 @@ describe('GraphOptionsModal', () => {
 
     it('closes an untouched draft without saving, applying, or exposing retired dimensions', async () => {
         const h = setup();
+        expect(label(h.root, 'plugin.settings.graph.options.openAs')).toBeDefined();
+        expect(nodes(h.root, 'p').some(node => node.textContent
+            === pluginT('plugin.settings.graph.initialSize.desc'))).toBe(true);
         expect(nodes(h.root, 'input').some((node) => node.getAttribute('aria-label')
             === pluginT('plugin.settings.graph.width'))).toBe(false);
         await h.save.click();

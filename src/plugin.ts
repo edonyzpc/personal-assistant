@@ -17,6 +17,7 @@ import {
     type AIReadinessSnapshot,
     type APITokenCacheState,
     type QwenRequestOptions,
+    type ProviderRequestOptions,
 } from "./ai-services/ai-utils";
 import { assertProviderCompletion, readProviderText } from "./ai-services/provider-result";
 import { stableStringify } from "./ai-services/agent-utils";
@@ -723,13 +724,13 @@ export class PluginManager extends Plugin {
             createLegacyProfileStore: () => this.createUserProfileStore(),
             createGovernedProfileStore: () => this.createGovernedUserProfileStore(),
             createExistingProfileReader: () => this.createExistingUserProfileReader(),
-            createExtractionModel: async () => {
+            createExtractionModel: async ({ signal, ...admission }) => {
                 const modelSettings = this.getEffectiveChatSettings();
-                const model = await this.createChatModel(0, { maxTokens: 256 });
+                const model = await this.createChatModel(0, { maxTokens: 256, ...admission });
                 if (!model) return null;
                 return {
                     invoke: async (prompt: string) => {
-                        const result = await model.invoke(prompt);
+                        const result = await model.invoke(prompt, { signal });
                         assertProviderCompletion(result);
                         const text = coerceModelResultToString(result);
                         this.pageletCostTracker.record({
@@ -1534,7 +1535,7 @@ export class PluginManager extends Plugin {
         translate: (key, params, fallback) => this.t(key, params, fallback),
         log: (message, ...args) => this.log(message, ...args),
         decideDataBoundaryForPath: (path) => this.decideDataBoundaryForPath(path),
-        createChatModel: () => this.createChatModel(0.2, { maxTokens: 800 }),
+        createChatModel: (admission) => new AIUtils(this).createChatModel(0.2, { maxTokens: 800, ...admission }),
         recordProviderCost: (usage) => this.pageletCostTracker.record(usage),
         createReviewQueueItem: (input) => this.createReviewQueueItem(input),
         saveSettings: () => this.saveSettings(),
@@ -3136,9 +3137,15 @@ export class PluginManager extends Plugin {
     }
 
     private async maybeRunPatternDetectionNudge(): Promise<void> {
-        if (this.unloading || !this.pageletIntegration.currentOrchestrator) return;
+        const orchestrator = this.pageletIntegration.currentOrchestrator;
+        if (this.unloading || !orchestrator) return;
         const pageletSettings = this.settings.pagelet;
         if (!pageletSettings?.enabled || !pageletSettings.proactiveHints || this.settings.focusMode) return;
+        const boundary = this.getMemoryDataBoundaryFingerprint();
+        const isCurrent = () => !this.unloading
+            && this.pageletIntegration.currentOrchestrator === orchestrator
+            && this.settings.pagelet.enabled && this.settings.pagelet.proactiveHints && !this.settings.focusMode
+            && this.getMemoryDataBoundaryFingerprint() === boundary;
 
         const now = new Date();
         const lastDetectionAt = Date.parse(this.settings.lastPatternDetectionAt ?? "");
@@ -3147,12 +3154,12 @@ export class PluginManager extends Plugin {
         }
 
         const result = await this.detectCrossNotePatternsForPagelet(now);
-        if (this.unloading || !this.pageletIntegration.currentOrchestrator || !result) return;
+        if (!isCurrent() || !result) return;
 
         this.settings.lastPatternDetectionAt = now.toISOString();
         await this.saveSettings();
-        if (result.totalCount > 0) {
-            this.pageletIntegration.currentOrchestrator?.setPatternDetectionNudge(result);
+        if (isCurrent() && result.totalCount > 0) {
+            orchestrator.setPatternDetectionNudge(result);
         }
     }
 
@@ -3196,6 +3203,7 @@ export class PluginManager extends Plugin {
         const backlinkMap = this.buildGraphDiscoveryBacklinkMap();
         const notes: PatternDetectionInput[] = [];
         for (const file of files) {
+            if (this.unloading || !this.isDataBoundaryAllowedFile(file)) continue;
             try {
                 const content = await this.app.vault.cachedRead(file);
                 const resolvedLinks = this.getResolvedOutgoingLinks(file.path);
@@ -3213,7 +3221,10 @@ export class PluginManager extends Plugin {
                 this.log("Failed to read note for pattern detection", { path: file.path, error });
             }
         }
-        return notes;
+        return notes.filter((note) => {
+            const file = this.app.vault.getAbstractFileByPath(note.path);
+            return file instanceof TFile && this.isDataBoundaryAllowedFile(file);
+        });
     }
 
     private getGraphDiscoveryLinks(file: TFile): string[] {
@@ -6144,14 +6155,17 @@ export class PluginManager extends Plugin {
             input: this.settings.pagelet.maxInputTokens,
             output: this.settings.pagelet.maxOutputTokens,
         }, discoveryLanguage);
-        const model = await this.createChatModel(0.3, {
-            maxTokens: prompt.maxOutputTokens,
-        });
-        if (!model) return null;
         const requestIsCurrent = () => (
             liveSources.isCurrent()
             && expectedProviderPolicyIdentity === this.getPageletProviderAuthorizationContextId()
         );
+        const model = await this.createChatModel(0.3, {
+            maxTokens: prompt.maxOutputTokens,
+            onProviderRequestStart: () => {
+                if (!requestIsCurrent()) throw new Error("pagelet_provider_call_stale");
+            },
+        });
+        if (!model) return null;
         if (!requestIsCurrent()) return null;
         try {
             const fullPrompt = prompt.systemPrompt + "\n\n" + prompt.userPrompt;
@@ -8291,7 +8305,7 @@ export class PluginManager extends Plugin {
      */
     async createChatModel(
         temperature: number,
-        options?: {
+        options?: Pick<ProviderRequestOptions, "prepareProviderRequest" | "onProviderRequestStart"> & {
             modelName?: string;
             transport?: string;
             maxTokens?: number;
@@ -8304,6 +8318,8 @@ export class PluginManager extends Plugin {
             transport: options?.transport as "obsidian" | "native" | undefined,
             maxTokens: options?.maxTokens,
             qwenRequestOptions: options?.qwenRequestOptions,
+            prepareProviderRequest: options?.prepareProviderRequest,
+            onProviderRequestStart: options?.onProviderRequestStart,
         });
     }
 

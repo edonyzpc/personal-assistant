@@ -143,6 +143,42 @@ type ReviewNoteWriter = ReturnType<PageletActionPluginIntegrationDependencies["c
 type ReviewNoteOptions = Parameters<NonNullable<ReviewNoteWriter>>[0];
 
 describe("PageletActionPluginIntegration", () => {
+    it("discards maintenance content revoked while a later note read is pending", async () => {
+        const { dependencies } = createDependencies();
+        const FileCtor = TFile as unknown as { new(path: string): TFile };
+        const source = new FileCtor("Private/Untitled.md");
+        const later = new FileCtor("Notes/Reference.md");
+        const settings = dependencies.getSettings();
+        dependencies.getSettings = () => settings;
+        dependencies.collectMaintenanceReviewFiles = () => [source, later];
+        dependencies.getFile = (path) => [source, later].find(file => file.path === path) ?? null;
+        dependencies.readCached = async (file) => file === source ? "# Private heading marker" : "";
+        const owner = new PageletActionPluginIntegration(dependencies);
+        const initial = await owner.runMaintenanceReview();
+        expect(initial.proposals).toEqual(expect.arrayContaining([
+            expect.objectContaining({ preview: expect.objectContaining({ newTitle: "Private heading marker" }) }),
+        ]));
+
+        let finishLater!: (content: string) => void;
+        const pendingLater = new Promise<string>(resolve => { finishLater = resolve; });
+        let startedLater!: () => void;
+        const laterStarted = new Promise<void>(resolve => { startedLater = resolve; });
+        dependencies.readCached = async (file) => {
+            if (file === source) return "# Private heading marker";
+            startedLater();
+            return pendingLater;
+        };
+        const pending = owner.runMaintenanceReview({ enqueueProposals: true });
+        await laterStarted;
+        settings.dataBoundary!.excludedFolders = ["Private"];
+        finishLater("");
+        const result = await pending;
+
+        expect(result.totalCount).toBe(0);
+        expect(result.proposals).toEqual([]);
+        expect(dependencies.createReviewQueueItem).not.toHaveBeenCalled();
+    });
+
     it("rolls back an applied maintenance move when action-log persistence fails", async () => {
         const appendMaintenanceActionLog = jest.fn(async () => {
             throw new Error("disk unavailable");

@@ -311,9 +311,7 @@ jest.mock('../src/settings', () => {
             if (!Number.isFinite(numericValue)) return 1;
             return Math.min(Math.max(Math.floor(numericValue), 1), 4);
         },
-        normalizeConfirmedMemoryCount: (value: unknown) => (
-            typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
-        ),
+        normalizeConfirmedMemoryCount: actual.normalizeConfirmedMemoryCount,
         mergeLoadedSettings: (value: unknown) => JSON.parse(JSON.stringify(value ?? {})),
         isFreshInstall: (value: unknown) => value === undefined || value === null,
         isLegacyV1Install: () => false,
@@ -1264,7 +1262,6 @@ describe('plugin startup view registration', () => {
                 plugin.registerEditorExtension.mock.invocationCallOrder[0],
             );
             const registeredEditorExtensions = plugin.registerEditorExtension.mock.calls[0]?.[0];
-            expect(plugin.registerEditorExtension).toHaveBeenCalledWith(registeredEditorExtensions);
             expect(plugin.statsIntegration.getEditorExtensions()).toBe(registeredEditorExtensions);
             expect(pluginFieldInit).toHaveBeenCalledTimes(1);
             expect(registerView).toHaveBeenCalledWith('record-preview', expect.any(Function));
@@ -5149,6 +5146,14 @@ describe('Memory governance plugin bootstrap', () => {
             expect.objectContaining({ type: 'evidence_insight' }),
         ]);
         expect(shared.focusMode).toBe(true);
+
+        second.plugin.settings.focusMode = true;
+        await second.plugin.saveSettings();
+        expect(shared.memoryGovernance.records).toEqual([]);
+        expect(shared.reviewQueue.items).toEqual([
+            expect.objectContaining({ type: 'evidence_insight' }),
+        ]);
+        expect(shared.focusMode).toBe(true);
     });
 
     it('forgets an exact legacy entity on a pending external source without deleting unrelated data', async () => {
@@ -6986,6 +6991,51 @@ describe('Memory governance plugin bootstrap', () => {
 });
 
 describe('Pagelet onboarding nudge production', () => {
+    it.each(['unchanged', 'read', 'save'] as const)('keeps pattern nudges within the live Data Boundary after %s', async (phase) => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        installPluginShellOwners(plugin);
+        const files = Array.from({ length: 5 }, (_, index) => createTFileWithStat(
+            `notes/${index}.md`, { mtime: Date.now() - index, size: 100 },
+        ));
+        plugin.unloading = false;
+        plugin.settings = {
+            focusMode: false,
+            pagelet: { enabled: true, proactiveHints: true },
+            dataBoundary: { excludedFolders: [], excludedTags: [], generatedNotePolicy: 'exclude-generated',
+                providerDisclosureReasons: [], cleanupGroups: [] },
+        };
+        let entered!: () => void;
+        let release!: () => void;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        plugin.app = {
+            vault: {
+                getMarkdownFiles: () => files,
+                getAbstractFileByPath: (path: string) => files.find(file => file.path === path) ?? null,
+                cachedRead: async (file: TFile) => {
+                    if (phase === 'read' && file === files[4]) { entered(); await pending; }
+                    return 'A recurring question?';
+                },
+            },
+            metadataCache: { getFileCache: () => null },
+        };
+        plugin.saveSettings = jest.fn(async () => {
+            if (phase === 'save') { entered(); await pending; }
+        });
+        plugin.log = jest.fn();
+        const setPatternDetectionNudge = jest.fn();
+        plugin.pageletOrchestrator = { setPatternDetectionNudge };
+        const detection = plugin.maybeRunPatternDetectionNudge();
+        if (phase !== 'unchanged') {
+            await started;
+            plugin.settings.dataBoundary.excludedFolders = ['notes'];
+            release();
+        }
+        await detection;
+        expect(setPatternDetectionNudge).toHaveBeenCalledTimes(phase === 'unchanged' ? 1 : 0);
+        if (phase === 'unchanged') expect(setPatternDetectionNudge.mock.calls[0][0]).toMatchObject({ totalCount: 2 });
+    });
+
     const createOnboardingHarness = (noteCount = 0) => {
         const setOnboardingNudge = jest.fn();
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -7245,6 +7295,34 @@ describe('Pagelet Discover provider first-use admission', () => {
         expect(harness.invoke).not.toHaveBeenCalled();
         expect(mockNoticeMessages).toEqual([]);
         expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+    });
+
+    it('stops a delayed physical Discover dispatch after its source is excluded', async () => {
+        const harness = createDiscoveryHarness({ notified: true });
+        let entered!: () => void;
+        let release!: () => void;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        const dispatch = jest.fn();
+        harness.plugin.createChatModel.mockImplementation(async (_temperature: number, options: {
+            onProviderRequestStart?: () => void;
+        }) => ({ invoke: async () => {
+            entered();
+            await pending;
+            options.onProviderRequestStart?.();
+            dispatch();
+            return { content: '{"findings":[]}', response_metadata: { finish_reason: 'stop' } };
+        } }));
+        const discovery = harness.plugin.runDiscoveryAnalysis(
+            { path: harness.currentFile.path, content: 'Current note.' },
+            [{ path: harness.relatedFile.path, content: 'Related note.' }],
+        );
+        await started;
+        harness.plugin.settings.dataBoundary.excludedFolders = ['notes'];
+        release();
+        await expect(discovery).resolves.toBeNull();
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(harness.plugin.pageletCostTracker.record).not.toHaveBeenCalled();
     });
 
     it('drops a Discover result that becomes stale during invocation and attributes cost to the admitted provider', async () => {

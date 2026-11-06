@@ -1071,7 +1071,7 @@ export class AIConnectionsSettingsView {
                         updateImpact();
                     });
                 });
-                if (!connection && (draft.providerId === 'custom' || draft.providerId !== 'custom')) {
+                if (!connection) {
                     const endpointParent = draft.providerId === 'custom' ? this.root : advancedBody;
                     const row = new Setting(endpointParent)
                         .setName(this.text('endpoint', { purpose: this.text(purpose) }));

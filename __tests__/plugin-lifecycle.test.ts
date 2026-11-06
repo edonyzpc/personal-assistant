@@ -1091,7 +1091,6 @@ describe("Plugin lifecycle integration", () => {
         const { plugin } = createPluginHarness();
         await plugin.loadSettings();
         plugin.log = jest.fn();
-        plugin.log = jest.fn();
         let commit: () => void = () => undefined;
         let finishRefresh!: () => void;
         const stop = jest.fn();

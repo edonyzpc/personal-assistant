@@ -219,7 +219,6 @@ function getCurrentQuickCaptureFile(app: App): TFile {
 async function appendToExistingFile(
     app: App, file: TFile, entry: string, templateSettings: NoteTemplateSettings, timestamp: Date,
 ): Promise<string> {
-    const existing = await app.vault.read(file);
     const template = templateSettings.noteTemplate || DEFAULT_NOTE_TEMPLATE;
     const context = buildNoteTemplateContext(
         file.basename,
@@ -229,8 +228,8 @@ async function appendToExistingFile(
         new Date(file.stat?.mtime ?? timestamp.getTime()),
     );
     const emptyTemplate = renderNoteTemplate(template, context);
-    const updated = insertNoteTemplateContent(existing, entry, emptyTemplate) ?? appendEntry(existing, entry);
-    await app.vault.modify(file, updated);
+    await app.vault.process(file, (existing) =>
+        insertNoteTemplateContent(existing, entry, emptyTemplate) ?? appendEntry(existing, entry));
     return file.path;
 }
 
@@ -291,7 +290,7 @@ export class QuickCaptureService {
                     capturedAt: timestamp.toISOString(),
                 }, options);
                 const result = { status: "saved" as const, destination: settings.destination, path, captureId };
-                void Promise.resolve(this.host.onCaptureSaved?.(result))
+                void Promise.resolve().then(() => this.host.onCaptureSaved?.(result))
                     .catch((error) => this.host.log("Quick Capture saved callback failed", error));
                 return result;
             }
@@ -320,7 +319,7 @@ export class QuickCaptureService {
                 capturedAt: timestamp.toISOString(),
             }, options);
             const result = { status: "saved" as const, destination: settings.destination, path: savedPath, captureId };
-            void Promise.resolve(this.host.onCaptureSaved?.(result))
+            void Promise.resolve().then(() => this.host.onCaptureSaved?.(result))
                 .catch((error) => this.host.log("Quick Capture saved callback failed", error));
             return result;
         } catch (error) {
@@ -352,7 +351,7 @@ export class QuickCaptureService {
     ): void {
         if (options.postProcess === false) return;
         if (!settings.postProcessingEnabled || !this.host.postProcessCapture) return;
-        void Promise.resolve(this.host.postProcessCapture(input)).catch((error) => {
+        void Promise.resolve().then(() => this.host.postProcessCapture?.(input)).catch((error) => {
             this.host.log("Quick Capture post-processing failed", error);
         });
     }

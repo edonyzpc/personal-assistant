@@ -24,7 +24,6 @@ export interface CalloutIntegrationDependencies {
 }
 
 interface CalloutWaiter {
-    generation: number;
     interval: PlatformIntervalHandle;
     timeout: PlatformTimeoutHandle;
     settle(value: unknown): void;
@@ -46,7 +45,7 @@ export class CalloutIntegration {
 
         const generation = this.beginGeneration();
         try {
-            const pluginInstance = await this.waitForEnabledPluginInstance(generation);
+            const pluginInstance = await this.waitForEnabledPluginInstance();
             if (!this.isCurrentGeneration(generation)) return;
 
             if (pluginInstance === undefined) {
@@ -84,7 +83,7 @@ export class CalloutIntegration {
         return this.generation;
     }
 
-    private waitForEnabledPluginInstance(generation: number): Promise<unknown> {
+    private waitForEnabledPluginInstance(): Promise<unknown> {
         if (!this.dependencies.registry.isPluginEnabled(this.dependencies.pluginId)) {
             return Promise.resolve(undefined);
         }
@@ -96,7 +95,6 @@ export class CalloutIntegration {
 
         return new Promise((resolve) => {
             const waiter = {
-                generation,
                 interval: null as unknown as PlatformIntervalHandle,
                 timeout: null as unknown as PlatformTimeoutHandle,
                 settle: resolve,
