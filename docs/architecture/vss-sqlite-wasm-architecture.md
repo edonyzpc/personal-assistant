@@ -179,8 +179,11 @@ Durable tables include:
 - `vss_chunks_fts`: legacy single-field table retained for schema compatibility;
   the corrected lexical path does not query or silently backfill it.
 
-The current schema version is `VSS_SCHEMA_VERSION = 3`, paired with
-`heading-aware-v3` chunk metadata. Fenced code does not introduce headings.
+The current schema version is `VSS_SCHEMA_VERSION = 4`, paired with
+`heading-aware-v4` chunk metadata. Fenced code does not introduce headings;
+Markdown container boundaries determine where list/quote fences end. Version 3
+indexes may contain incorrect heading sections after list fences and must also
+follow the confirmed rebuild path rather than reuse unchanged content hashes.
 Existing indexes with an older, missing or unknown schema stay stale until the
 user confirms rebuilding; initialization and marker recovery must not relabel
 their chunks as the current format. There is no parallel legacy chunker.

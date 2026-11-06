@@ -243,7 +243,8 @@ describe('sqlite worker OPFS lifecycle', () => {
             const current = schema();
             const cases = [];
             const scenarios = [
-                { version: null, missing: [] }, { version: '2', missing: [] }, { version: '999', missing: [] },
+                { version: null, missing: [] }, { version: '2', missing: [] }, { version: '3', missing: [] },
+                { version: '999', missing: [] },
                 { missing: ['vss_meta'] }, { missing: ['vss_meta', 'vss_files'] }, { missing: ['vss_chunks'] },
             ];
             for (const scenario of scenarios) {
@@ -275,7 +276,7 @@ describe('sqlite worker OPFS lifecycle', () => {
         `], { encoding: 'utf8' });
         const actual = JSON.parse(stdout);
         expect(actual.fresh).toMatchObject({ ok: true, result: 'ready' });
-        expect(actual.cases).toHaveLength(6);
+        expect(actual.cases).toHaveLength(7);
         for (const result of actual.cases) {
             expect(result).toMatchObject({
                 opened: { ok: true, result: 'stale' }, verified: { ok: true, result: 'stale' },
@@ -284,7 +285,7 @@ describe('sqlite worker OPFS lifecycle', () => {
                     fileCount: result.missing.includes('vss_files') ? 0 : 1,
                 } },
                 unchanged: true, oldContent: result.missing.includes('vss_chunks') ? null : 'old source',
-                reset: { ok: true }, schema: '3', remainingChunks: 0, changedIdentity: true,
+                reset: { ok: true }, schema: '4', remainingChunks: 0, changedIdentity: true,
                 afterReset: { ok: true, result: 'ready' },
             });
             if (result.missing.includes('vss_meta')) {
@@ -294,7 +295,7 @@ describe('sqlite worker OPFS lifecycle', () => {
                 expect(result.stats.result).not.toHaveProperty('rebuildEpoch');
             }
         }
-        expect(actual.current).toBe('3');
+        expect(actual.current).toBe('4');
     });
 
     it('preserves the OPFS pool and releases late handles when initialization fails', async () => {

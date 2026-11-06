@@ -33,7 +33,7 @@ describe("createHeadingAwareMarkdownChunks", () => {
         expect(chunks[0].content).toContain("Frontmatter:\ntags: [ai, memory]");
         expect(chunks[0].content).toContain("aliases: Project Memory");
         expect(chunks[0].metadata.frontmatterIncluded).toBe(true);
-        expect(chunks[0].metadata.chunkStrategy).toBe("heading-aware-v3");
+        expect(chunks[0].metadata.chunkStrategy).toBe("heading-aware-v4");
         expect(chunks[0].metadata.headingPath).toEqual(["Project"]);
         expect(chunks[0].metadata.startLine).toBe(5);
 
@@ -102,6 +102,49 @@ describe("createHeadingAwareMarkdownChunks", () => {
         expect(chunks).toHaveLength(1);
         expect(chunks[0].content).toBe(markdown);
         expect(chunks[0].metadata).toMatchObject({ headingPath: ["Root"], startLine: 1, endLine: 4 });
+    });
+
+    it.each([
+        ["bullet list", "- ~~~js\n  x\n  ~~~"],
+        ["ordered list", "1. ```js\n   x\n   ```"],
+        ["unclosed fence at list end", "- item\n  ~~~js\n  x"],
+        ["unclosed fence at quote end", "> ~~~js\n> x"],
+    ])("resumes headings after a %s without losing later fence boundaries", (_name, block) => {
+        const firstSection = `# Root\n${block}`;
+        const nextSection = "## Next\n```md\n# code comment\n```\nActual section.";
+        const nextStartLine = firstSection.split("\n").length + 1;
+        const chunks = createHeadingAwareMarkdownChunks({
+            path: "containers.md",
+            markdown: `${firstSection}\n${nextSection}`,
+            contentHash: "containers-hash",
+            created: 1,
+            lastModified: 2,
+        });
+
+        expect(chunks.map((chunk) => chunk.content)).toEqual([firstSection, nextSection]);
+        expect(chunks.map((chunk) => chunk.metadata)).toEqual([
+            expect.objectContaining({ headingPath: ["Root"], startLine: 1, endLine: nextStartLine - 1 }),
+            expect.objectContaining({ headingPath: ["Root", "Next"], startLine: nextStartLine, endLine: nextStartLine + 4 }),
+        ]);
+    });
+
+    it.each(["\n", "\r\n", "\r"])("keeps fence source lines aligned with frontmatter and %j line endings", (newline) => {
+        const chunks = createHeadingAwareMarkdownChunks({
+            path: "line-endings.md",
+            markdown: ["---", "tags: code", "---", "# Root", "- ~~~js", "  x", "  ~~~", "## Next", "body"].join(newline),
+            contentHash: "line-endings-hash",
+            created: 1,
+            lastModified: 2,
+        });
+
+        expect(chunks.map((chunk) => chunk.content)).toEqual([
+            "Frontmatter:\ntags: code\n\n# Root\n- ~~~js\n  x\n  ~~~",
+            "Frontmatter:\ntags: code\n\n## Next\nbody",
+        ]);
+        expect(chunks.map((chunk) => chunk.metadata)).toEqual([
+            expect.objectContaining({ headingPath: ["Root"], startLine: 4, endLine: 7, frontmatterIncluded: true }),
+            expect.objectContaining({ headingPath: ["Root", "Next"], startLine: 8, endLine: 9, frontmatterIncluded: true }),
+        ]);
     });
 
     it("produces overlapping content between consecutive chunks when chunkOverlap > 0", () => {

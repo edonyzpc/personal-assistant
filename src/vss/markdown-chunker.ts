@@ -1,3 +1,4 @@
+import MarkdownIt from "markdown-it";
 import type { VSSChunk } from "./types";
 
 export interface HeadingAwareChunkOptions {
@@ -29,6 +30,7 @@ interface SectionBlock {
 const DEFAULT_CHUNK_SIZE = 4000;
 const DEFAULT_CHUNK_OVERLAP = 80;
 const FRONTMATTER_MAX_CHARS = 1200;
+const fenceParser = new MarkdownIt("commonmark").disable("inline");
 
 export function createHeadingAwareMarkdownChunks(options: HeadingAwareChunkOptions): VSSChunk[] {
     const chunkSize = Math.max(256, options.chunkSize ?? DEFAULT_CHUNK_SIZE);
@@ -62,7 +64,7 @@ export function createHeadingAwareMarkdownChunks(options: HeadingAwareChunkOptio
                     endLine: piece.endLine,
                     headingPath: section.headingPath,
                     frontmatterIncluded: Boolean(frontmatterText),
-                    chunkStrategy: "heading-aware-v3",
+                    chunkStrategy: "heading-aware-v4",
                 },
             });
         }
@@ -75,7 +77,7 @@ function extractFrontmatter(markdown: string): FrontmatterBlock {
     if (!markdown.startsWith("---")) {
         return { text: "", contentStartOffset: 0, contentStartLine: 1 };
     }
-    const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+    const match = markdown.match(/^---(?:\r\n?|\n)([\s\S]*?)(?:\r\n?|\n)---(?:\r\n?|\n|$)/);
     if (!match) {
         return { text: "", contentStartOffset: 0, contentStartLine: 1 };
     }
@@ -88,7 +90,7 @@ function extractFrontmatter(markdown: string): FrontmatterBlock {
 
 function formatFrontmatterForChunk(frontmatter: string): string {
     const lines = frontmatter
-        .split(/\r?\n/)
+        .split(/\r\n?|\n/)
         .map((line) => line.trim())
         .filter(Boolean)
         .filter((line) => !/^[#]/.test(line));
@@ -98,26 +100,24 @@ function formatFrontmatterForChunk(frontmatter: string): string {
 }
 
 function splitMarkdownIntoHeadingSections(content: string, contentStartLine: number): SectionBlock[] {
-    const rawLines = content.split(/\r?\n/);
+    const rawLines = content.split(/\r\n?|\n/);
+    // The parser owns list/quote containment, including fences closed by the
+    // end of their container. Slice the original lines to retain note text.
+    const fenceEndLines = new Map<number, number>();
+    for (const token of fenceParser.parse(content, {})) {
+        if (token.type === "fence" && token.map) {
+            fenceEndLines.set(token.map[0], token.map[1]);
+        }
+    }
     const sections: SectionBlock[] = [];
     const headingStack: Array<{ level: number; text: string }> = [];
     let current: SectionBlock = { headingPath: [], lines: [] };
-    let codeFence: { marker: string; length: number } | null = null;
+    let codeFenceEndLine = 0;
 
     for (let index = 0; index < rawLines.length; index++) {
         const text = rawLines[index];
-        const fence = text.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-        let heading: ReturnType<typeof parseMarkdownHeading> = null;
-        if (codeFence) {
-            if (fence && fence[1][0] === codeFence.marker
-                && fence[1].length >= codeFence.length && /^[\t ]*$/.test(fence[2])) {
-                codeFence = null;
-            }
-        } else if (fence && (fence[1][0] === "~" || !fence[2].includes("`"))) {
-            codeFence = { marker: fence[1][0], length: fence[1].length };
-        } else {
-            heading = parseMarkdownHeading(text);
-        }
+        codeFenceEndLine = fenceEndLines.get(index) ?? codeFenceEndLine;
+        const heading = index < codeFenceEndLine ? null : parseMarkdownHeading(text);
         if (heading) {
             if (current.lines.some((line) => line.text.trim().length > 0)) {
                 sections.push(current);
@@ -224,9 +224,5 @@ function splitLongLine(line: SourceLine, targetSize: number): SourceLine[] {
 }
 
 function countNewlines(value: string): number {
-    let count = 0;
-    for (let index = 0; index < value.length; index++) {
-        if (value[index] === "\n") count++;
-    }
-    return count;
+    return value.match(/\r\n?|\n/g)?.length ?? 0;
 }
