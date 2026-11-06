@@ -93,6 +93,31 @@ describe("MobileInputAdapter", () => {
         resetPlatform();
     });
 
+    it("handles failed removal of a native listener registered after disconnect", async () => {
+        const log = jest.fn();
+        adapter = new MobileInputAdapter(containerEl, log);
+        let finishRegistration!: (handle: { remove(): Promise<void> }) => void;
+        const registration = new Promise<{ remove(): Promise<void> }>(resolve => {
+            finishRegistration = resolve;
+        });
+        const addListener = jest.fn()
+            .mockImplementationOnce(() => registration)
+            .mockImplementation(() => ({ remove: jest.fn() }));
+        jest.spyOn(adapter, 'getNativeKeyboardPlugin').mockReturnValue({ addListener } as never);
+        adapter.observeKeyboardClearance(containerEl, createMockElement({ height: 48 }));
+        expect(addListener).toHaveBeenCalledTimes(4);
+        adapter.disconnectKeyboardClearance();
+
+        const failure = new Error('native listener removal failed');
+        const remove = jest.fn(async () => { throw failure; });
+        finishRegistration({ remove });
+        await registration;
+        await Promise.resolve();
+
+        expect(remove).toHaveBeenCalledTimes(1);
+        expect(log).toHaveBeenCalledWith('Could not remove native keyboard listener', failure);
+    });
+
     describe("calculateVisualViewportKeyboardOverlap", () => {
         it("returns 0 when viewport is null", () => {
             const viewRect = { bottom: 900, height: 900 } as DOMRect;
@@ -180,9 +205,9 @@ describe("MobileInputAdapter", () => {
         });
 
         it("caps overlap at keyboard height", () => {
-            const viewRect = { bottom: 500, height: 200 } as DOMRect;
+            const viewRect = { bottom: 1000, height: 500 } as DOMRect;
             const overlap = adapter.calculateKeyboardHeightOverlap(viewRect, 300);
-            expect(overlap).toBeLessThanOrEqual(300);
+            expect(overlap).toBe(300);
         });
 
         it("returns 0 when view is above keyboard", () => {

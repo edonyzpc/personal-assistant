@@ -1960,7 +1960,6 @@ export class LLMView extends ItemView {
                 imageRemoveSourceButton.hidden = !source && !imageIntent.recoverySourceLabel;
                 imageSourceControl.hidden = false;
                 imageCloseButton.hidden = false;
-                syncImageOptionsMenu();
             }
             if (!imageIntent) {
                 imageSourceControl.hidden = true;
@@ -7005,6 +7004,9 @@ export class LLMView extends ItemView {
                     showComposerHint(t('plugin.chat.createImage.source.changed'));
                     return;
                 }
+                // The vault read can outlive an edit, source change or view close.
+                // Only consume the draft that was verified for this send.
+                if (!isCurrentSession() || !composerDraft.isUnchanged(currentDraft)) return;
                 if (this.host.isImageTextSourceCurrent && !this.host.isImageTextSourceCurrent(sourceBeforeTake)) {
                     showComposerHint(t('plugin.chat.createImage.source.changed'));
                     return;

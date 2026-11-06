@@ -792,6 +792,10 @@ describe('image derivative leases', () => {
         expect(verified.isCurrent()).toBe(false);
         const next = await h.service.verify(imported.ref);
         expect(next.isCurrent()).toBe(true);
+        h.setDeniedPath(imported.asset.originalPath);
+        expect(next.isCurrent()).toBe(false);
+        h.setDeniedPath(undefined);
+        expect(next.isCurrent()).toBe(true);
         await h.service.dispose(); expect(next.isCurrent()).toBe(false);
     });
     it('clearing cache leaves a held immutable Blob valid; regeneration rechecks original', async () => {

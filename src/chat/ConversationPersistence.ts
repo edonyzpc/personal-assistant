@@ -401,7 +401,6 @@ export class ConversationPersistence {
         this.unpersistedFinalizedEntries.clear();
         this.pendingTurnIndexByRunId.clear();
         this.terminalTurnIndexByRunId.clear();
-        this.terminalTurnIndexByRunId.clear();
         this.reservedConversationId = null;
         this.draftSequence += 1;
         this.sourceSelection = newConversationSourceSelection();

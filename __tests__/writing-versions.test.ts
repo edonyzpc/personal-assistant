@@ -33,13 +33,16 @@ describe('immutable writing versions', () => {
         await expect(service.create(input(), () => current)).rejects.toThrow('Writing conversation changed');
         expect(store.putWritingVersion).not.toHaveBeenCalled();
     });
-    test('checks queued host admission but preserves an already admitted write', async () => {
+    test('rejects queued work after revocation while preserving an already committed write', async () => {
         const { service, store, records } = setup();
         let started!: () => void, release!: () => void;
         const writing = new Promise<void>(resolve => { started = resolve; });
         const held = new Promise<void>(resolve => { release = resolve; });
-        jest.spyOn(store, 'putWritingVersion').mockImplementation(async version => {
-            started(); await held; records.set(version.id, cloneWritingVersion(version));
+        jest.spyOn(store, 'putWritingVersion').mockImplementation(async (version, assertSourceCurrent) => {
+            assertSourceCurrent?.();
+            records.set(version.id, cloneWritingVersion(version));
+            started();
+            await held;
         });
         let current = true;
         const admitted = service.create(input(), () => current);

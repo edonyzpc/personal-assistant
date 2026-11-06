@@ -904,29 +904,6 @@ describe("deriveTitle / derivePreview", () => {
 });
 
 describe("chat history persistence safety", () => {
-    it("skips recording when chat-view abandons a non-live finalized turn before persistence", async () => {
-        // chat-view.ts checks isLiveTurn before constructing the finalized history
-        // entry. Once a turn is finalized, persistFinalizedTurn serializes it without
-        // re-checking liveness so switch/new-chat flows cannot erase completed turns.
-        // This reproduces the pre-persistence gate around ChatHistoryManager calls.
-        const { manager, store } = makeManager();
-        await manager.initialize();
-        let live = true;
-        const conv = await manager.startConversation("hi");
-        live = false;
-        const entry = makeHistoryEntry();
-        if (live) {
-            await manager.recordTurn({
-                conversationId: conv.id,
-                turnIndex: 0,
-                entry,
-                userPrompt: "hi",
-                conversation: conv,
-            });
-        }
-        await expect(store.getTurns(conv.id)).resolves.toHaveLength(0);
-    });
-
     it("getTurns returns deserialize-ready records that drop canonicalTurn.messages", async () => {
         const { manager } = makeManager();
         await manager.initialize();

@@ -1187,21 +1187,20 @@ describe('ChatService.streamLLM integration', () => {
                     onLifecycleEvent: event => events.push(event),
                 },
             );
+            expect(searchSpy).toHaveBeenCalledTimes(1);
+            expect(boundaryInvocations[0]).toMatchObject({
+                mode: 'standard',
+                temporalIntent: 'none',
+            });
+            expect(events.some(event => event.type === 'tool_execution_end'
+                && event.toolName === 'search_memory'
+                && event.outcome === 'success')).toBe(true);
+            expect(JSON.stringify(events)).not.toContain('source_run_changed');
+            expect(model.stream).toHaveBeenCalledTimes(2);
         } finally {
+            searchSpy.mockRestore();
             service.dispose();
         }
-
-        expect(searchSpy).toHaveBeenCalledTimes(1);
-        expect(boundaryInvocations[0]).toMatchObject({
-            mode: 'standard',
-            temporalIntent: 'none',
-        });
-        expect(events.some(event => event.type === 'tool_execution_end'
-            && event.toolName === 'search_memory'
-            && event.outcome === 'success')).toBe(true);
-        expect(JSON.stringify(events)).not.toContain('source_run_changed');
-        expect(model.stream).toHaveBeenCalledTimes(2);
-        searchSpy.mockRestore();
     });
 
     it('correlates a declared command need with schemas actually bound to this provider request', async () => {
@@ -2984,7 +2983,7 @@ describe('ChatService.streamLLM integration', () => {
         runtime.dispose();
     });
 
-    it('does not start a live Memory currentness check while preparing a summary fallback', async () => {
+    it('keeps unavailable Memory through stream fallback without starting a live currentness check', async () => {
         jest.useFakeTimers();
         try {
             const memoryResult = (body: string): MemorySearchResult => ({
@@ -3042,7 +3041,7 @@ describe('ChatService.streamLLM integration', () => {
             for (const input of answerInputs) {
                 expect(JSON.stringify(input)).toContain('Memory retrieval is currently unavailable');
                 expect(JSON.stringify(input)).toContain('empty results do not establish that no matching notes exist');
-                expect(JSON.stringify(input)).not.toContain('CURRENT AUTHORITATIVE MEMORY');
+                expect(JSON.stringify(input)).not.toContain(initial.documents[0].content);
             }
             runtime.dispose();
             expect(jest.getTimerCount()).toBe(0);
@@ -3051,7 +3050,7 @@ describe('ChatService.streamLLM integration', () => {
         }
     });
 
-    it('keeps the captured Memory snapshot after deferred Chat model construction', async () => {
+    it('keeps a Memory result without a current source unavailable after deferred Chat model construction', async () => {
         const stalePath = 'notes/revoked-during-model.md';
         const staleBody = 'REVOKED CHAT MEMORY BODY';
         const staleMemory: MemorySearchResult = {

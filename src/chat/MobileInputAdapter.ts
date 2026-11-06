@@ -451,7 +451,10 @@ export class MobileInputAdapter {
             void Promise.resolve(handleOrPromise).then((handle) => {
                 if (!handle) return;
                 if (this.keyboardUpdateHandler !== activeHandler) {
-                    void handle.remove?.();
+                    this.safeInvokeKeyboardPlugin(
+                        () => handle.remove?.(),
+                        'Could not remove native keyboard listener',
+                    );
                     return;
                 }
                 this.keyboardPluginListenerHandles.push(handle);

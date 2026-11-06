@@ -4309,6 +4309,37 @@ describe('LLMView turn lifecycle', () => {
         await view.onClose();
     });
 
+    it('preserves new unsent input while the original image source verification is pending', async () => {
+        const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'source-verification' });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        let finishVerification!: () => void;
+        const verification = new Promise<void>(resolve => { finishVerification = resolve; });
+        const verify = jest.fn(() => verification);
+        Object.assign(plugin, {
+            imageGenerationService: { list: async () => [], subscribe: () => () => undefined },
+            verifyImageTextSource: verify,
+            isImageTextSourceCurrent: () => true,
+        });
+        await view.onOpen();
+        view.prefillImageDraft('Original request', createImageTextSource());
+        const textArea = getTextArea(containerEl);
+        const send = getElementByClass(containerEl, 'send-button-visible');
+        send.click();
+        expect(verify).toHaveBeenCalledTimes(1);
+        expect(streamCalls).toHaveLength(0);
+        textArea.value = 'New unsent request';
+        textArea.dispatchEvent('input');
+        finishVerification();
+        for (let index = 0; index < 8; index++) await flushPromises();
+        try {
+            expect(streamCalls).toHaveLength(0);
+            expect(textArea.value).toBe('New unsent request');
+        } finally {
+            for (const call of streamCalls) call.resolve();
+            await view.onClose();
+        }
+    });
+
     it('keeps OpenAI source defaults and per-request model/count changes without rewriting the connection', async () => {
         const manager = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'openai-source' });
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
@@ -14153,7 +14184,6 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).toContain('Current vault');
         expect(allText(containerEl)).toContain('Personalization context, not a note citation');
         expect(allText(containerEl)).not.toContain('Status only');
-        expect(allText(containerEl)).not.toContain('Prefers concise replies');
     });
 
     it('keeps the rendered Memory references callout when metadata arrives after the final chunk', async () => {

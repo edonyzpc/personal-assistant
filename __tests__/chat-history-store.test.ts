@@ -131,7 +131,7 @@ describe("B-145 Chat deletion outbox", () => {
         await store.deleteTurn("conv-1", 0);
         const [intent] = await store.listDebugDeletions();
 
-        expect(intent?.runIds).toBeUndefined();
+        expect(intent?.runtimeRunIds).toBeUndefined();
     });
 });
 

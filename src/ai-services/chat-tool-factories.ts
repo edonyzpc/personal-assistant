@@ -405,6 +405,8 @@ function prepareSearchVaultSnippetsArguments(raw: unknown, _ctx: PrepareToolArgu
     }
     const record = toInputRecord(raw);
     if (!record) return raw;
+    // Keep the retired field visible to validation instead of silently rerunning a complete query.
+    if (Object.prototype.hasOwnProperty.call(record, "cursor")) return raw;
     const query = readFirstPreservedString(record, VAULT_SNIPPETS_QUERY_ALIASES);
     if (!query) return raw;
     const normalized: Record<string, unknown> = { query };
