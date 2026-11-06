@@ -13,7 +13,6 @@ import {
     type PageletChatModelFactory,
     type PageletChatModelLike,
     type PageletReviewInput,
-    type PageletReviewOutcome,
 } from "../src/pagelet";
 import { PaChatOpenAI } from "../src/ai-services/openai-responses-adapter";
 
@@ -419,13 +418,10 @@ describe("PageletReviewModel — failure matrix (SDD §4.3, 8 rows)", () => {
             { kind: "throw", error: schemaError([{ path: ["x"], message: "bad" }]) },
             { kind: "throw", error: schemaError([{ path: ["x"], message: "still bad" }]) },
         ]);
-        const outcome = await reviewNote(harness.factory, defaultInput(), { disableFreeFormFallback: true } as never);
-        // disableFreeFormFallback shortcut: cast through never because the option set is private to
-        // PageletReviewModel.constructor; we pass it via the convenience `reviewNote` helper.
-        const result = await assertOutcomeMatches(outcome, { disableFreeFormFallback: true });
-        expect(result.status).toBe("error");
-        if (result.status !== "error") return;
-        expect(result.errorCode).toBe("schema_invalid");
+        const outcome = await reviewNote(harness.factory, defaultInput(), { disableFreeFormFallback: true });
+        expect(outcome.status).toBe("error");
+        if (outcome.status !== "error") return;
+        expect(outcome.errorCode).toBe("schema_invalid");
     });
 
     it("row 2: missing source_id → suggestion dropped → diagnostics.partial=true", async () => {
@@ -585,7 +581,7 @@ describe("PageletReviewModel — failure matrix (SDD §4.3, 8 rows)", () => {
         expect(outcome.diagnostics.partial).toBe(true);
     });
 
-    it("row 7: abort signal → outcome.errorCode='timeout'", async () => {
+    it("row 7: provider AbortError → outcome.errorCode='timeout'", async () => {
         // Row 7 is the timeout path. The PaAgentLoop owns the wall-clock budget (SDD §4.3 row 7),
         // we just need to propagate AbortError → "timeout" surface so the UI shows a friendly
         // "review timed out" rather than a stack trace.
@@ -667,24 +663,6 @@ describe("PageletReviewModel — provider degradation paths", () => {
         if (outcome.status !== "error") return;
         expect(outcome.errorCode).toBe("provider_error");
         expect(outcome.diagnostics.providerError).toMatch(/401/);
-    });
-
-    it("AbortSignal aborted before structured invoke → 'timeout' surfaced", async () => {
-        // Real-world: user cancels review (closes panel) mid-call. The underlying model should
-        // throw AbortError, which we convert to a friendly "timeout" surface. This catches a
-        // regression where we mistakenly classify AbortError as provider_error.
-        const factory: PageletChatModelFactory = async () => ({
-            invoke: jest.fn(async () => ({ content: "" })),
-            withStructuredOutput: () => ({
-                invoke: async () => {
-                    throw abortError();
-                },
-            }),
-        });
-        const outcome = await reviewNote(factory, defaultInput());
-        expect(outcome.status).toBe("error");
-        if (outcome.status !== "error") return;
-        expect(outcome.errorCode).toBe("timeout");
     });
 
     it("AbortSignal already aborted before review starts → factory is not called", async () => {
@@ -1178,16 +1156,4 @@ function abortError() {
     const err = new Error("Aborted by signal");
     err.name = "AbortError";
     return err;
-}
-
-/**
- * Tiny adapter that re-narrows a heterogeneous Promise<PageletReviewOutcome>.
- * Most tests narrow inline; this helper exists for the few that intentionally
- * pass options that the typedef doesn't expose at the top-level helper.
- */
-async function assertOutcomeMatches(
-    outcomePromise: PageletReviewOutcome | Promise<PageletReviewOutcome>,
-    _opts: { disableFreeFormFallback?: boolean },
-): Promise<PageletReviewOutcome> {
-    return Promise.resolve(outcomePromise);
 }

@@ -708,6 +708,51 @@ describe("Pagelet BubbleView", () => {
         view.destroy();
     });
 
+    it.each([
+        [400, 1200],
+        [1200, 400],
+    ])("updates layout and swipe dismissal when resized from %s to %s", async (initialWidth, nextWidth) => {
+        const listeners = new Map<string, () => void>();
+        const win = {
+            innerWidth: initialWidth,
+            innerHeight: 900,
+            addEventListener: (type: string, listener: () => void) => listeners.set(type, listener),
+            removeEventListener: (type: string) => listeners.delete(type),
+        };
+        globalRecord.window = win;
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const anchor = new FakeElement("button");
+        const onDismiss = jest.fn();
+        const view = new BubbleView({
+            callbacks: { onDismiss, onExpandPanel: () => undefined, onSourceClick: () => undefined },
+        });
+        view.mount(container as unknown as HTMLElement);
+        view.show({ type: "empty", findings: [], actions: [] }, anchor as unknown as HTMLElement);
+        const bubble = container.querySelector(".pa-pagelet-bubble")!;
+        expect(bubble.classList.contains("pa-pagelet-bubble--mobile")).toBe(initialWidth === 400);
+
+        try {
+            win.innerWidth = nextWidth;
+            listeners.get("resize")!();
+
+            expect(bubble.classList.contains("pa-pagelet-bubble--mobile")).toBe(nextWidth === 400);
+            expect(bubble.getAttribute("data-state")).toBe("visible");
+            const event = {
+                stopPropagation: () => undefined,
+                preventDefault: () => undefined,
+                touches: [{ clientX: 20, clientY: 20 }],
+                changedTouches: [{ clientX: 20, clientY: 100 }],
+            };
+            await bubble.dispatch("touchstart", event);
+            await bubble.dispatch("touchend", event);
+            expect(view.bubbleState).toBe(nextWidth === 400 ? "hidden" : "visible");
+            expect(onDismiss).toHaveBeenCalledTimes(nextWidth === 400 ? 1 : 0);
+        } finally {
+            view.destroy();
+        }
+    });
+
     it("moves focus into the bubble and restores focus to the anchor on close", () => {
         const container = new FakeElement("div");
         container.isConnected = true;

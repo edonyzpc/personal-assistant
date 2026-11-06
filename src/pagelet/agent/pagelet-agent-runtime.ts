@@ -737,10 +737,6 @@ async function validateStagedPageletInsight(options: {
         body: options.input.insightMarkdown,
         sourceMaterials,
         readCurrentSourceSnapshot: async (path, signal) => {
-            if (path === options.request.anchor.path) {
-                const material = await options.dependencies.captureSourceMaterial(path, signal);
-                return material ? sourceSnapshotIdentity(material) : null;
-            }
             const material = await options.dependencies.captureSourceMaterial(path, signal);
             return material ? sourceSnapshotIdentity(material) : null;
         },

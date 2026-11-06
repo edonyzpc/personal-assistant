@@ -405,7 +405,7 @@ describe("PageletProviderCallAdmission", () => {
             expect(harness.mark).not.toHaveBeenCalled();
         });
 
-        it("rolls back a provisional slot when abort wins during persistence", async () => {
+        it.each(["standard", "risk-aware"] as const)("rolls back a provisional slot when abort wins during persistence through %s admission", async admissionKind => {
             const harness = makeAdmission();
             const controller = new AbortController();
             let resolveReservation!: (reservation: PageletProviderCallReservation) => void;
@@ -423,10 +423,13 @@ describe("PageletProviderCallAdmission", () => {
                 return await new Promise((resolve) => { resolveReservation = resolve; });
             });
 
-            const pending = harness.admission.executeRiskAwareCall({
-                ...options,
-                signal: controller.signal,
-            });
+            const pending = admissionKind === "standard"
+                ? harness.admission.executeStandardCall(() => options.invoke(options.input), {
+                    revalidate: () => true,
+                    reserve: () => options.reserve(),
+                    signal: controller.signal,
+                })
+                : harness.admission.executeRiskAwareCall({ ...options, signal: controller.signal });
             await started;
             controller.abort();
             resolveReservation({ commit, rollback });

@@ -37,11 +37,7 @@ describe("pageletT lookup", () => {
         expect(pageletT("pagelet.settings.section.title", "zh")).toBe("拾页");
     });
 
-    it("falls back to EN when the locale dictionary lacks a key", () => {
-        // Construct a key that exists in EN but not ZH would require mutating
-        // the frozen dictionary — instead, route through an unknown locale to
-        // exercise the same fallback path. The behaviour is identical: when
-        // the requested dict misses, EN wins.
+    it("falls back to the EN dictionary for an unknown locale", () => {
         const result = pageletT(
             "pagelet.settings.beta.callout",
             "unknown" as unknown as "en",

@@ -1061,13 +1061,6 @@ export class PetView implements PetRenderer {
             clearPlatformTimeout(this._errorTimer);
             this._errorTimer = null;
         }
-        this.clearTouchSuppression();
-        this.cancelRootGesture();
-        this._rootGesture = null;
-        this.closeActionRing(false, "passive");
-        this._quickCaptureHoldTriggered = false;
-        this._suppressNextRootClick = false;
-        this._recentTouch = false;
         this.unmount();
     }
 

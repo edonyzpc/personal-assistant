@@ -400,6 +400,12 @@ describe("tolerantJsonParse", () => {
         expect(tolerantJsonParse('{"a":1,}')).toEqual({ a: 1 });
     });
 
+    it("preserves quoted text while repairing array and object trailing commas", () => {
+        const text = 'Keep ",}" and \\,] literally';
+        const payload = `{"text":${JSON.stringify(text)},"items":[1,],}`;
+        expect(tolerantJsonParse(payload)).toEqual({ text, items: [1] });
+    });
+
     it("returns null on unrecoverable input", () => {
         expect(tolerantJsonParse("not json at all")).toBeNull();
     });

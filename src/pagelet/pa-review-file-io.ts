@@ -602,7 +602,10 @@ export async function writeReviewNote(
     await ensureFolder(input.vault.adapter, folder);
 
     if (await input.vault.adapter.exists(finalPath)) {
-        throw new Error(`Pagelet review target already exists: ${finalPath}`);
+        throw Object.assign(
+            new Error(`Pagelet review target already exists: ${finalPath}`),
+            { skipWriteRollback: true },
+        );
     }
 
     const nowIso = input.nowIso ? input.nowIso() : formatPageletIsoTimestamp(date);

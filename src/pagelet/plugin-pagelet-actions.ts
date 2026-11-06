@@ -77,15 +77,7 @@ export class PageletActionPluginIntegration {
     } = {}): Promise<MaintenanceReviewRunResult> {
         const notes: MaintenanceReviewNote[] = [];
         for (const file of this.dependencies.collectMaintenanceReviewFiles(options)) {
-            const settings = this.dependencies.getSettings();
-            const decision = decideDataBoundaryForSource(
-                {
-                    path: file.path,
-                    tags: this.dependencies.getDataBoundaryTags(file),
-                    isGenerated: this.dependencies.isGeneratedDataBoundaryFile(file),
-                },
-                settings.dataBoundary,
-            );
+            const decision = this.maintenanceReviewSourceDecision(file);
             if (decision.decision !== "allow") continue;
             try {
                 notes.push({
@@ -109,7 +101,8 @@ export class PageletActionPluginIntegration {
         const quickCaptureInboxFolder = inboxFolderSlash > 0
             ? quickCaptureInboxPath.slice(0, inboxFolderSlash)
             : "";
-        const result = scanMaintenanceReview(notes, {
+        // Earlier reads may have lost permission while a later read was pending.
+        const result = scanMaintenanceReview(notes.filter(note => this.isMaintenanceReviewPathAllowed(note.path)), {
             inboxFolders: quickCaptureInboxFolder ? [quickCaptureInboxFolder] : [],
             scopePaths: options.scopePaths,
             maxProposalsPerCategory: options.maxProposalsPerCategory,
@@ -117,6 +110,7 @@ export class PageletActionPluginIntegration {
 
         if (options.enqueueProposals === true) {
             for (const proposal of result.proposals) {
+                if (!proposal.sourceRefs.every(source => this.isMaintenanceReviewPathAllowed(source.path))) continue;
                 const queueResult = await this.dependencies.createReviewQueueItem(
                     maintenanceProposalToReviewQueueInput(proposal, {
                         admissionReason: "maintenance_action_ready",
@@ -129,8 +123,35 @@ export class PageletActionPluginIntegration {
                     });
                 }
             }
+            const proposals = result.proposals.filter(proposal => (
+                proposal.sourceRefs.every(source => this.isMaintenanceReviewPathAllowed(source.path))
+            ));
+            if (proposals.length !== result.proposals.length) {
+                return {
+                    ...result,
+                    totalCount: proposals.length,
+                    proposals,
+                    categories: result.categories.map(category => ({
+                        ...category,
+                        count: proposals.filter(proposal => proposal.category === category.category).length,
+                    })),
+                };
+            }
         }
         return result;
+    }
+
+    private maintenanceReviewSourceDecision(file: TFile) {
+        return decideDataBoundaryForSource({
+            path: file.path,
+            tags: this.dependencies.getDataBoundaryTags(file),
+            isGenerated: this.dependencies.isGeneratedDataBoundaryFile(file),
+        }, this.dependencies.getSettings().dataBoundary);
+    }
+
+    private isMaintenanceReviewPathAllowed(path: string): boolean {
+        const file = this.dependencies.getFile(path);
+        return file !== null && this.maintenanceReviewSourceDecision(file).decision === "allow";
     }
 
     async applyMaintenanceProposal(proposal: MaintenanceProposal): Promise<MaintenanceMoveApplyResult> {

@@ -266,9 +266,15 @@ describe("buildSuggestionCardMarkup — diagnostic badges", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildSuggestionCardMarkup — kind enum", () => {
-    it.each(PAGELET_SUGGESTION_KINDS)(
+    it.each([
+        ["clarify", "Clarify"],
+        ["expand", "Expand"],
+        ["link", "Link"],
+        ["trim", "Trim"],
+        ["evidence", "Evidence"],
+    ] as const)(
         "maps kind=%s to a translated badge label",
-        (kind) => {
+        (kind, expectedLabel) => {
             const { translator, calls } = recordingTranslator();
             const markup = buildSuggestionCardMarkup(
                 { suggestion: makeSuggestion({ kind }) },
@@ -276,8 +282,9 @@ describe("buildSuggestionCardMarkup — kind enum", () => {
             );
             expect(markup.header.kind).toBe(kind);
             // The translator was asked for the canonical kind key.
-            const expectedKey = SUGGESTION_KIND_I18N_KEY[kind];
+            const expectedKey = `pagelet.suggestion.kind.${kind}`;
             expect(calls.some((c) => c.key === expectedKey)).toBe(true);
+            expect(markup.header.kindLabel).toBe(expectedLabel);
         },
     );
 });

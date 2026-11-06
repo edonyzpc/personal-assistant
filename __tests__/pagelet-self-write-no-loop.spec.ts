@@ -195,7 +195,7 @@ describe("Pagelet self-write no-loop guard (Track C · C2)", () => {
         runtime.dispose();
     });
 
-    it("after the 5s TTL expires, a fresh external modify is NOT suppressed", async () => {
+    it("expires self-write suppression using the configured TTL", async () => {
         // Drive the registry off injectable timers via `selfWriteWindowMs`.
         // We pick a short window (50 ms) so jest fake timers can advance
         // past it without slowing the suite — the C1 spec already covers

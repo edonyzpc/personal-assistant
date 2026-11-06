@@ -151,6 +151,7 @@ export class PageletProviderCallAdmission {
             if (options.reserve) {
                 const pending = options.reserve();
                 const reserved = isPromiseLike(pending) ? await pending : pending;
+                reservation = isPageletProviderCallReservation(reserved) ? reserved : null;
                 throwIfPageletProviderCallAborted(options.signal);
                 if (!reserved) {
                     throw new PageletProviderCallControlError(
@@ -158,7 +159,6 @@ export class PageletProviderCallAdmission {
                         "Pagelet provider-call budget exceeded.",
                     );
                 }
-                reservation = isPageletProviderCallReservation(reserved) ? reserved : null;
                 if (options.revalidate) {
                     const current = options.revalidate();
                     const isCurrent = isPromiseLike(current) ? await current : current;

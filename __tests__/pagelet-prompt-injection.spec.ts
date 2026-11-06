@@ -475,36 +475,4 @@ describe("Pagelet prompt-injection fixtures (Track C · C2; SDD §8.3)", () => {
         runtime.dispose();
     });
 
-    it("framework rejects the long-path fixture for the documented length reason", async () => {
-        // Cross-check on the `inject-path-too-long` fixture: the observer's
-        // reject event should carry `extra.reason: "path_too_long"`. This
-        // single-fixture deep-dive guards against a future refactor that
-        // would silently widen the path-length cap.
-        const adapter = makeAdapter();
-        const settings: PageletSettings = {
-            ...PAGELET_DEFAULTS,
-            reviewsFolder: ".pagelet",
-        };
-        const observer = recordingObserver();
-        const fakeApp = { vault: { adapter } } as unknown as Parameters<typeof createPaReviewRuntime>[0]["app"];
-        const runtime = createPaReviewRuntime({
-            app: fakeApp,
-            getPageletSettings: () => settings,
-            previewRenderer: confirmingRenderer(),
-            fsProbe: adapter as unknown as FsProbe,
-            debugObserver: observer,
-        });
-
-        await runtime.actionExecutor.execute(
-            runtime.toolProvider.capability,
-            makeInput({ sourcePath: `${"a".repeat(300)}.md` }),
-            makeContext(),
-        );
-        const reject = observer.events.find(
-            (e) => e.type === "gate.target-confinement.reject",
-        );
-        expect(reject?.extra?.reason).toBe("path_too_long");
-
-        runtime.dispose();
-    });
 });

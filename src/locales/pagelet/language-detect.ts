@@ -51,9 +51,9 @@ const CJK_REGEX = /[一-鿿]/g;
  *  - any content → ratio of CJK chars over total length; if > 30%, "zh"
  *
  * Reading the same text through `text.length` (NOT `[...text].length`) is
- * deliberate: we want the same denominator the byte-level regex counts
- * against. Surrogate pairs would over-count in `[...text]` and skew the
- * ratio downward for notes with emoji.
+ * deliberate: the denominator uses UTF-16 code units. Counting code points
+ * with `[...text].length` would reduce the denominator for notes with emoji
+ * and increase their Chinese-character ratio, changing the frozen threshold.
  */
 export function detectNoteLanguage(text: unknown): PageletDetectedLanguage {
     if (typeof text !== "string" || text.length === 0) return "en";

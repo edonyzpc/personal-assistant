@@ -523,8 +523,9 @@ export function tolerantJsonParse(payload: string): unknown {
     try {
         return JSON.parse(payload);
     } catch {
-        // Strip trailing commas (a common LLM artefact) and try once more.
-        const stripped = payload.replace(/,(\s*[}\]])/g, "$1");
+        // Consume quoted strings intact; only repair commas outside their text.
+        const stripped = payload.replace(/"(?:\\.|[^"\\])*"|,(\s*[}\]])/g,
+            (match, trailing: string | undefined) => trailing ?? match);
         try {
             return JSON.parse(stripped);
         } catch {

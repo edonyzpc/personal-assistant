@@ -554,8 +554,9 @@ describe("PageletRateLimiter storage seam", () => {
         const snapshot = await limiter.getStateSnapshot();
         // Bogus timestamps dropped; dailyCount normalised to 0; resetAt
         // recomputed via midnight calc.
-        expect(snapshot.hourlyTimestamps.every((t) => typeof t === "number")).toBe(true);
-        expect(snapshot.dailyCount).toBeGreaterThanOrEqual(0);
+        expect(snapshot.hourlyTimestamps).toEqual([100, 200, 50]);
+        expect(snapshot.dailyCount).toBe(1);
+        expect(snapshot.dailyResetAt).toBe(50 + 12 * HOUR);
     });
 
     it("accepts an async-storage adapter (mirrors plugin loadData/saveData)", async () => {
@@ -634,5 +635,12 @@ describe("InMemoryRateLimitStorage (test double + fallback)", () => {
         seed.hourlyTimestamps.push(999); // mutate AFTER passing in
         const loaded = s.load();
         expect(loaded?.hourlyTimestamps).toEqual([1, 2, 3]); // unaffected
+        loaded!.hourlyTimestamps.push(888);
+        expect(s.load()?.hourlyTimestamps).toEqual([1, 2, 3]);
+
+        const saved = { ...seed, hourlyTimestamps: [4, 5] };
+        s.save(saved);
+        saved.hourlyTimestamps.push(999);
+        expect(s.load()?.hourlyTimestamps).toEqual([4, 5]);
     });
 });

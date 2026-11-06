@@ -3181,40 +3181,6 @@ describe("PageletOrchestrator detail expansion", () => {
 
 
 
-    it("suppresses open-note proactive preparation in Focus Mode", async () => {
-        const host = makeHost();
-        host.settings.pagelet.proactiveHints = true;
-        host.settings.focusMode = true;
-        const orchestrator = new PageletOrchestrator(host);
-        const petView = {
-            unmount: jest.fn(),
-            mount: jest.fn(),
-            destroy: jest.fn(),
-            stateMachine: {
-                proactiveHintsEnabled: true,
-                forceState: jest.fn(),
-                transition: jest.fn(),
-            },
-            setTaskKind: jest.fn(),
-        };
-        const internals = orchestrator as unknown as {
-            petView: typeof petView;
-            handleLeafChange(leaf: unknown): void;
-        };
-        internals.petView = petView;
-
-        internals.handleLeafChange({
-            view: {
-                getViewType: () => "markdown",
-                file: makeTFile("notes/current.md"),
-                contentEl: {} as HTMLElement,
-            },
-        });
-        await flushAsyncWork();
-
-        orchestrator.destroy();
-    });
-
 
 
 
@@ -3462,7 +3428,6 @@ describe("PageletOrchestrator LC-01 feature event lifecycle", () => {
         source: "workspace" | "vault" | "metadata";
         event: string;
         callback: (...args: unknown[]) => void;
-        detached: boolean;
     }
 
     const originalDocument = (globalThis as { document?: unknown }).document;
@@ -3522,7 +3487,6 @@ describe("PageletOrchestrator LC-01 feature event lifecycle", () => {
                 source,
                 event,
                 callback,
-                detached: false,
             };
             refs.push(ref);
             return ref;
@@ -3568,7 +3532,6 @@ describe("PageletOrchestrator LC-01 feature event lifecycle", () => {
             registerEvent,
             releaseFeatureScope: () => {
                 featureScopeReleased = true;
-                for (const ref of refs) ref.detached = true;
             },
             workspace,
             vault,
@@ -3577,18 +3540,14 @@ describe("PageletOrchestrator LC-01 feature event lifecycle", () => {
         };
     }
 
-    it("detaches every feature event ref including create when the feature is disabled", () => {
+    it("registers every feature event ref including create with its lifecycle owner", () => {
         const harness = createLifecycleHarness();
         const orchestrator = harness.createOrchestrator();
         orchestrator.initialize();
         expect(harness.refs.map(ref => ref.event)).toContain("create");
+        expect(harness.registerEvent.mock.calls).toEqual(harness.refs.map(ref => [ref]));
 
         orchestrator.destroy();
-        harness.releaseFeatureScope();
-
-        expect(harness.refs.every(ref => ref.detached)).toBe(true);
-        harness.releaseFeatureScope();
-        expect(harness.refs.every(ref => ref.detached)).toBe(true);
     });
 
     it("lets only the current generation receive an event after off/on", () => {

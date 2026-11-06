@@ -170,11 +170,10 @@ describe("ReviewNoteSaveFlow", () => {
     });
 
     describe("normalizeReviewField edge cases", () => {
-        // Access the private method via prototype for testing normalization behavior
-        // We test this indirectly through buildReviewResultFromFindings which is called
-        // during saveFindingsAsReviewNote.
-
-        it("uses fallback for empty string values", async () => {
+        it.each([
+            ["empty", "", ""],
+            ["short", "short", "tiny"],
+        ])("uses fallback for %s string values", async (_label, title, description) => {
             const writeReviewNote = jest.fn<(note: GeneratedReviewNote) => Promise<WriteResult>>(
                 async () => ({ success: true, filePath: ".pagelet/review.md" }),
             );
@@ -182,10 +181,9 @@ describe("ReviewNoteSaveFlow", () => {
             const callbacks = makeCallbacks();
             const flow = new ReviewNoteSaveFlow(host, callbacks);
 
-            // Finding with empty title and description triggers fallback
             const finding = makeFinding({
-                title: "",
-                description: "",
+                title,
+                description,
                 sourceTitle: "",
                 sourceFile: "",
                 insightText: "",
@@ -196,30 +194,8 @@ describe("ReviewNoteSaveFlow", () => {
 
             expect(writeReviewNote).toHaveBeenCalledTimes(1);
             const writtenNote = writeReviewNote.mock.calls[0][0];
-            // The markdown should contain fallback text (not empty)
-            expect(writtenNote.markdown.length).toBeGreaterThan(0);
-        });
-
-        it("uses fallback for short string values (< 8 chars)", async () => {
-            const writeReviewNote = jest.fn<(note: GeneratedReviewNote) => Promise<WriteResult>>(
-                async () => ({ success: true, filePath: ".pagelet/review.md" }),
-            );
-            const host = makeHost({ writeReviewNote });
-            const callbacks = makeCallbacks();
-            const flow = new ReviewNoteSaveFlow(host, callbacks);
-
-            // Finding with very short strings that are below minLength
-            const finding = makeFinding({
-                title: "short",
-                description: "tiny",
-                suggestion: undefined,
-            });
-
-            await flow.saveFindingsAsReviewNote([finding], "review");
-
-            expect(writeReviewNote).toHaveBeenCalledTimes(1);
-            const writtenNote = writeReviewNote.mock.calls[0][0];
-            expect(writtenNote.markdown.length).toBeGreaterThan(0);
+            expect(writtenNote.markdown).toContain("**Rationale**: Pagelet found a review point.\n");
+            expect(writtenNote.markdown).toContain("**Proposed action**: Use this finding to improve the note.\n");
         });
 
         it("preserves normal-length strings", async () => {
@@ -242,6 +218,7 @@ describe("ReviewNoteSaveFlow", () => {
             const writtenNote = writeReviewNote.mock.calls[0][0];
             // Normal strings should appear in the output
             expect(writtenNote.markdown).toContain("A sufficiently long title for the finding");
+            expect(writtenNote.markdown).toContain(finding.description);
         });
 
         it("handles string with newlines by trimming", async () => {
@@ -261,6 +238,9 @@ describe("ReviewNoteSaveFlow", () => {
             await flow.saveFindingsAsReviewNote([finding], "review");
 
             expect(writeReviewNote).toHaveBeenCalledTimes(1);
+            const writtenNote = writeReviewNote.mock.calls[0][0];
+            expect(writtenNote.markdown).toContain("**Rationale**: A title with leading newlines and spaces\n");
+            expect(writtenNote.markdown).toContain("**Proposed action**: Description with\nnewlines\ninside the text body.\n");
         });
     });
 

@@ -912,7 +912,7 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
                 message,
             })
             : confirm(message);
-        if (!confirmed) return;
+        if (!confirmed || !this.canCommitActionState()) return;
         for (const item of pending) {
             await this.confirmCandidate(item, false);
             if (!this.canCommitActionState()) return;

@@ -81,8 +81,8 @@ describe('buildDiscoveryResultFromFindings', () => {
             sourceTitle: 'My Research',
             category: 'connection',
         }], 'my-research.md', [
-            { path: 'data-analysis.md' },
             { path: 'test-plan.md' },
+            { path: 'data-analysis.md' },
         ]);
 
         expect(result.connections[0]?.toNote).toBe('data-analysis.md');

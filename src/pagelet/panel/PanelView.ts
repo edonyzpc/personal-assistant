@@ -20,8 +20,6 @@
  *   and the project already uses raw DOM for all pagelet UI.
  */
 
-import { Component } from "obsidian";
-
 import type {
     PanelFinding,
     PanelLayoutType,
@@ -211,8 +209,6 @@ export class PanelView {
     private readonly dismissedSuggestionIds = new Set<string>();
     private draftItems: PanelDraftItem[] = [];
     private suggestionRenderers: SuggestionCardRenderer[] = [];
-    /** Obsidian Component for MarkdownRenderer lifecycle management. */
-    private renderComponent: Component | null = null;
 
     // Bound event handlers for cleanup.
     private readonly handleKeydown: (e: KeyboardEvent) => void;
@@ -361,11 +357,6 @@ export class PanelView {
         this.titleEl.textContent =
             pageletT(LAYOUT_TITLE_KEYS[layoutType], this.getLocale()) || layoutType;
 
-        if (layoutType !== "summary" && layoutType !== "discover") {
-            this.renderComponent?.unload();
-            this.renderComponent = null;
-        }
-
         if (preserveReading && this.nativeBodies.length) {
             const actionFocus = this.captureActionFocus();
             if (extra?.reading) this.updateReadingControls(extra.reading);
@@ -444,8 +435,6 @@ export class PanelView {
                 renderCurrentNoteAnalysis(contentEl, visibleFindings, this.getLocale(), renderOptions);
                 break;
             case "discover": {
-                this.renderComponent?.unload();
-                this.renderComponent = null;
                 renderOptions.renderNativeMarkdown = (host, markdown) => this.mountNativeBody(host, markdown);
 
                 renderDiscoveryLayout(
@@ -458,10 +447,6 @@ export class PanelView {
                 break;
             }
             case "summary": {
-                // Clean up previous render component
-                this.renderComponent?.unload();
-                this.renderComponent = null;
-
                 renderSummaryPreview(
                     contentEl,
                     this.currentExtra?.markdown ?? "",
@@ -536,8 +521,6 @@ export class PanelView {
         this.disposeNativeBodies();
         this.detachGlobalListeners();
         this.destroySuggestionRenderers();
-        this.renderComponent?.unload();
-        this.renderComponent = null;
         this.scheduleUnmount(root);
         this.options.callbacks.onClose();
     }
@@ -575,8 +558,6 @@ export class PanelView {
         this.clearSlowReviewTimer();
         this.cancelPendingUnmount();
         this.destroySuggestionRenderers();
-        this.renderComponent?.unload();
-        this.renderComponent = null;
         if (this.rootEl) {
             this.rootEl.remove();
             this.rootEl = null;

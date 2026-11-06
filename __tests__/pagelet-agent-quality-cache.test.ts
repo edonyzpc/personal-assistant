@@ -970,7 +970,7 @@ describe('Pagelet agent quality gate', () => {
         expect(result).toEqual({ accepted: false, reason: 'unsupported-source' });
     });
 
-    it('accepts an actually dispatched non-empty body observation but not one hidden by the native budget', async () => {
+    it('requires admitted body evidence for every non-anchor source', async () => {
         const englishAnchor: PageletAnchorSnapshot = {
             ...anchor,
             content: '# Anchor\nvalidation must precede release',
@@ -1025,14 +1025,13 @@ describe('Pagelet agent quality gate', () => {
         await expect(evaluate(true)).resolves.toEqual({ accepted: false, reason: 'unsupported-source' });
     });
 
-    it('derives body support from a real read factory through native prompt budget and final quality', async () => {
+    it('projects real read-tool results and preserves the anchor when the budget hides a related body', async () => {
         const qualityAnchor: PageletAnchorSnapshot = {
             ...anchor,
             content: '# Anchor\nvalidation must precede release',
             size: 40,
             contentHash: 'e'.repeat(64),
         };
-        const qualityAnchorMaterial: PageletAgentSourceMaterial = { ...qualityAnchor };
         const relatedContent = [
             '# Related',
             'direct release amplifies risk',
@@ -1141,48 +1140,6 @@ describe('Pagelet agent quality gate', () => {
         expect(actualPayloads[0]).toContain('direct release amplifies risk');
         expect(retainedFull.map(message => message.id)).toEqual(['real-anchor', 'real-related']);
 
-        const relatedSnapshot: PageletAgentSourceMaterial = {
-            path: relatedFile.path,
-            content: relatedContent,
-            mtime: relatedFile.stat.mtime,
-            size: relatedFile.stat.size,
-            contentHash: await hashPageletContent(relatedContent),
-            capturedAt: 101,
-        };
-        const sourceMaterials = new Map([[qualityAnchor.path, qualityAnchorMaterial], [relatedSnapshot.path, relatedSnapshot]]);
-        const body = [
-            '`notes/anchor.md` records that validation must precede release, while',
-            '`notes/related.md` records that a direct release amplifies risk.',
-        ].join('\n');
-        const provenance = retainedFull.flatMap(message => {
-            if (message.role !== 'toolResult') return [];
-            return [{
-                toolName: message.toolName,
-                sourceRecords: message.content.sourceRecords ?? [],
-                isError: false,
-                promptText: message.content.promptText,
-                bodyEvidencePaths: message.id === 'real-anchor' ? [anchor.path] : [relatedSnapshot.path],
-            }];
-        });
-        const evaluateRetained = async (sourceTools: Map<string, Set<string>>) => evaluatePageletAgentQuality({
-            run: {
-                ...makeRun(body),
-                anchor: qualityAnchor,
-                sourceSnapshots: [qualityAnchor, relatedSnapshot],
-                sourceTools,
-                toolProvenance: provenance,
-            },
-            sourceMaterials,
-            readCurrentSourceSnapshot: async path => (
-                path === qualityAnchor.path ? qualityAnchor : path === relatedSnapshot.path ? relatedSnapshot : null
-            ),
-            isPathAllowed: () => true,
-        });
-        await expect(evaluateRetained(new Map([
-            [qualityAnchor.path, new Set(['get_current_note_context'])],
-            [relatedSnapshot.path, new Set(['read_note'])],
-        ]))).resolves.toMatchObject({ accepted: true });
-
         const anchorPromptLength = anchorMessage.content.promptText.length;
         const hiddenModel = createPageletNativeModel({
             registry: new CapabilityRegistry(),
@@ -1218,9 +1175,6 @@ describe('Pagelet agent quality gate', () => {
         }
         expect(boundTranscripts[0]?.map(message => message.id)).toEqual(['real-anchor']);
         expect(actualPayloads[0]).not.toContain('direct release amplifies risk');
-        await expect(evaluateRetained(new Map([
-            [anchor.path, new Set(['get_current_note_context'])],
-        ]))).resolves.toEqual({ accepted: false, reason: 'unsupported-source' });
     });
 
 });

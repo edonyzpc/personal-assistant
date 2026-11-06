@@ -15,7 +15,6 @@
  *   component, consistent with the project's existing raw DOM pattern.
  */
 
-import { Component } from "obsidian";
 import type { App } from "obsidian";
 import { confirmUserAction } from "../../confirm";
 import type { PageletReadingTarget } from "../../ai-services/pagelet-handoff";
@@ -128,7 +127,6 @@ export class TabView {
     private containerEl: HTMLElement | null = null;
     private _isOpen = false;
     private readonly options: TabViewOptions;
-    private renderComponent: Component | null = null;
     private currentContent: PanelFinding[] | TabSection[] = [];
     private currentOptions: TabOpenOptions = {};
     private readonly sectionRenderers: TabSectionRenderer[] = [];
@@ -303,7 +301,6 @@ export class TabView {
             this.bodyEl.removeEventListener("scroll", this.sectionScrollHandler);
         }
         this.sectionScrollHandler = null;
-        this.unloadRenderComponent();
         this.destroySectionRenderers();
         if (this.rootEl) {
             this.rootEl.remove();
@@ -555,7 +552,6 @@ export class TabView {
         }
 
         if (options.restoredFromState) {
-            this.unloadRenderComponent();
             this.renderRestoredState();
             return;
         }
@@ -583,7 +579,6 @@ export class TabView {
                     }, sectionCallbacks, this.memoryCandidateActionState),
                 );
             } else {
-                this.unloadRenderComponent();
                 const renderedSavedInsights = this.renderSavedInsightContent(options.extra?.savedInsights);
                 const renderedMemoryGovernance = this.renderExtractedSection(options.extra?.memoryGovernance, (data) =>
                     new MemoryGovernanceSection(this.locale, data, {
@@ -606,8 +601,6 @@ export class TabView {
             if (position) this.restorePosition(position);
             return;
         }
-
-        this.unloadRenderComponent();
 
         if (options.layoutType === "discover" && !isTabSections(content)) {
             renderDiscoveryLayout(
@@ -900,7 +893,6 @@ export class TabView {
             return;
         }
         this.readingPosition?.cancelRestore();
-        this.unloadRenderComponent();
         this.disposeNativeBodies();
         clearChildren(body);
         this.nativeEntity = `candidate:${candidate.id}`;
@@ -1796,7 +1788,6 @@ export class TabView {
 
     private renderSummaryContent(markdown: string, options: TabOpenOptions): void {
         if (!this.bodyEl) return;
-        this.unloadRenderComponent();
         this.summaryEntity = options.summarySaveNote;
         this.nativeEntity = options.summarySaveNote ? `summary:${options.summarySaveNote.targetPath}` : null;
 
@@ -1853,10 +1844,6 @@ export class TabView {
         saveBtn.textContent = pageletT("pagelet.panel.save", this.locale);
     }
 
-    private unloadRenderComponent(): void {
-        this.renderComponent?.unload();
-        this.renderComponent = null;
-    }
 }
 
 // ---------------------------------------------------------------------------

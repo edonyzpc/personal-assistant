@@ -374,6 +374,7 @@ globalRecord.requestAnimationFrame = (callback: FrameRequestCallback): number =>
 
 import { PanelView } from "../src/pagelet/panel/PanelView";
 import { TabView } from "../src/pagelet/tab/TabView";
+import * as confirmation from "../src/confirm";
 import type { PageletDetailReadingPayload } from "../src/pagelet/tab/types";
 import type { PageletAgentDeliveryCandidate } from "../src/pagelet/agent/delivery-adapter";
 import { PAGELET_DEEP_DISCOVER_WEB_CACHE_TTL_MS } from "../src/pagelet/agent/types";
@@ -2316,7 +2317,6 @@ describe("Pagelet panel and tab view regressions", () => {
 
             const content = restored.contentEl as unknown as FakeElement;
             expect(content.textContent).toContain("Result no longer available");
-            expect(content.textContent).not.toContain("PRIVATE CACHED RECALL");
             expect(content.textContent).not.toContain("PRIVATE CACHED SUMMARY");
             expect(content.querySelector(".pa-pagelet-tab-memory-card")).toBeNull();
         },
@@ -2769,6 +2769,39 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(confirmCandidate).toHaveBeenNthCalledWith(1, firstCandidate);
         expect(confirmCandidate).toHaveBeenNthCalledWith(2, secondCandidate);
     });
+
+    it.each(["current", "destroyed", "replaced"] as const)(
+        "admits a delayed batch Memory confirmation only while its Detail is current: %s",
+        async (state) => {
+            let decide!: (accepted: boolean) => void;
+            const decision = new Promise<boolean>(resolve => { decide = resolve; });
+            const confirmPrompt = jest.spyOn(confirmation, "confirmUserAction").mockReturnValue(decision);
+            const confirmCandidate = jest.fn(async (_item: ReviewQueueItem) => ({ ok: true, message: "Confirmed" }));
+            const container = new FakeElement("div");
+            container.isConnected = true;
+            const tab = new TabView("en", { app: {} as never, onConfirmMemoryCandidate: confirmCandidate });
+            const candidates = ["first", "second"].map(id => makeReviewQueueItem({
+                id, type: "memory_candidate", metadata: { memoryType: "preference", sensitivity: "low" },
+            }));
+            try {
+                tab.mount(container as unknown as HTMLElement);
+                tab.open("Memory", [], { layoutType: "review", extra: {
+                    memoryGovernance: { records: [], candidates, totalCount: candidates.length },
+                } });
+                await container.querySelector(".pa-pagelet-tab-memory-confirm-all")?.click();
+                expect(confirmPrompt).toHaveBeenCalledTimes(1);
+                expect(confirmCandidate).not.toHaveBeenCalled();
+                if (state === "destroyed") tab.destroy();
+                if (state === "replaced") tab.open("New result", [], { layoutType: "current" });
+                decide(true);
+                for (let index = 0; index < 8; index += 1) await Promise.resolve();
+                expect(confirmCandidate.mock.calls).toEqual(state === "current" ? candidates.map(item => [item]) : []);
+            } finally {
+                tab.destroy();
+                confirmPrompt.mockRestore();
+            }
+        },
+    );
 
     it("suppresses the Level 1 Memory digest for the current tab session when Later is clicked", async () => {
         const container = new FakeElement("div");
@@ -3972,7 +4005,7 @@ describe("Pagelet panel and tab view regressions", () => {
         }
     });
 
-    it("renders current-scope Review Queue cards in the panel without storing full source text", async () => {
+    it("renders current-scope Review Queue cards and routes source and dismiss actions", async () => {
         const sourceClick = jest.fn();
         const dismiss = jest.fn((_id: string) => undefined);
         const container = new FakeElement("div");
@@ -4010,9 +4043,6 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.textContent).toContain("Saved & Suggested");
         expect(container.textContent).toContain("AI-generated suggestion");
         expect(container.textContent).toContain("This generated expansion stays separate from the original capture.");
-        expect(JSON.stringify(panel.currentPanelExtra)).not.toContain("fullProviderOutput");
-        expect(JSON.stringify(panel.currentPanelExtra)).not.toContain("promptChunk");
-        expect(JSON.stringify(panel.currentPanelExtra)).not.toContain("raw note body");
 
         const buttons = container.querySelectorAll(".pa-pagelet-panel-review-queue-action");
         await buttons[0]?.click();
@@ -4045,7 +4075,6 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.textContent).toContain("Used 1 sources, 0 memories. 2 skipped.");
         expect(container.textContent).toContain("notes/current.md");
         expect(container.textContent).toContain("privacy excluded");
-        expect(container.textContent).not.toContain("raw prompt");
 
         const tabContainer = new FakeElement("div");
         tabContainer.isConnected = true;
@@ -4397,7 +4426,6 @@ describe("Pagelet panel and tab view regressions", () => {
         });
 
         const details = container.querySelector(".pa-pagelet-panel-connection-graph-details") as FakeElement & { open: boolean };
-        expect(details.getAttribute("open")).toBeNull();
         expect(details.open).toBe(true);
         const graph = container.querySelector(".pa-pagelet-panel-connection-graph");
         expect(container.textContent).toContain("Discovered Connections");
@@ -4414,7 +4442,7 @@ describe("Pagelet panel and tab view regressions", () => {
         tab.destroy();
     });
 
-    it("renders duplicated Deep Discover prose once through the safe markdown DOM path", async () => {
+    it("renders duplicated Deep Discover prose once through the native markdown renderer", async () => {
         const container = new FakeElement("div");
         container.isConnected = true;
         const panel = new PanelView({

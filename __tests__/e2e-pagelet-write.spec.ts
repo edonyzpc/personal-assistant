@@ -13,22 +13,19 @@
  *      LLM had already produced one) and drive
  *      {@link ActionExecutor.execute} against the singleton
  *      {@link PaReviewRuntime.toolProvider.capability}.
- *   3. Assert the four end-to-end invariants we shipped in C1:
+ *   3. Assert the write-path invariants we shipped in C1:
  *        - `hooks.markSelfWrite(path)` runs BEFORE `vault.adapter.write` —
  *          gating the modify-listener reentrancy guard.
  *        - The vault contains the `.pagelet/...md` file with frontmatter
  *          (pagelet: true) + rendered review body.
  *        - {@link PaReviewRuntime.isRecentSelfWrite} returns `true` for the
  *          written path right after execute.
- *        - The cost tracker records exactly one entry with the synthesized
- *          LLM usage figures.
  *
  * Why C2 + not bundled into the C1 unit test: the C1 suite asserts each
  * capability seam in isolation (Gate 1, Gate 2, execute(), etc.). This file
  * is the FIRST place we exercise all four gates wired end-to-end through
  * {@link ActionExecutor}. If any of the cross-seam contracts drift
- * (`displayPath` mismatch, missing self-write hook, cost tracker not
- * recording, etc.), this is the test that fails — pointing the developer
+ * (`displayPath` mismatch, missing self-write hook, etc.), this is the test that fails — pointing the developer
  * at the integration boundary rather than at a unit detail.
  *
  * Test seams used:
@@ -39,10 +36,6 @@
  *     the writer) AND the `fsProbe` (for Gate 1 folder + Gate 3 snapshot).
  *   - Recording `DebugObserver` so we can assert the full event sequence
  *     (4 gates + execute.ok) lands in order.
- *   - `PageletCostTracker` driven directly with the synthesized usage —
- *     the framework does not own LLM cost recording (that lives upstream
- *     inside `PageletReviewModel`), so we mirror what the model would have
- *     called.
  */
 
 import { describe, expect, it, jest } from "@jest/globals";
@@ -59,7 +52,6 @@ import {
     type PreviewSpec,
 } from "../src/ai-services/write-action-framework";
 
-import { PageletCostTracker } from "../src/pagelet/pa-review-cost";
 import { mintNonCollidingReviewNotePath } from "../src/pagelet/pa-review-file-io";
 import {
     createPaReviewRuntime,
@@ -275,20 +267,6 @@ describe("E2E · Pagelet review write (Track C · C2)", () => {
             return originalWrite(path, data);
         };
 
-        // Simulate the upstream LLM cost record — the framework does not own
-        // this, the model (B1) does, so we mirror what the orchestrator would
-        // have called before reaching executeWrite.
-        const tracker = new PageletCostTracker();
-        // Use a `provider:model` pair that lives in `PAGELET_DEFAULT_PRICING`
-        // so `estimatedCost` resolves to a positive USD figure (otherwise the
-        // tracker falls back to `UNKNOWN_PRICING` which returns 0).
-        tracker.record({
-            inputTokens: 1200,
-            outputTokens: 200,
-            provider: "dashscope",
-            model: "qwen-plus",
-        });
-
         const result = await executor.execute(
             runtime.toolProvider.capability,
             input,
@@ -351,13 +329,6 @@ describe("E2E · Pagelet review write (Track C · C2)", () => {
         expect(types).not.toContain("rollback.ok");
         expect(types).not.toContain("rollback.fail");
 
-        // ── Cost tracker recorded the upstream LLM usage ─────────────────
-        const summary = tracker.getSummary();
-        expect(summary.entries).toHaveLength(1);
-        expect(summary.inputTokens).toBe(1200);
-        expect(summary.outputTokens).toBe(200);
-        expect(summary.estimatedCost).toBeGreaterThan(0);
-
         // Sanity: settings were not mutated by the write path (the runtime
         // reads via getter; D010 contract).
         expect(settings.reviewsFolder).toBe(PAGELET_DEFAULTS.reviewsFolder);
@@ -415,7 +386,7 @@ describe("E2E · Pagelet review write (Track C · C2)", () => {
         runtime.dispose();
     });
 
-    it("fails generated review writes when the target appears after framework gates", async () => {
+    it.each(["generated", "structured"] as const)("preserves an external target appearing after framework gates for %s review writes", async (kind) => {
         const { runtime, adapter, observer } = buildRuntimeBundle();
         const targetPath = ".pagelet/pagelet-weekly-review-2026-06-03.md";
         const originalExecuteWrite = runtime.toolProvider.capability.executeWrite.bind(
@@ -426,7 +397,7 @@ describe("E2E · Pagelet review write (Track C · C2)", () => {
             return originalExecuteWrite(...args);
         };
 
-        const input = {
+        const input = kind === "structured" ? makeInput({ targetPath }) : {
             generatedNote: {
                 markdown: "# Should not overwrite\n",
                 fileName: "pagelet-weekly-review-2026-06-03.md",

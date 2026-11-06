@@ -199,7 +199,14 @@ export class BubbleView {
         this.handleResize = () => {
             if (this.state !== "hidden" && this.anchorEl && this.rootEl) {
                 if (isMobile()) {
+                    if (!this.rootEl.classList.contains("pa-pagelet-bubble--mobile")) {
+                        this.attachSwipeDismiss();
+                    }
                     this.applyMobileLayout();
+                } else if (this.rootEl.classList.contains("pa-pagelet-bubble--mobile")) {
+                    this.detachSwipeDismiss();
+                    this.applyDesktopLayout(this.anchorEl);
+                    this.setState("visible");
                 } else {
                     this.repositionBubble();
                 }

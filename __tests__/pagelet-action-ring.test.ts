@@ -357,6 +357,10 @@ describe("Pet Action Ring public lifecycle", () => {
 
     it("closes before each action, executes exactly once, and leaves focus to the target", () => {
         withFixture(({ doc, root, view, onCapture, onToggleBubble, onClosed }) => {
+            onCapture.mockImplementation(() => {
+                expect(view.actionRingOpen).toBe(false);
+                expect(onClosed).toHaveBeenCalledWith("action");
+            });
             view.openActionRing();
             const capture = ringOf(root).children[0];
             capture.dispatch("click");
@@ -1212,6 +1216,7 @@ function expectActionRingInsideViewport(
     items: readonly ActionRingItemSize[],
     viewport: ActionRingLayoutRect,
 ): void {
+    expect(positions).toHaveLength(items.length);
     positions.forEach((position, index) => {
         const item = items[index];
         if (!item) throw new Error("missing Action Ring item size");

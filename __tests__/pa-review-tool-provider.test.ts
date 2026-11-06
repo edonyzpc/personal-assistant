@@ -422,6 +422,10 @@ describe("PaReviewToolProvider — executeWrite", () => {
     it("calls hooks.markSelfWrite BEFORE adapter.write (framework R3)", async () => {
         const { adapter, recorder } = recordingVault();
         const hooks = makeExecuteHooks();
+        recorder.write.mockImplementation(async (path) => {
+            expect(hooks.callLog).toEqual([path]);
+            recorder.log.push({ method: "write", path });
+        });
         const provider = createPaReviewToolProvider({
             getSettings: () => ({ reviewsFolder: ".pagelet" }),
             vault: { adapter },
@@ -440,9 +444,13 @@ describe("PaReviewToolProvider — executeWrite", () => {
     });
 
     it("chains externalMarkSelfWrite when configured", async () => {
-        const { adapter } = recordingVault();
+        const { adapter, recorder } = recordingVault();
         const externalCalls: string[] = [];
         const hooks = makeExecuteHooks();
+        recorder.write.mockImplementation(async (path) => {
+            expect(hooks.callLog).toEqual([path]);
+            expect(externalCalls).toEqual([path]);
+        });
         const provider = createPaReviewToolProvider({
             getSettings: () => ({ reviewsFolder: ".pagelet" }),
             vault: { adapter },
@@ -563,27 +571,6 @@ describe("createPaReviewRuntime", () => {
         expect(bundle.additionalCapabilityProviders).toHaveLength(1);
         expect(bundle.additionalCapabilityProviders[0]).toBe(runtime.toolProvider);
         expect(bundle.writeAction.previewRenderer).toBeDefined();
-        runtime.dispose();
-    });
-
-    it("accepts an explicit selfWriteWindowMs (default = 5s)", async () => {
-        const fake = makeAppLike();
-        const runtime = createPaReviewRuntime({
-            app: makeFakeApp(fake.adapter),
-            getPageletSettings: defaultSettings,
-            previewRenderer: silentRenderer(),
-            fsProbe: null,
-            debugObserver: silentObserver(),
-            // 5 minutes — proves the option is honored without making the
-            // test slow.
-            selfWriteWindowMs: 5 * 60 * 1000,
-        });
-        await runtime.toolProvider.capability.executeWrite(
-            defaultInput(),
-            makeContext(),
-            makeExecuteHooks(),
-        );
-        expect(runtime.selfWriteSnapshot()).toHaveLength(1);
         runtime.dispose();
     });
 

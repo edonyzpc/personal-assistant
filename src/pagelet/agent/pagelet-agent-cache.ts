@@ -34,7 +34,6 @@ export interface PageletAgentCacheReadOptions {
 
 interface CacheEntry {
     collection: PageletAgentVerifiedInsightCollection;
-    expiresAt?: number;
 }
 
 /** Content-free cache state used only to prove run-local mutation behavior. */
@@ -83,12 +82,8 @@ export class PageletAgentCache {
         const currentCollection = validInsights.length === collection.insights.length
             ? collection
             : regroupCollection(collection, validInsights);
-        const expiresAt = currentCollection.insights.some((insight) => insight.webObservations.length > 0)
-            ? currentCollection.preparedAt + PAGELET_DEEP_DISCOVER_WEB_CACHE_TTL_MS
-            : undefined;
         this.entries.set(currentCollection.anchor.path, {
             collection: cloneCollection(currentCollection),
-            ...(expiresAt !== undefined ? { expiresAt } : {}),
         });
         this.mutationVersion += 1;
     }
