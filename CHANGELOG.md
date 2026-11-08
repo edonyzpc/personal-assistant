@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [3.0.6](https://github.com/edonyzpc/personal-assistant/compare/3.0.5...3.0.6) (2026-11-08)
+
+### Features
+- skills: add PA test audit and close B-196
+
+### Fix
+- memory: preserve admission and mutation boundaries
+- agent: enforce provider and action boundaries
+- chat: preserve drafts and lifecycle ownership
+- pagelet: tighten lifecycle and regression protection
+- capture: preserve atomic writes and async ownership
+- content: guard publishing and share-card resources
+- statistics: prevent stale state and leaked resources
+- version memory chunks and harden dependency boundaries
+- memory: preserve Markdown fence container boundaries
+- chat: center initial setup controls
+
+### Docs
+- governance: align review scope and GLM material preflight
+- readme: restore social badges and refine media capture workflow
+- readme: restore original badge logos and labels
+- readme: use latest release lookup for version badge
+- readme: add product demo video and screenshots
+
+### Tests
+- tooling: strengthen receipts and remove false protection
+
 ## [3.0.5](https://github.com/edonyzpc/personal-assistant/compare/3.0.4...3.0.5) (2026-11-04)
 
 ### Features
