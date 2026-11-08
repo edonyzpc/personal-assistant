@@ -1,0 +1,213 @@
+{
+  "captureDate": "2026-11-08",
+  "platform": "macOS",
+  "obsidianVersion": "1.15.1",
+  "paVersion": "3.0.5",
+  "paBuild": "master with local centering style fix",
+  "mainJsSha256": "32fa4df831e779ccb600271274edd322b3421b6be78b62022317c356c98c042c",
+  "interfaceLanguage": "English",
+  "contentLanguage": "Chinese",
+  "content": "Public fictional demo notes and actual generated outputs",
+  "sourcePreservation": "Original PNGs and Cap recording retained outside Git",
+  "transformations": "Lossless encoding; specified source-region crops only. No text replacement, sharpening or resampling.",
+  "assets": [
+    {
+      "id": "S1",
+      "file": "hero-reading-to-sharing.webp",
+      "source": "S1-hero-reading-to-sharing.png",
+      "sourceSha256": "86a32d08fc81556e1c8335a55d15e987b7257bc777329d5019e78f9e083e5c3b",
+      "sourceDimensions": [
+        2918,
+        1898
+      ],
+      "crop": null,
+      "dimensions": [
+        2918,
+        1898
+      ],
+      "encoding": "lossless WebP",
+      "pixelsEqualToSourceOrCrop": true,
+      "bytes": 1183000
+    },
+    {
+      "id": "S4",
+      "file": "agent-note-sources.webp",
+      "source": "S4-agent-note-sources.png",
+      "sourceSha256": "331b37764865ee16921e7c985b2fdd58631adbcf53923e8eea7d6ec99a53e8f7",
+      "sourceDimensions": [
+        2918,
+        1898
+      ],
+      "crop": null,
+      "dimensions": [
+        2918,
+        1898
+      ],
+      "encoding": "lossless WebP",
+      "pixelsEqualToSourceOrCrop": true,
+      "bytes": 191428
+    },
+    {
+      "id": "S4-detail",
+      "file": "agent-note-sources-detail.webp",
+      "source": "S4-agent-note-sources.png",
+      "sourceSha256": "331b37764865ee16921e7c985b2fdd58631adbcf53923e8eea7d6ec99a53e8f7",
+      "sourceDimensions": [
+        2918,
+        1898
+      ],
+      "crop": [
+        1804,
+        200,
+        2918,
+        1440
+      ],
+      "dimensions": [
+        1114,
+        1240
+      ],
+      "encoding": "lossless WebP",
+      "pixelsEqualToSourceOrCrop": true,
+      "bytes": 101982
+    },
+    {
+      "id": "S3",
+      "file": "pagelet-insight.webp",
+      "source": "S3-pagelet-insight.png",
+      "sourceSha256": "65906a183c3862397f591e81aa5c90952f897620404a1ba73177c4bc627f339f",
+      "sourceDimensions": [
+        2918,
+        1898
+      ],
+      "crop": [
+        0,
+        0,
+        1804,
+        1898
+      ],
+      "dimensions": [
+        1804,
+        1898
+      ],
+      "encoding": "lossless WebP",
+      "pixelsEqualToSourceOrCrop": true,
+      "bytes": 120274
+    },
+    {
+      "id": "S7",
+      "file": "image-generation.webp",
+      "source": "S7-image-generation.png",
+      "sourceSha256": "a61a5d1fe4accb2d765db6017ca959add74088dbcc91c83f3f5564187146c1ca",
+      "sourceDimensions": [
+        2918,
+        1898
+      ],
+      "crop": [
+        1804,
+        250,
+        2918,
+        1470
+      ],
+      "dimensions": [
+        1114,
+        1220
+      ],
+      "encoding": "lossless WebP",
+      "pixelsEqualToSourceOrCrop": true,
+      "bytes": 582016
+    },
+    {
+      "id": "S8",
+      "file": "share-card.webp",
+      "source": "S8-share-card-original.png",
+      "sourceSha256": "3bad1618edbd6e74a57a62de9d26f54f78649fef71d40cfa32bea92803093826",
+      "sourceDimensions": [
+        1080,
+        1440
+      ],
+      "crop": null,
+      "dimensions": [
+        1080,
+        1440
+      ],
+      "encoding": "lossless WebP",
+      "pixelsEqualToSourceOrCrop": true,
+      "bytes": 1053926
+    }
+  ],
+  "inlineImageBytes": 3232626,
+  "video": {
+    "status": "4K clean version published; highlights attached and linked in both READMEs",
+    "filename": "pa-readme-no-waits-4k.mp4",
+    "bytes": 120551339,
+    "durationSeconds": 302.629489,
+    "dimensions": [
+      3840,
+      2160
+    ],
+    "fps": 30,
+    "codec": "H.264",
+    "sourceDimensions": [
+      2886,
+      1866
+    ],
+    "edits": "Long unchanged waits removed; 57 clips at original speed and in original order",
+    "proactiveHintArrivalCaptured": false,
+    "release": {
+      "tag": "3.0.5",
+      "assetId": 723814998,
+      "url": "https://github.com/edonyzpc/personal-assistant/releases/download/3.0.5/pa-readme-no-waits-4k.mp4",
+      "bytes": 120551339,
+      "sha256": "cab30a05a823811f9fbe7833026b17253f85fce5e77d5ad0b8412e1f53800157",
+      "existingAssetsUnchanged": true
+    },
+    "sha256": "cab30a05a823811f9fbe7833026b17253f85fce5e77d5ad0b8412e1f53800157",
+    "captionOverlayRemoved": true,
+    "project": "take01-clean.cap",
+    "highlights": {
+      "file": "pa-readme-highlights.mp4",
+      "bytes": 8998327,
+      "sha256": "308791a72632c0bfc574dc07a36252a1c492e8de7c786ff4ee6675de7846ffce",
+      "durationSeconds": 25,
+      "requestedDimensions": [
+        3318,
+        1866
+      ],
+      "previewDimensions": [
+        3320,
+        1866
+      ],
+      "fps": 30,
+      "quality": "Maximum",
+      "subtitles": false,
+      "project": "take01-highlights-pagelet.cap",
+      "hostingStatus": "uploaded with owner assistance; anonymous GitHub Markdown rendering and rendered video range access verified; browser attachment playback reached the end without error",
+      "url": "https://github.com/user-attachments/assets/467d353a-c6aa-4e69-b6b7-303de2404562",
+      "greenPageletNudgeCaptured": true,
+      "openingSourceGlobalSeconds": [7, 12],
+      "openingZoom": { "start": 0.2, "end": 4.5, "amount": 2 },
+      "existingSevenSegmentsUnchanged": true,
+      "actualDimensions": [
+        3320,
+        1866
+      ],
+      "signedInAttachmentPlayback": {
+        "durationSeconds": 25,
+        "ended": true,
+        "error": null,
+        "controls": true
+      },
+      "anonymousMarkdown": {
+        "status": 200,
+        "nativeVideo": true,
+        "renderedVideoSourceStatus": 206,
+        "rangeBytes": 65536,
+        "rangeMatchesLocal": true,
+        "autoplayAttribute": null,
+        "preloadAttribute": null,
+        "accessPath": "GitHub renders the permanent attachment URL into a temporary signed video source; only the permanent attachment URL is used in the READMEs"
+      }
+    }
+  },
+  "validationScope": "Image pixel equality verified. Local bilingual HTML previews checked at approximately 830px and 342px content widths; all media loaded without article overflow, source detail expansion worked. Full-window fine print requires enlargement. For the new 25-second highlights, anonymous GitHub Markdown rendering produced a native video player, and the rendered video's first 64 KiB matched the local file. Browser attachment playback visually showed the green Pagelet nudge and reached 25 seconds with ended=true and no media error. The GitHub editor preview request failed to fetch in this run; native README rendering was verified through the anonymous Markdown API instead. The 4K Release asset digest and anonymous range access also matched. Full published-page rendering and reader understanding remain unverified; the owner explicitly deferred the remaining review gaps and opening-framing P3 suggestion for this delivery on 2026-11-08."
+}

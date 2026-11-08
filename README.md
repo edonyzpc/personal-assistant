@@ -23,11 +23,17 @@
 **From a few old notes to something new.** Pagelet brings back connections worth exploring while you read. Continue in Chat, shape your material into an article with Writing, create an illustration with CreateImage, then save your work or make a shareable card.
 
 <!-- PA-MEDIA:S1:START -->
-<table width="100%"><tr><td align="center">
-  <strong>Product overview and demo video · Media placeholder</strong><br/>
-  Source notes, an illustrated article, and the PA workspace show how past reading becomes new work.<br/>
-  A large, real interface image and a video link will go here.
-</td></tr></table>
+[![An article and its illustration in Obsidian, alongside PA's comparison of earlier notes and source links](./docs/assets/readme/hero-reading-to-sharing.webp)](./docs/assets/readme/hero-reading-to-sharing.webp)
+
+*Earlier notes inform an article and illustration kept in Obsidian. Click any image to view it at full size.*
+
+**25-second HD highlights — play below.**
+
+https://github.com/user-attachments/assets/467d353a-c6aa-4e69-b6b7-303de2404562
+
+[Full 5:03 edit in 4K (120.6 MB)](https://github.com/edonyzpc/personal-assistant/releases/download/3.0.5/pa-readme-no-waits-4k.mp4). Waiting time was removed; proactive hint arrival was not captured.
+
+Recorded on macOS with a PA 3.0.5 demo build from `master` and Obsidian 1.15.1. English interface, Chinese fictional example notes.
 <!-- PA-MEDIA:S1:END -->
 
 Want to try the story yourself? [Copy the demo notes and prompts](./docs/guides/reading-to-sharing-demo.md#english). You can also start with any of the capabilities below.
@@ -43,10 +49,16 @@ Tell **PA Agent** what you want to do: compare reading notes, find different per
 When you want to put the result into your vault, explicitly ask PA to create, append, edit, or update note properties. Say “show me a preview first” if you want to review a proposed change.
 
 <!-- PA-MEDIA:S4:START -->
-<table width="100%"><tr><td align="center">
-  <strong>Chat and Memory · Media placeholder</strong><br/>
-  A current question, different perspectives from old notes, and a useful synthesis with source links.
-</td></tr></table>
+[![A writing outline beside PA's comparison of practical experience, reading ideas and a life analogy, with links to the original notes](./docs/assets/readme/agent-note-sources.webp)](./docs/assets/readme/agent-note-sources.webp)
+
+*Compare practical experience, reading ideas, and an everyday analogy to develop a sourced writing angle.*
+
+<details>
+<summary>Read the comparison and sources in detail</summary>
+
+[![Enlarged detail of the same answer: source links, differences between the notes and the recommended writing angle](./docs/assets/readme/agent-note-sources-detail.webp)](./docs/assets/readme/agent-note-sources-detail.webp)
+
+</details>
 <!-- PA-MEDIA:S4:END -->
 
 [Chat and note actions](./Manual.md#ai-chat) · [Memory setup](./Manual.md#7-memory-integration)
@@ -58,10 +70,9 @@ When you want to put the result into your vault, explicitly ask PA to create, ap
 Open an insight, read its sources, then select **Discuss in Chat** to explore it with PA. You review the prepared material and send the question. Discovery itself does not change your notes, and a new finding is not guaranteed every time.
 
 <!-- PA-MEDIA:S3:START -->
-<table width="100%"><tr><td align="center">
-  <strong>Proactive Pagelet insights · Media placeholder</strong><br/>
-  A real hint during reading, a specific connection with sources, and the Discuss in Chat action.
-</td></tr></table>
+[![An existing Pagelet insight relating a reading-chart experience to the current outline, with three sources and Discuss in Chat](./docs/assets/readme/pagelet-insight.webp)](./docs/assets/readme/pagelet-insight.webp)
+
+*Review an existing Pagelet insight, check its sources, and continue in Chat. Proactive hint arrival was not captured.*
 <!-- PA-MEDIA:S3:END -->
 
 [Explore Pagelet](./docs/guides/pagelet-user-guide.md)
@@ -77,17 +88,17 @@ Type **`@`** in Chat and choose a task to keep working with your material.
 | **Share Card** | Make a card from Chat, Pagelet, or selected note text. You can also run **Share Selection as Card** from the command palette. Card layout itself does not require an image-generation model. |
 
 <!-- PA-MEDIA:S7:START -->
-<table width="100%"><tr><td align="center">
-  <strong>Image generation and editing · Media placeholder</strong><br/>
-  A real image task, the complete generated result, and the edit and save actions.
-</td></tr></table>
+[![A completed CreateImage task showing the generated reading illustration and controls to edit it or save it to a note](./docs/assets/readme/image-generation.webp)](./docs/assets/readme/image-generation.webp)
+
+*The generated illustration, with controls to edit it or save it to a note. You choose the destination note when saving.*
 <!-- PA-MEDIA:S7:END -->
 
 <!-- PA-MEDIA:S8:START -->
-<table width="100%"><tr><td align="center">
-  <strong>A result ready to share · Media placeholder</strong><br/>
-  A real Share Card made from an article excerpt, showing its typography and finished layout.
-</td></tr></table>
+<p align="center">
+  <a href="./docs/assets/readme/share-card.webp"><img src="./docs/assets/readme/share-card.webp" width="440" alt="An exported Share Card containing a 103-character article excerpt, with Personal Assistant branding and a fictional-demo byline" /></a>
+</p>
+
+*A Share Card exported from a 103-character article excerpt. The byline “虚构演示” means “fictional demo”.*
 <!-- PA-MEDIA:S8:END -->
 
 Chat also lets you ask questions about images. **Understanding images and generating them are separate capabilities**, each requiring a model or connection that supports it. [Images, writing, and saving your work](./docs/guides/multimodal-chat-user-guide.md)

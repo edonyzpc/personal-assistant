@@ -23,11 +23,17 @@
 **从几篇旧笔记，到一篇新的作品。** 阅读时，拾页带回值得探索的关联；在 Chat 中继续整理材料，用 Writing 起草文章、CreateImage 生成配图，再保存到笔记或制作分享卡片。
 
 <!-- PA-MEDIA:S1:START -->
-<table width="100%"><tr><td align="center">
-  <strong>产品主画面与演示视频 · 素材待补</strong><br/>
-  旧笔记来源、图文成稿与 PA 工作区，呈现阅读积累怎样成为新作品。<br/>
-  此处将放置真实界面大图及视频入口。
-</td></tr></table>
+[![Obsidian 中的成稿与配图，以及 PA 对旧笔记的比较和实际来源链接](./docs/assets/readme/hero-reading-to-sharing.webp)](./docs/assets/readme/hero-reading-to-sharing.webp)
+
+*旧笔记提供材料，成稿与配图留在 Obsidian 中。点击任意图片可查看原尺寸。*
+
+**25秒高清精选，点击播放：**
+
+https://github.com/user-attachments/assets/467d353a-c6aa-4e69-b6b7-303de2404562
+
+[完整5分03秒剪辑版（4K，120.6 MB）](https://github.com/edonyzpc/personal-assistant/releases/download/3.0.5/pa-readme-no-waits-4k.mp4)。等待时间已剪除；本片未包含主动提示到来实拍。
+
+实拍环境：macOS，PA 3.0.5 演示构建（`master`），Obsidian 1.15.1。英文界面，中文虚构示例笔记。
 <!-- PA-MEDIA:S1:END -->
 
 想亲手试一遍？[复制演示笔记与提问](./docs/guides/reading-to-sharing-demo.md)。你也可以从下面任意一项开始。
@@ -43,10 +49,16 @@
 需要落到笔记里时，也可以明确请求新建、追加、编辑或更新属性。希望先检查，就说“先给预览”。
 
 <!-- PA-MEDIA:S4:START -->
-<table width="100%"><tr><td align="center">
-  <strong>Chat 与 Memory · 素材待补</strong><br/>
-  当前问题、来自旧笔记的不同材料、整理后的观点与来源链接。
-</td></tr></table>
+[![当前写作提纲与 PA 的材料比较：实践经历、阅读观点和生活类比，以及返回原笔记的来源链接](./docs/assets/readme/agent-note-sources.webp)](./docs/assets/readme/agent-note-sources.webp)
+
+*区分实践经历、阅读观点和生活类比，形成带来源的写作角度。*
+
+<details>
+<summary>放大查看材料差异与来源</summary>
+
+[![同一回答的放大细节，展示来源链接、笔记之间的区别和推荐写作角度](./docs/assets/readme/agent-note-sources-detail.webp)](./docs/assets/readme/agent-note-sources-detail.webp)
+
+</details>
 <!-- PA-MEDIA:S4:END -->
 
 [Chat 与笔记操作](./Manual-CN.md#ai-chat) · [Memory 设置](./Manual-CN.md#7-memory)
@@ -58,10 +70,9 @@
 打开洞察、阅读来源，再选择 **“在聊天中讨论”**，把这条线索交给 PA 继续探索。准备的材料由你检查，问题由你发送。发现本身不修改笔记，也不保证每次都有新结果。
 
 <!-- PA-MEDIA:S3:START -->
-<table width="100%"><tr><td align="center">
-  <strong>拾页主动洞察 · 素材待补</strong><br/>
-  阅读中的真实提示、具体关联与来源，以及“在聊天中讨论”入口。
-</td></tr></table>
+[![已有拾页洞察将阅读图表实践与当前提纲联系起来，附三篇来源和 Discuss in Chat 入口](./docs/assets/readme/pagelet-insight.webp)](./docs/assets/readme/pagelet-insight.webp)
+
+*查看已有的拾页洞察，核对来源，再继续讨论。本轮未录到主动提示到来。*
 <!-- PA-MEDIA:S3:END -->
 
 [了解拾页](./docs/guides/pagelet-user-guide.md)
@@ -77,17 +88,17 @@
 | **分享卡片** | 从 Chat、拾页或笔记选区制作卡片；也可在命令面板运行“将所选内容分享为卡片”。卡片排版本身不需要生图模型。 |
 
 <!-- PA-MEDIA:S7:START -->
-<table width="100%"><tr><td align="center">
-  <strong>图片生成与编辑 · 素材待补</strong><br/>
-  一次真实图片任务、完整生成结果，以及编辑和保存按钮。
-</td></tr></table>
+[![已完成的 CreateImage 任务卡，包含真实生成的阅读主题配图和编辑、保存到笔记的入口](./docs/assets/readme/image-generation.webp)](./docs/assets/readme/image-generation.webp)
+
+*真实生成的配图，以及编辑和保存到笔记的入口。保存时由你选择目标笔记。*
 <!-- PA-MEDIA:S7:END -->
 
 <!-- PA-MEDIA:S8:START -->
-<table width="100%"><tr><td align="center">
-  <strong>分享成果 · 素材待补</strong><br/>
-  从文章摘录制作的真实分享卡片，展示文字排版与最终成品。
-</td></tr></table>
+<p align="center">
+  <a href="./docs/assets/readme/share-card.webp"><img src="./docs/assets/readme/share-card.webp" width="440" alt="从成稿中的103字段落直接导出的分享卡片，保留 Personal Assistant 标识和虚构演示署名" /></a>
+</p>
+
+*将成稿中的103字段落导出为分享卡片，署名为“虚构演示”。*
 <!-- PA-MEDIA:S8:END -->
 
 Chat 也支持用图片提问；**图片理解与图片生成是两项不同能力**，分别需要支持它们的模型或连接。[图片、写作与保存指南](./docs/guides/multimodal-chat-user-guide.md)
