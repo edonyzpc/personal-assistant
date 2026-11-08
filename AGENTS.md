@@ -136,8 +136,10 @@ Read current limits in `src/ai-services/pa-agent-runtime.ts` and
   and coverage follow [Release Instructions](#release-instructions).
 - Dependency/lockfile changes: also run `npm ci --dry-run` when practical.
 - Add tests for meaningful behavior/regressions, not low-impact wording or
-  mechanical implementation mirrors. Repeat/broaden only for changed inputs,
-  failures or a concrete unresolved risk.
+  mechanical implementation mirrors. Use the lightweight
+  [authoring four questions](.agents/skills/pa-test-audit/SKILL.md#4-新增变更测试准入)
+  for new or changed tests within the current task. Repeat/broaden only for
+  changed inputs, failures or a concrete unresolved risk.
 - App claims require deployment and observation of the affected interaction.
   General mobile validation uses Obsidian CLI mobile simulator; iPhone hardware
   requires an explicit request or verified iOS-specific capability. An Agent's

@@ -1,6 +1,6 @@
 # PA UI/UX Review Framework
 
-Updated: 2026-07-11
+Updated: 2026-11-08
 
 ## Status
 
@@ -19,8 +19,8 @@ Updated: 2026-07-11
 This framework provides a repeatable evaluation structure for PA UI/UX design
 reviews. It combines Anthropic's Evaluator scoring dimensions (from their
 planner-generator-evaluator multi-agent architecture) with PA-specific product
-principles. Use it after each major design iteration to assess quality and
-identify improvement opportunities.
+principles. Use the dimensions relevant to the requested audit or the current
+task's required review to assess quality and identify improvement opportunities.
 
 ---
 
@@ -183,8 +183,7 @@ Derived from the PA North Star ("随手记下，需要时自然浮现"), design 
 
 ### 2.2 Cross-Surface Checks
 
-In addition to per-surface scoring, evaluate these five cross-cutting
-dimensions:
+Select the cross-surface checks relevant to the affected user journeys:
 
 | Check | What to look for |
 | --- | --- |
@@ -200,43 +199,48 @@ dimensions:
 
 ### 3.1 Per-Surface Evaluation
 
-For each surface (S1-S8), evaluate all 10 dimensions (A1-A4, B1-B6) and
-record:
+For each surface in scope, select the relevant dimensions from A1-A4 and B1-B6.
+Mark an inapplicable dimension `N/A` and a relevant dimension without sufficient
+evidence `UNSCORED`; neither is a low score. Follow the
+[UI/UX audit evidence standard](../../../.agents/skills/ui-ux-design-audit/SKILL.md#evidence-standard)
+for visible and interaction evidence, reusing valid observations.
 
 | Field | Description |
 | --- | --- |
-| Score | 1-5 rating per the rubric above |
-| Evidence | Specific code path, CSS rule, or UI element that supports the score |
-| Findings | Issues identified (if score < 4) |
-| Severity | P0 (principle violation) / P1 (experience impact) / P2 (polish gap) / P3 (refinement) |
+| Score | 1-5 for an applicable dimension with sufficient evidence; otherwise N/A or UNSCORED |
+| Evidence | Observed path and state, with relevant visible UI and source/test anchors |
+| Findings | Confirmed issues with a concrete trigger, user impact, and violated requirement or invariant |
+| Severity | Apply the project severity rules below to the confirmed impact |
 | Suggestion | Concrete improvement direction |
+
+Low scores can motivate discussion; they do not automatically create findings
+or require fixes. Keep preferences and unresolved product choices distinct from
+confirmed defects.
 
 ### 3.2 Severity Definitions
 
-| Level | Criteria | Response |
-| --- | --- | --- |
-| P0 Critical | Violates North Star core principle or causes user confusion/data risk | Must fix before next release |
-| P1 Important | Degrades experience on a core flow but does not block functionality | Fix in current version |
-| P2 Improvement | Visual inconsistency, suboptimal pattern, or polish gap | Fix in next 1-2 versions |
-| P3 Refinement | Micro-interaction, animation, or copy polish opportunity | Backlog; address when touching the surface |
+Use the existing [PA review severity rules](../../../.agents/skills/personal-assistant-review/SKILL.md#severity-rules).
+Assign severity from the concrete user impact and release risk, not the numeric
+score or a North Star question alone. Label unresolved product tradeoffs
+`needs decision` and optional refinements `optional polish`; this framework
+does not set a separate fix deadline or release gate.
 
 ### 3.3 Aggregation
 
-After scoring all surfaces, aggregate into:
-
-1. **Heatmap**: 8 surfaces × 10 dimensions matrix showing relative strengths
-   and weaknesses
-2. **Dimension summary**: Average score per dimension across all surfaces,
-   identifying systemic issues
-3. **Surface summary**: Average score per surface across all dimensions,
-   identifying surfaces needing most attention
+For a broad audit, summarize recurring findings across the assessed surfaces.
+Use a heatmap only when it helps compare the selected dimensions; preserve
+`N/A` and `UNSCORED` rather than treating them as scores. Compare only compatible
+evidence and scopes, without implying precision from averages. A narrow review
+can report its findings directly without an aggregate score or heatmap.
 
 ---
 
 ## 4. North Star Quick Check
 
-Before diving into dimensional scoring, run these 10 questions from the
-[Product North Star](../../product/pa-product-north-star.md) as a rapid pass/fail gate:
+Use the applicable questions from the
+[Product North Star](../../product/pa-product-north-star.md) to examine the
+intended user benefit and its constraints. They support product judgment, not
+a pass/fail gate for every individual surface:
 
 1. Does this lower the friction of capturing or revisiting real thoughts?
 2. Does this make the user's own notes more likely to return at the right time?
@@ -249,14 +253,16 @@ Before diving into dimensional scoring, run these 10 questions from the
 9. Is confirmation tied to a durable consequence rather than an AI sentence?
 10. Does this reduce more review burden than it creates?
 
-Any surface failing questions 1, 2, 6, 7, or 8 is a candidate for P0 severity.
+Explain a relevant conflict in terms of the current requirement and observed
+consequence. A surface need not directly serve every North Star question;
+unresolved product tradeoffs remain decisions rather than automatic defects.
 
 ---
 
 ## 5. Anti-Pattern Checklist
 
-Check all surfaces against these known anti-patterns from the North Star and
-Low-Burden Review doctrine:
+Check surfaces in scope for relevant anti-patterns from the North Star and
+Low-Burden Review doctrine. A resemblance alone does not establish a finding:
 
 | # | Anti-Pattern | How to detect |
 | --- | --- | --- |
@@ -275,50 +281,44 @@ Low-Burden Review doctrine:
 
 ## 6. Evaluation Template
 
-### Per-Surface Scorecard (copy for each surface)
+### Per-Surface Scorecard (use for assessed surfaces)
 
 ```
 ## Surface: [Name]
 
 ### North Star Quick Check
-- [ ] Q1 Capture friction  - [ ] Q6 Quiet AI surface
-- [ ] Q2 Right-time return  - [ ] Q7 Gradual trust
-- [ ] Q3 Protect thinking   - [ ] Q8 Ignorable
-- [ ] Q4 Evidence-backed    - [ ] Q9 Durable confirmation
-- [ ] Q5 Gentle maintenance - [ ] Q10 Net burden reduction
+- Applicable questions and intended user benefit:
+- Evidence, relevant conflicts, or unresolved product choices:
 
 ### Dimensional Scores
 
 | Dimension | Score | Evidence | Findings |
 | --- | --- | --- | --- |
-| A1 Design Coherence | /5 | | |
-| A2 Visual Polish | /5 | | |
-| A3 Interaction Quality | /5 | | |
-| A4 Content Clarity | /5 | | |
-| B1 Quietness | /5 | | |
-| B2 Trustworthiness | /5 | | |
-| B3 Capture Friction | /5 | | |
-| B4 Return Accuracy | /5 | | |
-| B5 Burden | /5 | | |
-| B6 Progressive Disclosure | /5 | | |
+| [Selected dimension] | /5, N/A, or UNSCORED | | |
 
 ### Findings Summary
 
-| # | Finding | Severity | Suggestion |
+| # | Finding, trigger, and impact | Severity / needs decision / optional polish | Suggestion |
 | --- | --- | --- | --- |
-| 1 | | P? | |
+| 1 | | | |
 
 ### Anti-Pattern Check
-- [ ] AP1-AP10 (list any violations)
+- Relevant anti-patterns with evidence, or none:
 ```
 
 ---
 
 ## 7. Review Cadence
 
+Review timing follows the user's request and the current task's requirements.
+This framework does not schedule recurring audits or add release checks.
+
 | Trigger | Scope | Depth |
 | --- | --- | --- |
-| Major feature release (new surface or redesign) | Affected surfaces + cross-surface | Full 10-dimension + anti-pattern |
+| New surface or redesign under review | Affected surfaces and relevant transitions | Applicable dimensions and anti-patterns |
 | Minor iteration | Changed surfaces only | Focused on changed dimensions |
-| Pre-release gate | All surfaces | North Star Quick Check + anti-pattern scan only |
-| Quarterly review | All surfaces | Full audit with heatmap comparison to previous quarter |
+| Explicit broad audit | Requested surfaces and user journeys | Evidence-backed comparison where useful |
+
+Existing release gates remain governed by the
+[release process](../../operations/release-process.md); this framework neither
+adds a pre-release all-surface audit nor removes required release validation.
