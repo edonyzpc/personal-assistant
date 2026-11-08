@@ -4,9 +4,9 @@
 <p align="center">Obsidian 中的开源 AI 助手。找回旧笔记、发现新关联，<br/>把阅读与思考整理成可以保存、可以分享的成果。</p>
 
 <p align="center">
-  <a href="https://github.com/edonyzpc/personal-assistant/releases"><img src="https://img.shields.io/github/v/release/edonyzpc/personal-assistant?style=flat-square" alt="最新正式版" /></a>
-  <a href="https://github.com/edonyzpc/personal-assistant/releases"><img src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?label=GitHub%20downloads&amp;style=flat-square" alt="GitHub 发布资源累计下载量" /></a>
-  <a href="https://github.com/edonyzpc/personal-assistant/stargazers"><img src="https://img.shields.io/github/stars/edonyzpc/personal-assistant?style=flat-square" alt="GitHub Stars" /></a>
+  <a href="https://github.com/edonyzpc/personal-assistant/releases"><img src="https://img.shields.io/github/v/release/edonyzpc/personal-assistant?style=social" alt="最新正式版" /></a>
+  <a href="https://github.com/edonyzpc/personal-assistant/releases"><img src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?label=GitHub%20downloads&amp;style=social" alt="GitHub 发布资源累计下载量" /></a>
+  <a href="https://github.com/edonyzpc/personal-assistant/stargazers"><img src="https://img.shields.io/github/stars/edonyzpc/personal-assistant?style=social" alt="GitHub Stars" /></a>
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 <!-- PA-MEDIA:S1:START -->
 <table width="100%"><tr><td align="center">
   <strong>产品主画面与演示视频 · 素材待补</strong><br/>
-  图文成稿与 PA 工作区；阅读积累 → 主动洞察 → 写作 → 配图 → 分享。<br/>
+  旧笔记来源、图文成稿与 PA 工作区，呈现阅读积累怎样成为新作品。<br/>
   此处将放置真实界面大图及视频入口。
 </td></tr></table>
 <!-- PA-MEDIA:S1:END -->

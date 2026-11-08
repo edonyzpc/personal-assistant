@@ -13,6 +13,7 @@
 - [PM Needs Analysis Framework](./workflows/pm-needs-analysis-framework.md) — 产品需求讨论的分阶段分析与决策框架。
 - [UI/UX Review Framework](./workflows/pa-ui-ux-review-framework.md) — 可复用 UI/UX 审计方法。
 - [README 素材准备指南](./workflows/readme-media-production.md) — 已确认展示方案、拍摄分镜、示例入口、截图清单及双语占位替换方法。
+- [PA 产品素材录制技能](../../.agents/skills/pa-product-media-capture/SKILL.md) — macOS Cap 录制、截图与后期执行，包含已验证限制和验收方法。
 
 ## 验证
 

@@ -4,9 +4,9 @@
 <p align="center">An open-source AI assistant for Obsidian. Rediscover old notes, find new connections,<br/>and turn your reading and thinking into work you can keep and share.</p>
 
 <p align="center">
-  <a href="https://github.com/edonyzpc/personal-assistant/releases"><img src="https://img.shields.io/github/v/release/edonyzpc/personal-assistant?style=flat-square" alt="Latest stable release" /></a>
-  <a href="https://github.com/edonyzpc/personal-assistant/releases"><img src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?label=GitHub%20downloads&amp;style=flat-square" alt="Total GitHub release asset downloads" /></a>
-  <a href="https://github.com/edonyzpc/personal-assistant/stargazers"><img src="https://img.shields.io/github/stars/edonyzpc/personal-assistant?style=flat-square" alt="GitHub Stars" /></a>
+  <a href="https://github.com/edonyzpc/personal-assistant/releases"><img src="https://img.shields.io/github/v/release/edonyzpc/personal-assistant?style=social" alt="Latest stable release" /></a>
+  <a href="https://github.com/edonyzpc/personal-assistant/releases"><img src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?label=GitHub%20downloads&amp;style=social" alt="Total GitHub release asset downloads" /></a>
+  <a href="https://github.com/edonyzpc/personal-assistant/stargazers"><img src="https://img.shields.io/github/stars/edonyzpc/personal-assistant?style=social" alt="GitHub Stars" /></a>
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 <!-- PA-MEDIA:S1:START -->
 <table width="100%"><tr><td align="center">
   <strong>Product overview and demo video · Media placeholder</strong><br/>
-  An illustrated article alongside the PA workspace: reading → insights → writing → images → sharing.<br/>
+  Source notes, an illustrated article, and the PA workspace show how past reading becomes new work.<br/>
   A large, real interface image and a video link will go here.
 </td></tr></table>
 <!-- PA-MEDIA:S1:END -->
