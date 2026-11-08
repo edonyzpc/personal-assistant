@@ -4,7 +4,7 @@
 <p align="center">Obsidian 中的开源 AI 助手。找回旧笔记、发现新关联，<br/>把阅读与思考整理成可以保存、可以分享的成果。</p>
 
 <p align="center">
-  <a href="https://github.com/edonyzpc/personal-assistant/releases"><img src="https://img.shields.io/github/v/release/edonyzpc/personal-assistant?color=%23000000&amp;label=Version&amp;logo=tga&amp;logoColor=%23008cff&amp;sort=semver&amp;style=social" alt="最新正式版" /></a>
+  <a href="https://github.com/edonyzpc/personal-assistant/releases"><img src="https://img.shields.io/github/v/release/edonyzpc/personal-assistant?color=%23000000&amp;label=Version&amp;logo=tga&amp;logoColor=%23008cff&amp;style=social" alt="最新正式版" /></a>
   <a href="https://github.com/edonyzpc/personal-assistant/releases"><img src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?logo=obsidian&amp;logoColor=%23b300ff&amp;style=social" alt="GitHub 发布资源累计下载量" /></a>
   <a href="https://github.com/edonyzpc/personal-assistant/stargazers"><img src="https://img.shields.io/github/stars/edonyzpc/personal-assistant?style=social" alt="GitHub Stars" /></a>
 </p>

@@ -4,7 +4,7 @@
 <p align="center">An open-source AI assistant for Obsidian. Rediscover old notes, find new connections,<br/>and turn your reading and thinking into work you can keep and share.</p>
 
 <p align="center">
-  <a href="https://github.com/edonyzpc/personal-assistant/releases"><img src="https://img.shields.io/github/v/release/edonyzpc/personal-assistant?color=%23000000&amp;label=Version&amp;logo=tga&amp;logoColor=%23008cff&amp;sort=semver&amp;style=social" alt="Latest stable release" /></a>
+  <a href="https://github.com/edonyzpc/personal-assistant/releases"><img src="https://img.shields.io/github/v/release/edonyzpc/personal-assistant?color=%23000000&amp;label=Version&amp;logo=tga&amp;logoColor=%23008cff&amp;style=social" alt="Latest stable release" /></a>
   <a href="https://github.com/edonyzpc/personal-assistant/releases"><img src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?logo=obsidian&amp;logoColor=%23b300ff&amp;style=social" alt="Total GitHub release asset downloads" /></a>
   <a href="https://github.com/edonyzpc/personal-assistant/stargazers"><img src="https://img.shields.io/github/stars/edonyzpc/personal-assistant?style=social" alt="GitHub Stars" /></a>
 </p>
