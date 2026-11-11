@@ -68,7 +68,7 @@
     "@langchain/core": "1.3.2",
     "@langchain/openai": "1.8.0",
     "@sqlite.org/sqlite-wasm": "3.54.1-build1",
-    "@tanstack/react-virtual": "3.14.21",
+    "@tanstack/react-virtual": "3.14.26",
     "@zumer/snapdom": "2.23.2",
     "chart.js": "^4.4.4",
     "fflate": "^0.8.3",
