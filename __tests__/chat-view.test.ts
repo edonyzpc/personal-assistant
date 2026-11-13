@@ -38,7 +38,7 @@ import { createCooperativeTask } from '../src/ai-services/cooperative-task';
 import { OPERATIONS_BLOCKED_MESSAGE, OPERATIONS_STAGED_MESSAGE } from '../src/ai-services/operations/operations-tool-provider';
 import { OperationsService } from '../src/ai-services/operations/operations-service';
 import { createAiServiceHost } from '../src/tests/factories/host-factory';
-import type { MemoryMaintenancePlan } from '../src/memory-manager';
+import type { MemoryMaintenancePlan, MemoryStatusSnapshot } from '../src/memory-manager';
 import type { PageletChatHandoffContext, PageletReadingTarget } from '../src/ai-services/pagelet-handoff';
 import type { ComposerDraft, ComposerImageTextSource } from '../src/chat/composer-draft';
 import type { ConversationPersistence } from '../src/chat/ConversationPersistence';
@@ -1023,6 +1023,13 @@ function createView(options: {
             })),
             prepareFromCommand: jest.fn(async () => undefined),
             updateFromCommand: jest.fn(async () => undefined),
+            getStatusSnapshot: jest.fn((): MemoryStatusSnapshot => ({
+                enabled: true,
+                status: 'unknown',
+                dirtyCount: 0,
+                verificationPending: 0,
+            })),
+            showPreparationProgress: jest.fn(() => false),
             showTechnicalStatus: jest.fn(() => undefined),
             onStatusChanged: jest.fn((listener: () => void | Promise<void>) => {
                 memoryStatusListeners.add(listener);
@@ -15160,6 +15167,119 @@ describe('LLMView turn lifecycle', () => {
         expect(memoryChip.classList.contains('personal-assistant-ai-statusbar-needs-update')).toBe(false);
         expect(memoryChip.classList.contains('personal-assistant-ai-statusbar-ready')).toBe(true);
         expect(memoryChip.getAttribute('aria-label')).toBe('Memory ready');
+    });
+
+    it('gives active preparation precedence over a delayed resolved Memory plan', async () => {
+        let resolvePlan: (plan: MemoryMaintenancePlan) => void = () => undefined;
+        const { view, containerEl, plugin, emitMemoryStatusChanged } = createView();
+        plugin.memoryStatus.getMaintenancePlan.mockReturnValue(new Promise<MemoryMaintenancePlan>((resolve) => {
+            resolvePlan = resolve;
+        }));
+        let snapshot: MemoryStatusSnapshot = {
+            enabled: true,
+            status: 'unknown',
+            dirtyCount: 0,
+            verificationPending: 0,
+        };
+        plugin.memoryStatus.getStatusSnapshot.mockImplementation(() => ({ ...snapshot }));
+        await view.onOpen();
+        await flushPromises();
+
+        expect(plugin.memoryStatus.getMaintenancePlan).toHaveBeenCalledTimes(1);
+        snapshot = {
+            enabled: true,
+            status: 'preparing',
+            dirtyCount: 0,
+            verificationPending: 0,
+            preparation: {
+                action: 'rebuild',
+                message: 'Processing notes 2/3',
+                phase: 'writing',
+                filesDone: 2,
+                filesTotal: 3,
+                startedAt: 1,
+            },
+        };
+        await emitMemoryStatusChanged();
+        await flushPromises();
+        snapshot = {
+            enabled: true,
+            status: 'ready',
+            dirtyCount: 0,
+            verificationPending: 0,
+        };
+        plugin.memoryStatus.getMaintenancePlan.mockResolvedValue({
+            reason: 'ready',
+            action: 'none',
+            notesToCheck: 0,
+            requiresApproval: false,
+            canAnswerNow: true,
+        });
+        await emitMemoryStatusChanged();
+        await flushPromises();
+
+        const memoryChip = getButtonByClass(containerEl, 'pa-chat-memory-chip');
+        expect(memoryChip.getAttribute('aria-label')).toBe('Memory ready');
+
+        resolvePlan({
+            reason: 'unavailable',
+            action: 'none',
+            notesToCheck: 0,
+            requiresApproval: false,
+            canAnswerNow: true,
+        });
+        await flushPromises();
+
+        expect(memoryChip.getAttribute('aria-label')).toBe('Memory ready');
+        expect(memoryChip.classList.contains('personal-assistant-ai-statusbar-ready')).toBe(true);
+    });
+
+    it('gives active preparation precedence over a delayed rejected plan and keeps viewing explicit', async () => {
+        let rejectPlan: (reason: unknown) => void = () => undefined;
+        const { view, containerEl, plugin } = createView();
+        plugin.memoryStatus.getMaintenancePlan.mockReturnValue(new Promise<MemoryMaintenancePlan>((_resolve, reject) => {
+            rejectPlan = reject;
+        }));
+        let snapshot: MemoryStatusSnapshot = {
+            enabled: true,
+            status: 'unknown',
+            dirtyCount: 0,
+            verificationPending: 0,
+        };
+        plugin.memoryStatus.getStatusSnapshot.mockImplementation(() => ({ ...snapshot }));
+
+        await view.onOpen();
+        await flushPromises();
+        expect(plugin.memoryStatus.getMaintenancePlan).toHaveBeenCalledTimes(1);
+        snapshot = {
+            enabled: true,
+            status: 'preparing',
+            dirtyCount: 0,
+            verificationPending: 0,
+            preparation: {
+                action: 'rebuild',
+                message: 'Processing notes 2/3',
+                phase: 'writing',
+                filesDone: 2,
+                filesTotal: 3,
+                startedAt: 1,
+            },
+        };
+        rejectPlan(new Error('configuration changed'));
+        await flushPromises();
+
+        const memoryChip = getButtonByClass(containerEl, 'pa-chat-memory-chip');
+        expect(memoryChip.getAttribute('aria-label')).toBe('Memory preparing');
+        expect(plugin.memoryStatus.showPreparationProgress).not.toHaveBeenCalled();
+
+        memoryChip.click();
+        await flushPromises();
+        const memoryMenu = getElementByClass(containerEl, 'pa-chat-memory-menu');
+        expect(allText(memoryMenu)).toContain('View progress');
+        expect(allText(memoryMenu)).toContain('Show Memory Status');
+        getButtonByText(memoryMenu, 'View progress').click();
+        expect(plugin.memoryStatus.showTechnicalStatus).toHaveBeenCalledTimes(1);
+        expect(plugin.memoryStatus.showPreparationProgress).not.toHaveBeenCalled();
     });
 
     it('unsubscribes Memory and settings refresh listeners on close', async () => {

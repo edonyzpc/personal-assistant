@@ -49,6 +49,8 @@ export interface MemoryPrepareResult {
     ok: boolean;
     partial: boolean;
     summary?: VSSOperationSummary;
+    /** Minimal non-user interruption fact for operations without a full summary. */
+    aborted?: boolean;
     message?: string;
 }
 
@@ -76,11 +78,29 @@ export interface MemoryStatusSnapshot {
     verificationPending: number;
     lastErrorCode?: string;
     preparation?: MemoryPreparationStatus;
+    lastPreparation?: MemoryPreparationOutcome;
+}
+
+export interface MemoryPreparationOutcome {
+    action: Exclude<MemoryMaintenancePlan["action"], "none">;
+    outcome: "completed" | "partial" | "failed" | "cancelled" | "interrupted";
+    message: string;
+    phase?: VSSProgressEvent["phase"];
+    filesDone?: number;
+    filesTotal?: number;
+    lexicalRowsDone?: number;
+    lexicalRowsTotal?: number;
+    failed?: number;
+    errorCode?: string;
+    startedAt: number;
+    finishedAt: number;
 }
 
 export interface MemoryDecisionResult {
     decision: MemoryDecision;
     message?: string;
+    /** Host-only fact for a currently running Chat preparation; never model-facing. */
+    preparationState?: "running";
 }
 
 export interface MemoryApprovalCopy {
@@ -115,6 +135,8 @@ interface ActivePreparationRun extends ActivePreparationIdentity {
     origin: "chat" | "shared";
     hasSharedConsumer: boolean;
     chatConsumers: Set<number>;
+    embeddingConfigurationIdentity?: string;
+    userCancelled?: boolean;
 }
 interface MemoryAdmissionOwner extends ActivePreparationIdentity {
     previousPolicy: string;
@@ -130,6 +152,22 @@ interface MemoryPreparationAcquisition {
 type ChatOperationResult<T> =
     | { aborted: true }
     | { aborted: false; value: T };
+
+interface MemoryProgressDisplay {
+    notice: Notice;
+    cancelButton?: HTMLButtonElement;
+    update(text: string): void;
+    showAgain(status: MemoryPreparationStatus): void;
+    dispose(): void;
+}
+
+export interface MemoryChatReadinessOptions {
+    existingOnly?: boolean;
+    /** Return after an accepted Chat preparation starts; the run owner remains cancellable. */
+    backgroundPreparation?: boolean;
+    /** Admission-time check composed by the actual source-scoped Memory host. */
+    beforePreparation?: () => void;
+}
 
 function awaitChatOperation<T>(
     operation: Promise<T>,
@@ -309,6 +347,9 @@ export class MemoryManager {
     private embeddingConfigurationIdentity: string | null = null;
     private embeddingActivationPromise: Promise<void> | null = null;
     private embeddingActivationError: unknown = null;
+    private lastPreparation: MemoryPreparationOutcome | null = null;
+    private lastPreparationConfigurationIdentity: string | null = null;
+    private activePreparationDisplay: MemoryProgressDisplay | null = null;
 
     constructor(host: MemoryHost, vss: VSS) {
         this.host = host;
@@ -406,7 +447,25 @@ export class MemoryManager {
         if (preparation) {
             snapshot.preparation = preparation;
         }
+        const lastPreparation = this.getSafeLastPreparation();
+        if (lastPreparation) snapshot.lastPreparation = lastPreparation;
         return snapshot;
+    }
+
+    showPreparationProgress(): boolean {
+        const preparation = this.getActivePreparationStatus();
+        if (!preparation) return false;
+        this.activePreparationDisplay?.showAgain(preparation);
+        return true;
+    }
+
+    getSafeLastPreparation(): MemoryPreparationOutcome | null {
+        const last = this.lastPreparation;
+        if (!last) return null;
+        if (!this.isMemoryEnabled()) return null;
+        const currentIdentity = this.vss.getEmbeddingConfigurationIdentity();
+        if (currentIdentity !== this.lastPreparationConfigurationIdentity) return null;
+        return { ...last };
     }
 
     startAutoMaintenance(): void {
@@ -512,13 +571,19 @@ export class MemoryManager {
     async ensureReadyForChat(
         _prompt?: string,
         signal?: AbortSignal,
-        preparationOwnerSignal: AbortSignal | undefined = signal,
-        options?: { existingOnly?: boolean },
+        preparationOwnerSignal?: AbortSignal,
+        options?: MemoryChatReadinessOptions,
     ): Promise<MemoryDecisionResult> {
         if (signal?.aborted) {
             return { decision: "cancel" };
         }
         const lifecycleToken = this.lifecycleVersion;
+        // Only an admitted Chat background run may use its stable owner. A
+        // missing or already-aborted owner falls back entirely to the original
+        // attempt-synchronous lifecycle.
+        const backgroundPreparation = options?.backgroundPreparation === true
+            && preparationOwnerSignal !== undefined
+            && !preparationOwnerSignal.aborted;
         const embeddingIdentity = this.host.settings.aiConnections ? this.vss.getEmbeddingConfigurationIdentity() : null;
         if (!this.host.settings.memoryEnabled) {
             return { decision: "answer-now" };
@@ -528,8 +593,9 @@ export class MemoryManager {
         // preparation. The actual scoped search still checks the durable marker
         // and current source bodies; this cached status grants no broader read.
         if (options?.existingOnly) {
-            const snapshot = this.getStatusSnapshot();
-            return { decision: snapshot.status === "ready" ? "use-memory" : "answer-now" };
+            return {
+                decision: this.isExistingMemoryReadable() ? "use-memory" : "answer-now",
+            };
         }
 
         const initialPlan = await awaitChatOperation(this.getMaintenancePlan(), signal);
@@ -541,12 +607,23 @@ export class MemoryManager {
             return { decision: "answer-now" };
         }
         const activePreparation = this.activePreparationRun;
+        const canUseActiveExistingMemory = this.isExistingMemoryReadable();
         if (activePreparation
             && this.isActivePreparationCurrent(activePreparation)
-            && (activePreparation.action === "rebuild" || plan.reason === "unavailable")) {
+            && (backgroundPreparation
+                || activePreparation.action === "rebuild"
+                || plan.reason === "unavailable"
+                || canUseActiveExistingMemory)) {
+            if (backgroundPreparation) {
+                void this.waitForChatPreparation(activePreparation, preparationOwnerSignal)
+                    .catch(() => undefined);
+            }
             return {
-                decision: "answer-now",
-                message: memoryT("plugin.memory.message.buildingInBackground"),
+                decision: canUseActiveExistingMemory ? "use-memory" : "answer-now",
+                message: canUseActiveExistingMemory
+                    ? memoryT("plugin.memory.message.usingLastPrepared")
+                    : memoryT("plugin.memory.message.buildingInBackground"),
+                ...(canUseActiveExistingMemory ? {} : { preparationState: "running" as const }),
             };
         }
         if (plan.reason === "unavailable") {
@@ -611,34 +688,47 @@ export class MemoryManager {
             }
         }
 
-        const canUseExistingMemory = plan.action === "rebuild-lexical";
+        const canUseExistingMemory = () => this.isExistingMemoryReadable(
+            this.getPreparationAction(plan),
+        );
 
         if (plan.reason === "first-use") {
-            if (preparationOwnerSignal?.aborted) {
+            const effectivePreparationOwnerSignal = preparationOwnerSignal ?? signal;
+            if (effectivePreparationOwnerSignal?.aborted) {
                 return { decision: "cancel" };
             }
             const prepareLifecycle = this.lifecycleVersion;
+            try {
+                options?.beforePreparation?.();
+            } catch (error) {
+                this.host.log("Memory preparation source changed before first-use admission", error);
+                return { decision: "answer-now" };
+            }
             if (this.host.settings.aiConnections && !await this.vss.consumeFirstUseEligibility()) {
                 return { decision: 'answer-now', message: memoryT('plugin.memory.message.prepareFailedAnswerNow') };
             }
             // Durable admission can notify a settings change before it settles.
             // Its first-use permission belongs to the original selection and run.
-            if (preparationOwnerSignal?.aborted) return { decision: 'cancel' };
+            if (effectivePreparationOwnerSignal?.aborted) return { decision: 'cancel' };
             if (!this.isLifecycleCurrent(lifecycleToken)
                 || embeddingIdentity !== null && embeddingIdentity !== this.vss.getEmbeddingConfigurationIdentity()) {
                 return { decision: 'answer-now' };
             }
-            void this.prepareMemoryForChat(plan, preparationOwnerSignal).then((result) => {
+            try {
+                options?.beforePreparation?.();
+            } catch (error) {
+                this.host.log("Memory preparation source changed after first-use admission", error);
+                return { decision: 'answer-now' };
+            }
+            void this.startChatPreparation(plan, effectivePreparationOwnerSignal, options, true).then((result) => {
                 if (result === null) return;
                 if (!this.isLifecycleCurrent(prepareLifecycle)) return;
                 if (!result.ok) {
                     this.host.log("Background memory prepare did not succeed", result.message);
-                    new Notice(result.message ?? memoryT("plugin.memory.error.prepareFailedAnswerNow"), 5000);
                 }
             }).catch((error) => {
                 if (!this.isLifecycleCurrent(prepareLifecycle)) return;
                 this.host.log("Background memory prepare failed", error);
-                new Notice(memoryT("plugin.memory.error.prepareFailedAnswerNow"), 5000);
             });
             if (signal?.aborted) {
                 return { decision: "cancel" };
@@ -646,13 +736,15 @@ export class MemoryManager {
             return {
                 decision: "answer-now",
                 message: memoryT("plugin.memory.message.buildingInBackground"),
+                preparationState: "running",
             };
         }
 
         if (this.isAnswerNowCoolingDown()) {
+            const useExistingMemory = canUseExistingMemory();
             return {
-                decision: canUseExistingMemory ? "use-memory" : "answer-now",
-                message: canUseExistingMemory
+                decision: useExistingMemory ? "use-memory" : "answer-now",
+                message: useExistingMemory
                     ? memoryT("plugin.memory.message.usingLastPrepared")
                     : memoryT("plugin.memory.message.notUsed"),
             };
@@ -670,9 +762,10 @@ export class MemoryManager {
 
         if (decision === "answer-now") {
             this.lastAnswerNowAt = Date.now();
+            const useExistingMemory = canUseExistingMemory();
             return {
-                decision: canUseExistingMemory ? "use-memory" : "answer-now",
-                message: canUseExistingMemory
+                decision: useExistingMemory ? "use-memory" : "answer-now",
+                message: useExistingMemory
                     ? memoryT("plugin.memory.message.usingLastPrepared")
                     : memoryT("plugin.memory.message.notUsed"),
             };
@@ -681,8 +774,38 @@ export class MemoryManager {
         if (!this.isLifecycleCurrent(lifecycleToken) || !this.isMemoryEnabled()) {
             return { decision: "answer-now" };
         }
+        if (backgroundPreparation && preparationOwnerSignal?.aborted) {
+            return { decision: "cancel" };
+        }
+        if (embeddingIdentity !== null
+            && embeddingIdentity !== this.vss.getEmbeddingConfigurationIdentity()) {
+            return { decision: "answer-now" };
+        }
+        try {
+            options?.beforePreparation?.();
+        } catch (error) {
+            this.host.log("Memory preparation source changed before admission", error);
+            return {
+                decision: "answer-now",
+                message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
+            };
+        }
 
-        const result = await this.prepareMemoryForChat(plan, signal);
+        if (backgroundPreparation) {
+            void this.startChatPreparation(plan, preparationOwnerSignal, options, backgroundPreparation).catch((error) => {
+                this.host.log("Background memory prepare failed", error);
+            });
+            const useExistingMemory = canUseExistingMemory();
+            return {
+                decision: useExistingMemory ? "use-memory" : "answer-now",
+                message: useExistingMemory
+                    ? memoryT("plugin.memory.message.usingLastPrepared")
+                    : memoryT("plugin.memory.message.buildingInBackground"),
+                ...(useExistingMemory ? {} : { preparationState: "running" as const }),
+            };
+        }
+
+        const result = await this.startChatPreparation(plan, signal, options, false);
         if (result === null || signal?.aborted) {
             return { decision: "cancel" };
         }
@@ -690,10 +813,10 @@ export class MemoryManager {
             return { decision: "answer-now" };
         }
         if (!result.ok) {
-            new Notice(result.message ?? memoryT("plugin.memory.error.prepareFailedAnswerNow"), 7000);
+            const useExistingMemory = canUseExistingMemory();
             return {
-                decision: canUseExistingMemory ? "use-memory" : "answer-now",
-                message: canUseExistingMemory
+                decision: useExistingMemory ? "use-memory" : "answer-now",
+                message: useExistingMemory
                     ? memoryT("plugin.memory.message.usingLastPrepared")
                     : result.message ?? memoryT("plugin.memory.message.prepareFailedAnswerNow"),
             };
@@ -709,18 +832,30 @@ export class MemoryManager {
         return this.acquirePreparation(plan, "shared").promise;
     }
 
-    private prepareMemoryForChat(
+    private startChatPreparation(
         plan: MemoryMaintenancePlan,
         ownerSignal?: AbortSignal,
+        options?: MemoryChatReadinessOptions,
+        detached = false,
     ): Promise<MemoryPrepareResult | null> {
         if (ownerSignal?.aborted) {
             return Promise.resolve(null);
         }
-        const acquisition = this.acquirePreparation(plan, "chat");
+        const acquisition = this.acquirePreparation(plan, "chat", {
+            ownerSignal,
+            beforePreparation: options?.beforePreparation,
+        });
         if (!acquisition.run) {
             return acquisition.promise.then((result) => (
                 ownerSignal?.aborted ? null : result
             ));
+        }
+        if (detached) {
+            // Keep one real Chat consumer attached until settlement or owner
+            // abort. The caller may stop observing this promise immediately.
+            void this.waitForChatPreparation(acquisition.run, ownerSignal)
+                .catch(() => undefined);
+            return acquisition.run.promise;
         }
         return this.waitForChatPreparation(acquisition.run, ownerSignal);
     }
@@ -728,6 +863,10 @@ export class MemoryManager {
     private acquirePreparation(
         plan: MemoryMaintenancePlan,
         origin: ActivePreparationRun["origin"],
+        chatOptions?: {
+            ownerSignal?: AbortSignal;
+            beforePreparation?: () => void;
+        },
     ): MemoryPreparationAcquisition {
         if (!this.isMemoryEnabled() || this.shuttingDown) {
             return { promise: Promise.resolve({
@@ -740,6 +879,18 @@ export class MemoryManager {
         const activePreparation = this.activePreparationRun;
         if (activePreparation) {
             if (this.canReuseActivePreparation(activePreparation, requestedAction)) {
+                try {
+                    chatOptions?.beforePreparation?.();
+                } catch {
+                    return {
+                        promise: Promise.resolve({
+                            ok: false,
+                            partial: false,
+                            message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
+                        }),
+                        run: null,
+                    };
+                }
                 if (origin === "shared") {
                     activePreparation.hasSharedConsumer = true;
                 }
@@ -760,6 +911,15 @@ export class MemoryManager {
             lifecycleVersion: this.lifecycleVersion,
             controller: new AbortController(),
         };
+        try {
+            chatOptions?.beforePreparation?.();
+        } catch (error) {
+            return {
+                promise: Promise.reject(error),
+                run: null,
+            };
+        }
+        const embeddingConfigurationIdentity = this.vss.getEmbeddingConfigurationIdentity();
         const promise = this.trackActiveOperation(
             Promise.resolve().then(() => this.runPreparation(plan, activeIdentity)),
         );
@@ -769,6 +929,7 @@ export class MemoryManager {
             origin,
             hasSharedConsumer: origin === "shared",
             chatConsumers: new Set<number>(),
+            ...(embeddingConfigurationIdentity !== undefined ? { embeddingConfigurationIdentity } : {}),
         };
         this.activePreparationRun = run;
         const clear = () => {
@@ -826,8 +987,11 @@ export class MemoryManager {
     }
 
     private abortUnsharedChatPreparation(run: ActivePreparationRun): void {
-        if (run.origin !== "chat" || run.hasSharedConsumer || run.chatConsumers.size > 0) return;
+        if (run.origin !== "chat") return;
+        if (run.hasSharedConsumer) return;
+        if (run.chatConsumers.size > 0) return;
         if (!this.activePreparationRun || !this.isSamePreparation(this.activePreparationRun, run)) return;
+        run.userCancelled = true;
         run.controller?.abort();
     }
 
@@ -835,6 +999,13 @@ export class MemoryManager {
         const lifecycleToken = activePreparation.lifecycleVersion;
         const action = activePreparation.action;
         const startedAt = Date.now();
+        this.lastPreparation = null;
+        this.lastPreparationConfigurationIdentity = null;
+        const activeRun = this.activePreparationRun;
+        const expectedConfigurationIdentity = activeRun
+            && this.isSamePreparation(activeRun, activePreparation)
+            ? activeRun.embeddingConfigurationIdentity
+            : undefined;
         const setActiveStatus = (message: string, event?: VSSProgressEvent) => {
             if (!this.isActivePreparationCurrent(activePreparation)) return;
             this.activePreparationStatus = {
@@ -852,9 +1023,12 @@ export class MemoryManager {
                 failed: event?.failed,
                 startedAt,
             };
+            this.host.notifyStatusChanged();
         };
         if (!this.isLifecycleCurrent(lifecycleToken)
             || !this.isMemoryEnabled()
+            || expectedConfigurationIdentity !== undefined
+                && expectedConfigurationIdentity !== this.vss.getEmbeddingConfigurationIdentity()
             || activePreparation.controller?.signal.aborted) {
             return {
                 ok: false,
@@ -867,12 +1041,22 @@ export class MemoryManager {
                 ? memoryT("plugin.memory.progress.rebuildingSearch")
                 : memoryT("plugin.memory.progress.preparing"),
             action === "rebuild-lexical"
-                ? () => activePreparation.controller?.abort()
+                ? () => {
+                    if (activeRun && this.isSamePreparation(activeRun, activePreparation)) {
+                        activeRun.userCancelled = true;
+                    }
+                    activePreparation.controller?.abort();
+                }
                 : undefined,
         );
+        this.activePreparationDisplay = progress;
         setActiveStatus(memoryT("plugin.memory.progress.preparing"));
-        const updateProgress = createMemoryProgressUpdater(progress.notice, () => !this.isLifecycleCurrent(lifecycleToken));
+        const updateProgress = createMemoryProgressUpdater(progress, () => !this.isLifecycleCurrent(lifecycleToken));
+        let finalProgressEvent: VSSProgressEvent | undefined;
         const updateProgressAndStatus = (event: VSSProgressEvent) => {
+            if (event.phase !== "ready" && event.phase !== "cancelling") {
+                finalProgressEvent = event;
+            }
             if (event.phase === "finalizing" && progress.cancelButton) {
                 progress.cancelButton.disabled = true;
             }
@@ -886,6 +1070,8 @@ export class MemoryManager {
         const isRebuild = plan.action !== "refresh";
         const rebuildReason = this.getRebuildRecoveryReason(plan);
         let deferredRebuildHandle: VSSPreparedRebuildHandle | null = null;
+        let operationResult: MemoryPrepareResult | undefined;
+        let terminalError: unknown;
         let previousApprovalPolicy: string | null = null;
         const rollbackDeferredRebuild = async () => {
             const handle = deferredRebuildHandle;
@@ -894,6 +1080,10 @@ export class MemoryManager {
             if (deferredRebuildHandle === handle) {
                 deferredRebuildHandle = null;
             }
+        };
+        const finishOperation = (result: MemoryPrepareResult): MemoryPrepareResult => {
+            operationResult = result;
+            return result;
         };
         try {
             if (action === "rebuild-lexical") {
@@ -905,31 +1095,34 @@ export class MemoryManager {
                 if (!this.isLifecycleCurrent(lifecycleToken)
                     || abortController.signal.aborted
                     || lexicalSummary.aborted) {
-                    return {
-                        ok: false,
-                        partial: false,
-                        message: lexicalSummary.aborted
-                            ? memoryT("plugin.memory.progress.cancelled")
-                            : memoryT("plugin.memory.message.prepareFailedAnswerNow"),
-                    };
+                const aborted = Boolean(lexicalSummary.aborted)
+                    && !abortController.signal.aborted
+                    && this.isLifecycleCurrent(lifecycleToken);
+                operationResult = finishOperation({
+                    ok: false,
+                    partial: false,
+                    aborted,
+                    message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
+                });
+                return operationResult;
                 }
-                setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.ready"));
+                progress.update(memoryT("plugin.memory.progress.ready"));
                 setActiveStatus(memoryT("plugin.memory.progress.ready"));
-                new Notice(memoryT("plugin.memory.notice.searchReadyNotesUnchanged"), 3000);
                 this.host.notifyStatusChanged();
-                return { ok: true, partial: false };
+                operationResult = finishOperation({ ok: true, partial: false });
+                return operationResult;
             }
 
-            setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.checking"));
+            progress.update(memoryT("plugin.memory.progress.checking"));
             setActiveStatus(memoryT("plugin.memory.progress.checking"));
             if (this.host.settings.aiConnections) await this.vss.recordPreparationAttempt();
             this.activeOperationControllers.add(abortController);
             if (abortController.signal.aborted) {
-                return {
+                return finishOperation({
                     ok: false,
                     partial: false,
                     message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
-                };
+                });
             }
             const operationOptions = {
                 silent: true,
@@ -948,29 +1141,29 @@ export class MemoryManager {
             }
             if (!this.isLifecycleCurrent(lifecycleToken) || abortController.signal.aborted) {
                 await rollbackDeferredRebuild();
-                return {
+                return finishOperation({
                     ok: false,
                     partial: false,
                     summary,
                     message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
-                };
+                });
             }
             if (summary.aborted) {
-                return {
+                return finishOperation({
                     ok: false,
                     partial: false,
                     summary,
                     message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
-                };
+                });
             }
 
             if (summary.updated === 0 && summary.failed > 0) {
-                return {
+                return finishOperation({
                     ok: false,
                     partial: false,
                     summary,
                     message: memoryT("plugin.memory.error.prepareFailedAnswerNow"),
-                };
+                });
             }
 
             const partial = summary.failed > 0;
@@ -982,12 +1175,12 @@ export class MemoryManager {
             previousApprovalPolicy = policyAdmission.previousPolicy;
             if (!policyAdmission.enabled || !this.isLifecycleCurrent(lifecycleToken) || abortController.signal.aborted) {
                 await rollbackDeferredRebuild();
-                return {
+                return finishOperation({
                     ok: false,
                     partial: false,
                     summary,
                     message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
-                };
+                });
             }
             if (isRebuild) {
                 const rebuildHandle = deferredRebuildHandle;
@@ -1000,32 +1193,32 @@ export class MemoryManager {
                     if (previousApprovalPolicy !== null) {
                         await this.restoreMemoryApprovalPolicy(previousApprovalPolicy, activePreparation);
                     }
-                    return {
+                    return finishOperation({
                         ok: false,
                         partial: false,
                         summary,
                         message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
-                    };
+                    });
                 }
                 deferredRebuildHandle = null;
             }
             this.releaseMemoryAdmissionOwner(activePreparation);
-            setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.ready"));
+            progress.update(memoryT("plugin.memory.progress.ready"));
             setActiveStatus(memoryT("plugin.memory.progress.ready"));
-            if (partial) {
-                new Notice(memoryT("plugin.memory.notice.updatedPartial"), 5000);
-            } else if (summary.storagePersisted === false && Platform.isMobile) {
-                new Notice(memoryT("plugin.memory.notice.prepareAgainLater"), 5000);
-            } else {
-                new Notice(memoryT("plugin.memory.notice.readyNotesUnchanged"), 3000);
-            }
-
             if (this.isLifecycleCurrent(lifecycleToken)) {
                 this.scheduleReconcile("prepare", PREPARE_RECONCILE_DELAY_MS);
                 this.host.notifyStatusChanged();
             }
-            return { ok: true, partial, summary };
+            return finishOperation({
+                ok: true,
+                partial,
+                summary,
+                message: summary.storagePersisted === false && Platform.isMobile
+                    ? memoryT("plugin.memory.notice.prepareAgainLater")
+                    : undefined,
+            });
         } catch (error) {
+            terminalError = error;
             const shouldRestoreAdmissionPolicy = deferredRebuildHandle !== null
                 && previousApprovalPolicy !== null
                 && this.isMemoryAdmissionOwner(activePreparation);
@@ -1042,27 +1235,41 @@ export class MemoryManager {
                 }
             }
             if (!this.isLifecycleCurrent(lifecycleToken) || abortController.signal.aborted) {
-                return {
+                return finishOperation({
                     ok: false,
                     partial: false,
                     message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
-                };
+                });
             }
             this.host.log("Could not prepare memory", error);
-            return {
+            return finishOperation({
                 ok: false,
                 partial: false,
                 message: getMemoryPrepareFailureMessage(error),
-            };
+            });
         } finally {
             this.activeOperationControllers.delete(abortController);
+            this.finishPreparationOutcome(
+                activePreparation,
+                action,
+                operationResult,
+                terminalError,
+                finalProgressEvent,
+            );
             this.clearActivePreparationStatus(activePreparation);
-            progress.notice.hide();
+            progress.dispose();
+            if (this.activePreparationDisplay === progress) this.activePreparationDisplay = null;
         }
     }
 
     async prepareFromCommand(): Promise<void> {
         await this.runManualCommand(async () => {
+            const activePreparation = this.activePreparationRun;
+            if (await this.reuseActivePreparationForCommand("rebuild")) return;
+            if (activePreparation && this.isActivePreparationCurrent(activePreparation)) {
+                new Notice(memoryT("plugin.memory.notice.actionAlreadyRunning"), 4000);
+                return;
+            }
             const plan = await this.getMaintenancePlan();
             await this.runApprovedCommandPlan(plan);
         });
@@ -1070,6 +1277,12 @@ export class MemoryManager {
 
     async updateFromCommand(): Promise<void> {
         await this.runManualCommand(async () => {
+            const activePreparation = this.activePreparationRun;
+            if (await this.reuseActivePreparationForCommand("refresh")) return;
+            if (activePreparation && this.isActivePreparationCurrent(activePreparation)) {
+                new Notice(memoryT("plugin.memory.notice.actionAlreadyRunning"), 4000);
+                return;
+            }
             const plan = await this.getMaintenancePlan();
             const actionPlan: MemoryMaintenancePlan = plan.reason === "ready"
                 ? {
@@ -1098,6 +1311,13 @@ export class MemoryManager {
     }
 
     private async runApprovedCommandPlan(plan: MemoryMaintenancePlan): Promise<void> {
+        const requestedAction = this.getPreparationAction(plan);
+        if (await this.reuseActivePreparationForCommand(requestedAction)) return;
+        const activePreparation = this.activePreparationRun;
+        if (activePreparation && this.isActivePreparationCurrent(activePreparation)) {
+            new Notice(memoryT("plugin.memory.notice.actionAlreadyRunning"), 4000);
+            return;
+        }
         if (plan.reason === "ready") {
             new Notice(memoryT("plugin.memory.notice.readyNotesUnchanged"), 3000);
             return;
@@ -1115,10 +1335,21 @@ export class MemoryManager {
         if (decision !== "use-memory") return;
         if (!this.isMemoryEnabled() || !this.isLifecycleCurrent(lifecycleToken)
             || requestIdentity !== this.vss.getEmbeddingConfigurationIdentity()) return;
-        const result = await this.prepareMemory(actionPlan);
-        if (!result.ok) {
-            new Notice(result.message ?? memoryT("plugin.notice.memoryPrepareFailed"), 7000);
-        }
+        await this.prepareMemory(actionPlan);
+    }
+
+    private async reuseActivePreparationForCommand(requestedAction: MemoryPreparationAction): Promise<boolean> {
+        const activePreparation = this.activePreparationRun;
+        if (!activePreparation || !this.isActivePreparationCurrent(activePreparation)) return false;
+        if (!this.canReuseActivePreparation(activePreparation, requestedAction)) return false;
+        await this.prepareMemory({
+            reason: "changed-notes",
+            action: requestedAction,
+            notesToCheck: 0,
+            requiresApproval: true,
+            canAnswerNow: true,
+        });
+        return true;
     }
 
     private enqueueBackgroundTask(kind: BackgroundTaskKind, reason: string): void {
@@ -1303,6 +1534,23 @@ export class MemoryManager {
         return this.host.settings.memoryEnabled;
     }
 
+    /**
+     * Existing Memory may answer while lexical or refresh work is pending.
+     * This deliberately uses VSS's admitted state, not the UI's preparing overlay;
+     * a full rebuild remains answer-now even if the old snapshot is still ready.
+     */
+    private isExistingMemoryReadable(preparationAction?: MemoryPreparationAction): boolean {
+        if (!this.isMemoryEnabled() || this.shuttingDown) return false;
+        if (this.embeddingActivationPromise || this.embeddingActivationError) return false;
+        if (this.host.settings.aiConnections
+            && this.vss.getEmbeddingConfigurationIdentity() !== this.embeddingConfigurationIdentity) return false;
+        const activePreparation = this.activePreparationRun;
+        if (activePreparation && !this.isActivePreparationCurrent(activePreparation)) return false;
+        const action = activePreparation?.action ?? preparationAction;
+        if (action === "rebuild") return false;
+        return this.vss.getMemoryStatusSnapshot().status === "ready";
+    }
+
     private isLifecycleCurrent(token: number): boolean {
         return !this.shuttingDown && token === this.lifecycleVersion;
     }
@@ -1343,6 +1591,89 @@ export class MemoryManager {
         if (this.activePreparationStatus && this.isSamePreparation(this.activePreparationStatus, activePreparation)) {
             this.activePreparationStatus = null;
         }
+    }
+
+    private finishPreparationOutcome(
+        activePreparation: ActivePreparationIdentity,
+        action: MemoryPreparationAction,
+        result: MemoryPrepareResult | undefined,
+        error?: unknown,
+        finalProgressEvent?: VSSProgressEvent,
+    ): void {
+        const run = this.activePreparationRun;
+        const activeProgress = this.activePreparationStatus
+            && this.isSamePreparation(this.activePreparationStatus, activePreparation)
+            ? this.activePreparationStatus
+            : undefined;
+        const progress = finalProgressEvent
+            ? {
+                action,
+                message: formatMemoryProgressEvent(finalProgressEvent),
+                phase: finalProgressEvent.phase,
+                filesDone: finalProgressEvent.filesDone,
+                filesTotal: finalProgressEvent.filesTotal,
+                chunksEmbedded: finalProgressEvent.chunksEmbedded,
+                chunksTotal: finalProgressEvent.chunksTotal,
+                lexicalRowsDone: finalProgressEvent.lexicalRowsDone,
+                lexicalRowsTotal: finalProgressEvent.lexicalRowsTotal,
+                failed: finalProgressEvent.failed,
+                startedAt: activeProgress?.startedAt ?? Date.now(),
+            }
+            : activeProgress;
+        const expectedIdentity = run
+            && this.isSamePreparation(run, activePreparation)
+            ? run.embeddingConfigurationIdentity ?? null
+            : null;
+        const currentIdentity = this.vss.getEmbeddingConfigurationIdentity();
+        const lifecycleCurrent = this.isActivePreparationCurrent(activePreparation);
+        const sameConfiguration = expectedIdentity === currentIdentity;
+        if (!lifecycleCurrent || !sameConfiguration) return;
+
+        const outcome: MemoryPreparationOutcome["outcome"] = result?.ok
+            ? result.partial ? "partial" : "completed"
+            : run?.userCancelled
+                ? "cancelled"
+                : result?.aborted || result?.summary?.aborted || !this.isLifecycleCurrent(activePreparation.lifecycleVersion)
+                    ? "interrupted"
+                    : "failed";
+        const message = this.getPreparationOutcomeMessage(outcome, action, result, error);
+        this.lastPreparationConfigurationIdentity = currentIdentity;
+        this.lastPreparation = {
+            action,
+            outcome,
+            message,
+            phase: progress?.phase,
+            filesDone: progress?.filesDone,
+            filesTotal: progress?.filesTotal,
+            lexicalRowsDone: progress?.lexicalRowsDone,
+            lexicalRowsTotal: progress?.lexicalRowsTotal,
+            failed: progress?.failed ?? result?.summary?.failed,
+            errorCode: error ? getErrorCode(error) : undefined,
+            startedAt: progress?.startedAt ?? Date.now(),
+            finishedAt: Date.now(),
+        };
+        new Notice(message, outcome === "completed" ? 3000 : 5000);
+        this.host.notifyStatusChanged();
+    }
+
+    private getPreparationOutcomeMessage(
+        outcome: MemoryPreparationOutcome["outcome"],
+        action: MemoryPreparationAction,
+        result: MemoryPrepareResult | undefined,
+        error: unknown,
+    ): string {
+        if (outcome === "partial") {
+            return result?.message ?? memoryT("plugin.memory.notice.updatedPartial");
+        }
+        if (outcome === "cancelled") return memoryT("plugin.memory.notice.preparationCancelled");
+        if (outcome === "interrupted") return memoryT("plugin.memory.notice.preparationInterrupted");
+        if (error) return getMemoryPrepareFailureMessage(error);
+        if (outcome === "completed") {
+            return action === "rebuild-lexical"
+                ? memoryT("plugin.memory.notice.searchReadyNotesUnchanged")
+                : result?.message ?? memoryT("plugin.memory.notice.readyNotesUnchanged");
+        }
+        return result?.message ?? memoryT("plugin.memory.message.prepareFailedAnswerNow");
     }
 
     private async canRunAutoMaintenance(): Promise<boolean> {
@@ -1611,7 +1942,66 @@ export class MemoryApprovalModal extends Modal {
 function createMemoryProgressNotice(
     title: string,
     onCancel?: () => void,
-): { notice: Notice; cancelButton?: HTMLButtonElement } {
+): MemoryProgressDisplay {
+    let notice = createMemoryProgressNoticeInstance(title, onCancel);
+    let dismissed = false;
+    let lastText: string | undefined;
+    const markDismissed = (event: Event) => {
+        const target = event.target;
+        if (target instanceof HTMLElement && target.closest("button") !== null) return;
+        dismissed = true;
+    };
+    notice.containerEl.addEventListener("click", markDismissed);
+    const replaceNotice = () => {
+        notice.containerEl.removeEventListener("click", markDismissed);
+        notice = createMemoryProgressNoticeInstance(title, onCancel);
+        lastText = undefined;
+        notice.containerEl.addEventListener("click", markDismissed);
+    };
+    return {
+        get notice() { return notice; },
+        get cancelButton() { return noticeCancelButtons.get(notice); },
+        update(text: string) {
+            if (dismissed || !isNoticeConnected(notice)) {
+                if (!isNoticeConnected(notice)) dismissed = true;
+                return;
+            }
+            if (lastText === text) return;
+            lastText = text;
+            setMemoryProgressStep(notice, text);
+        },
+        showAgain(status: MemoryPreparationStatus) {
+            if (!dismissed && isNoticeConnected(notice)) {
+                lastText = status.message;
+                setMemoryProgressStep(notice, status.message);
+                return;
+            }
+            dismissed = false;
+            replaceNotice();
+            const cancelButton = noticeCancelButtons.get(notice);
+            if (cancelButton) {
+                cancelButton.disabled = status.phase === "finalizing" || status.phase === "cancelling";
+            }
+            lastText = status.message;
+            setMemoryProgressStep(notice, status.message);
+        },
+        dispose() {
+            notice.containerEl.removeEventListener("click", markDismissed);
+            notice.hide();
+        },
+    };
+}
+
+const noticeCancelButtons = new WeakMap<Notice, HTMLButtonElement>();
+
+function isNoticeConnected(notice: Notice): boolean {
+    return notice.containerEl.isConnected && notice.messageEl.isConnected;
+}
+
+function createMemoryProgressNoticeInstance(
+    title: string,
+    onCancel?: () => void,
+): Notice {
     const fragment = getPlatformDocument().win.createFragment();
     const wrapper = fragment.createDiv({ attr: { class: "pa-notice" } });
     const header = wrapper.createDiv({ cls: "pa-notice__header" });
@@ -1622,9 +2012,12 @@ function createMemoryProgressNotice(
     if (onCancel) {
         cancelButton = header.createEl("button", {
             text: memoryT("plugin.memory.approval.cancel"),
-            attr: { type: "button" },
+                attr: { type: "button" },
         });
-        cancelButton.addEventListener("click", onCancel, { once: true });
+        cancelButton.addEventListener("click", (event) => {
+            event.stopPropagation();
+            onCancel();
+        }, { once: true });
     }
     wrapper.createDiv({ cls: "pa-notice__body" });
     const notice = new Notice(fragment, 0);
@@ -1636,7 +2029,8 @@ function createMemoryProgressNotice(
         border: "none",
         padding: "0",
     });
-    return { notice, cancelButton };
+    if (cancelButton) noticeCancelButtons.set(notice, cancelButton);
+    return notice;
 }
 
 function setMemoryProgressStep(notice: Notice, text: string): void {
@@ -1649,7 +2043,10 @@ function setMemoryProgressStep(notice: Notice, text: string): void {
     });
 }
 
-function createMemoryProgressUpdater(notice: Notice, shouldStop: () => boolean = () => false): (event: VSSProgressEvent) => void {
+function createMemoryProgressUpdater(
+    progress: MemoryProgressDisplay,
+    shouldStop: () => boolean = () => false,
+): (event: VSSProgressEvent) => void {
     let lastUpdatedAt = 0;
     return (event) => {
         if (shouldStop()) return;
@@ -1659,7 +2056,7 @@ function createMemoryProgressUpdater(notice: Notice, shouldStop: () => boolean =
         const force = event.phase === "retrying" || event.phase === "finalizing" || event.phase === "ready";
         if (!force && now - lastUpdatedAt < 350) return;
         lastUpdatedAt = now;
-        setMemoryProgressStep(notice, text);
+        progress.update(text);
     };
 }
 
@@ -1685,10 +2082,14 @@ function formatMemoryProgressEvent(event: VSSProgressEvent): string {
         );
     }
     if (event.phase === "writing") {
-        return formatCountProgress("Saving memory", event.filesDone, event.filesTotal);
+        return formatCountProgress(
+            memoryT("plugin.memory.progress.processingNotes"),
+            event.filesDone,
+            event.filesTotal,
+        );
     }
     if (event.phase === "embedding") {
-        return formatCountProgress("Preparing notes", event.chunksEmbedded, event.chunksTotal);
+        return memoryT("plugin.memory.progress.processingNotes");
     }
     if (event.phase === "scanning") {
         return formatCountProgress("Checking notes", event.filesDone, event.filesTotal, event.currentFile);

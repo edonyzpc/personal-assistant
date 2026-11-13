@@ -120,19 +120,28 @@ describe('per-invocation task source Memory host', () => {
         const signal = new AbortController().signal;
         const owner = new AbortController().signal;
         await fixture.scoped.memorySearch.ensureReadyForChat('query', signal, owner);
-        expect(fixture.ensureReadyForChat).toHaveBeenCalledWith('query', signal, owner, { existingOnly: true });
+        expect(fixture.ensureReadyForChat).toHaveBeenCalledWith('query', signal, owner, {
+            existingOnly: true,
+            beforePreparation: expect.any(Function),
+        });
     });
 
     it('retains ordinary Memory readiness behavior for the complete vault', async () => {
         const fixture = harness({ allowedPaths: null, excludedPaths: [] });
         await fixture.scoped.memorySearch.ensureReadyForChat('query');
-        expect(fixture.ensureReadyForChat).toHaveBeenCalledWith('query', undefined, undefined, undefined);
+        expect(fixture.ensureReadyForChat).toHaveBeenCalledWith('query', undefined, undefined, {
+            existingOnly: undefined,
+            beforePreparation: expect.any(Function),
+        });
     });
 
     it('preserves an explicit existing-only request even for the complete vault', async () => {
         const fixture = harness({ allowedPaths: null, excludedPaths: [] });
         await fixture.scoped.memorySearch.ensureReadyForChat('query', undefined, undefined, { existingOnly: true });
-        expect(fixture.ensureReadyForChat).toHaveBeenCalledWith('query', undefined, undefined, { existingOnly: true });
+        expect(fixture.ensureReadyForChat).toHaveBeenCalledWith('query', undefined, undefined, {
+            existingOnly: true,
+            beforePreparation: expect.any(Function),
+        });
     });
 
     it('intersects a vault-wide search before cached content is read, using only enumerated paths', async () => {

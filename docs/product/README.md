@@ -56,6 +56,8 @@
 
 ## Memory、Insight 与 Review
 
+- [Memory Preparation Lifecycle](./specs/pa-memory-preparation-lifecycle-product-spec.md) — B-197：Chat 确认后后台准备、进度重看与准确终态。
+
 - [Memory Marker Recovery](./specs/pa-memory-marker-recovery-product-spec.md) — B-164：marker 异常优先复用本地数据的稳定产品范围。
 - [First-Run AI Setup and Silent Memory Preparation](./specs/pa-silent-first-use-memory-preparation-product-spec.md)
 - [Memory Control Center](./specs/pa-memory-control-center-product-spec.md)

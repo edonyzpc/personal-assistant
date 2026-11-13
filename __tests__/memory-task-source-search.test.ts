@@ -42,7 +42,10 @@ describe('B-135 scoped Memory search and later projection', () => {
         const h = setup();
         const result = await h.tool.search('launch', undefined, undefined, h.guard);
         expect(h.searchHybrid).toHaveBeenCalledWith('launch', expect.objectContaining({ noteScope: { allowedPaths: ['a.md'], excludedPaths: [] } }));
-        expect(h.ensureReady).toHaveBeenCalledWith('launch', undefined, undefined, { existingOnly: true });
+        expect(h.ensureReady).toHaveBeenCalledWith('launch', undefined, undefined, {
+            existingOnly: true,
+            beforePreparation: expect.any(Function),
+        });
         expect(result.documents).toHaveLength(1);
         expect(result.documents[0].content).toContain('Launch on Monday');
         expect(h.invoke).toHaveBeenCalledTimes(1);

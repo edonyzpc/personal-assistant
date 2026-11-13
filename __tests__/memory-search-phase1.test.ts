@@ -19,6 +19,7 @@ import type {
 import type { LatestMemorySourceMaterial } from "../src/ai-services/AiServiceHost";
 import type { QueryTemporalIntent } from "../src/ai-services/query-rewriter";
 import type { RetrievalDiagnosticEventInput } from "../src/ai-services/retrieval-diagnostics";
+import type { MemorySearchPort } from "../src/memory/MemorySearchPort";
 import { createHeadingAwareMarkdownChunks } from "../src/vss/markdown-chunker";
 import { createProviderRequestScope } from "../src/ai-services/obsidian-fetch";
 import type { TaskSourceReadGuard } from "../src/ai-services/task-source-read-guard";
@@ -155,11 +156,9 @@ describe("Phase 1 latest Memory source materialization", () => {
 
 describe("Memory search readiness cancellation", () => {
     it("passes the active tool signal into Memory readiness", async () => {
-        const ensureReadyForChat = jest.fn(async (
-            _query?: string,
-            _signal?: AbortSignal,
-            _ownerSignal?: AbortSignal,
-        ) => ({ decision: "answer-now" as const }));
+        const ensureReadyForChat = jest.fn<MemorySearchPort["ensureReadyForChat"]>(
+            async () => ({ decision: "answer-now" as const }),
+        );
         const tool = new MemorySearchTool({
             memorySearch: { ensureReadyForChat },
         } as never, {} as never);
@@ -171,15 +170,14 @@ describe("Memory search readiness cancellation", () => {
             "question",
             controller.signal,
             controller.signal,
+            undefined,
         );
     });
 
     it("keeps the attempt signal separate from the detached preparation owner", async () => {
-        const ensureReadyForChat = jest.fn(async (
-            _query?: string,
-            _signal?: AbortSignal,
-            _ownerSignal?: AbortSignal,
-        ) => ({ decision: "answer-now" as const }));
+        const ensureReadyForChat = jest.fn<MemorySearchPort["ensureReadyForChat"]>(
+            async () => ({ decision: "answer-now" as const }),
+        );
         const tool = new MemorySearchTool({
             memorySearch: { ensureReadyForChat },
         } as never, {} as never);
@@ -201,6 +199,7 @@ describe("Memory search readiness cancellation", () => {
             "question",
             attempt.signal,
             owner.signal,
+            undefined,
         );
     });
 });

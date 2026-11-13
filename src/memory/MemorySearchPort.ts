@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import type { MemoryDecisionResult } from "../memory-manager";
+import type { MemoryChatReadinessOptions, MemoryDecisionResult } from "../memory-manager";
 import type { VSS } from "../vss";
 
 export type MemorySearchHybridOptions = Parameters<VSS["searchHybrid"]>[1];
@@ -20,7 +20,7 @@ export interface MemorySearchPort {
         query?: string,
         signal?: AbortSignal,
         preparationOwnerSignal?: AbortSignal,
-        options?: { existingOnly?: boolean },
+        options?: MemoryChatReadinessOptions,
     ): Promise<MemoryDecisionResult>;
     searchHybrid(query: string, opts?: MemorySearchHybridOptions): Promise<MemorySearchHybridResult>;
     getChunksByPath(paths: string[], opts?: MemoryChunksByPathOptions): Promise<MemoryChunksByPathResult>;

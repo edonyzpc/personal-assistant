@@ -85,6 +85,7 @@ import {
     MemoryManager,
     type MemoryDecisionResult,
     type MemoryPreparationStatus,
+    type MemoryPreparationOutcome,
 } from './memory-manager';
 import { getVaultConfigDirStorageScope } from './obsidian-paths';
 import { confirmUserAction } from './confirm';
@@ -1171,6 +1172,13 @@ export class PluginManager extends Plugin {
                         () => this.memoryManager?.updateFromCommand() ?? Promise.resolve(),
                     )
                     : Promise.resolve(),
+                getStatusSnapshot: () => this.memoryManager?.getStatusSnapshot() ?? {
+                    enabled: this.settings.memoryEnabled,
+                    status: "disabled",
+                    dirtyCount: 0,
+                    verificationPending: 0,
+                },
+                showPreparationProgress: () => this.memoryManager?.showPreparationProgress() ?? false,
                 showTechnicalStatus: () => void this.showTechnicalMemoryStatus(),
                 onStatusChanged: (listener) => this.onMemoryStatusChanged(listener),
             }),
@@ -8507,6 +8515,7 @@ export class PluginManager extends Plugin {
 
         const activePreparation = this.memoryManager?.getActivePreparationStatus() ?? null;
         if (activePreparation) {
+            this.memoryManager?.showPreparationProgress();
             this.showTechnicalMemoryNotice(
                 this.buildTechnicalMemoryInProgressModel(activePreparation, this.vss.getMaintenanceState()),
                 5000,
@@ -8516,11 +8525,19 @@ export class PluginManager extends Plugin {
 
         const stats = await this.vss.getStats({ mode: "manual" });
         const maintenance = this.vss.getMaintenanceState();
-        this.showTechnicalMemoryNotice(this.buildTechnicalMemoryStatusModel(stats, maintenance), 7000);
+        const currentStatus = this.buildTechnicalMemoryStatusModel(stats, maintenance);
+        const lastPreparation = this.memoryManager?.getStatusSnapshot().lastPreparation;
+        this.showTechnicalMemoryNotice(
+            lastPreparation
+                ? this.withTechnicalMemoryLastPreparation(currentStatus, lastPreparation)
+                : currentStatus,
+            7000,
+        );
     }
 
     async runManualMemoryAction(action: () => Promise<void>): Promise<void> {
         await this.memoryIntegration.runManualAction(action, () => {
+            if (this.memoryManager?.showPreparationProgress()) return;
             new Notice(this.t("plugin.memory.notice.actionAlreadyRunning"), 4000);
         });
     }
@@ -8634,6 +8651,54 @@ export class PluginManager extends Plugin {
             summaryTone: "warning",
             details,
             notes: [this.t("plugin.memory.diagnostics.inProgressNote")],
+        };
+    }
+
+    private buildTechnicalMemoryLastPreparationDetails(
+        lastPreparation: MemoryPreparationOutcome,
+    ): TechnicalMemoryDetail[] {
+        const details: TechnicalMemoryDetail[] = [
+            {
+                label: this.t("plugin.memory.diagnostics.lastResultOperation"),
+                value: lastPreparation.action === "refresh"
+                    ? this.t("plugin.memory.diagnostics.operation.update")
+                    : this.t("plugin.memory.diagnostics.operation.prepare"),
+            },
+            {
+                label: this.t("plugin.memory.diagnostics.lastResult"),
+                value: this.t(`plugin.memory.diagnostics.outcome.${lastPreparation.outcome}`),
+                tone: lastPreparation.outcome === "failed" ? "danger"
+                    : lastPreparation.outcome === "completed" ? undefined : "warning",
+            },
+        ];
+        if (typeof lastPreparation.filesDone === "number") {
+            details.push({
+                label: this.t("plugin.memory.diagnostics.processed"),
+                value: typeof lastPreparation.filesTotal === "number"
+                    ? this.t("plugin.memory.diagnostics.processedValue", {
+                        done: lastPreparation.filesDone,
+                        total: lastPreparation.filesTotal,
+                    })
+                    : String(lastPreparation.filesDone),
+            });
+        }
+        details.push({
+            label: this.t("plugin.memory.diagnostics.progress"),
+            value: lastPreparation.message,
+        });
+        return details;
+    }
+
+    private withTechnicalMemoryLastPreparation(
+        currentStatus: TechnicalMemoryNoticeModel,
+        lastPreparation: MemoryPreparationOutcome,
+    ): TechnicalMemoryNoticeModel {
+        return {
+            ...currentStatus,
+            details: [
+                ...currentStatus.details,
+                ...this.buildTechnicalMemoryLastPreparationDetails(lastPreparation),
+            ],
         };
     }
 

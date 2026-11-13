@@ -169,6 +169,8 @@ import {
     EXECUTE_OPERATIONS_TOOL_NAME,
 } from "./operations/types";
 import {
+    PREPARING_MEMORY_RETRIEVAL_GUIDANCE,
+    UNAVAILABLE_MEMORY_RETRIEVAL_GUIDANCE,
     chatToolResultToPaAgentToolExecutionResult,
     createPaAgentCapabilityToolExecutor,
     isAllowedHostToolCall,
@@ -978,7 +980,8 @@ export function isSafeSourceFreeToolObservation(
             && (observation.rerankVerdict === "relevant" || observation.rerankVerdict === "none_relevant")
             && (observation.retrievalGuidance === undefined
                 || observation.retrievalGuidance === "Memory evidence is currently unavailable; do not infer note content."
-                || observation.retrievalGuidance === "Memory retrieval is currently unavailable; empty results do not establish that no matching notes exist. Do not infer note content.");
+                || observation.retrievalGuidance === UNAVAILABLE_MEMORY_RETRIEVAL_GUIDANCE
+                || observation.retrievalGuidance === PREPARING_MEMORY_RETRIEVAL_GUIDANCE);
     }
     if (message.isError || message.content.metadata?.outcome !== "success"
         || fact?.kind !== "no_match" || envelope.status !== "ok"
@@ -3021,6 +3024,8 @@ export class PaAgentRuntime {
             platform: this.options.runtimePlatform ?? "desktop",
             memoryEvidenceRegistry,
             memoryRecoveryCoordinator,
+            backgroundMemoryPreparation: true,
+            memorySearchTool: this.memoryTool,
             onToolResult: observation => {
                 if (observation.toolName === 'prepare_ghost_post' && ghostPublishingCapability
                     && this.toolRegistry.get(observation.toolName) === ghostPublishingCapability

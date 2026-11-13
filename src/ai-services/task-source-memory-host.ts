@@ -58,8 +58,20 @@ export function createTaskSourceMemoryHost(
     const memorySearch: MemorySearchPort = {
         async ensureReadyForChat(query, signal, preparationOwnerSignal, options) {
             assertCurrent();
-            const result = await host.memorySearch.ensureReadyForChat(query, signal, preparationOwnerSignal,
-                restricted ? { ...options, existingOnly: true } : options);
+            const beforePreparation = options?.beforePreparation;
+            const result = await host.memorySearch.ensureReadyForChat(
+                query,
+                signal,
+                preparationOwnerSignal,
+                {
+                    ...options,
+                    existingOnly: restricted ? true : options?.existingOnly,
+                    beforePreparation: () => {
+                        beforePreparation?.();
+                        assertCurrent();
+                    },
+                },
+            );
             assertCurrent();
             return result;
         },

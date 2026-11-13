@@ -97,6 +97,13 @@ export function installChatPluginIntegration(plugin: any): void {
                         () => plugin.memoryManager?.updateFromCommand() ?? Promise.resolve(),
                     )
                     : Promise.resolve(),
+                getStatusSnapshot: () => plugin.memoryManager?.getStatusSnapshot() ?? {
+                    enabled: plugin.settings.memoryEnabled,
+                    status: "disabled",
+                    dirtyCount: 0,
+                    verificationPending: 0,
+                },
+                showPreparationProgress: () => plugin.memoryManager?.showPreparationProgress() ?? false,
                 showTechnicalStatus: () => void plugin.showTechnicalMemoryStatus(),
                 onStatusChanged: (listener) => plugin.onMemoryStatusChanged(listener),
             }),

@@ -138,6 +138,13 @@ export function createChatHost(
         }),
         prepareFromCommand: async () => undefined,
         updateFromCommand: async () => undefined,
+        getStatusSnapshot: () => ({
+            enabled: true,
+            status: "ready",
+            dirtyCount: 0,
+            verificationPending: 0,
+        }),
+        showPreparationProgress: () => false,
         showTechnicalStatus: () => undefined,
         onStatusChanged: () => () => undefined,
         ...memoryStatusOverrides,

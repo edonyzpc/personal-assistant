@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-11-01
+Updated: 2026-11-13
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-080 | Chat 确认后后台准备 Memory | Accepted | 准备与检索期限分离、真实取消、进度重看及准确终态；保留来源/配置准入 | [Record](./dec-080-memory-preparation-lifecycle.md) |
 | DEC-079 | Settings AI 配置分层与一致导航 | Accepted | 总览摘要、AI 内部详情、直接模型编辑、去快速跳转及一致图标；六项审查补充见产品／开发设计 | [Record](./dec-079-settings-ai-configuration-ux.md) |
 | DEC-078 | SDK 协议复用与 PA Agent 边界 | Accepted | OpenAI统一Responses、Custom固定Chat Completions；SDK实现协议，PA维护数据与执行契约 | [Record](./dec-078-sdk-protocol-and-agent-boundary.md) |
 | DEC-077 | 多服务连接、默认继承与可复用的 Memory | Accepted | 三用途默认继承/按需独立；切换不自动准备且保留各配置Memory；OpenAI生成/参考/编辑 | [Record](./dec-077-multi-provider-connections.md) |

@@ -1,6 +1,6 @@
 # VSS SQLite/WASM Current Architecture
 
-Updated: 2026-10-08
+Updated: 2026-11-13
 
 Status: Current runtime contract. The SQLite/WASM baseline was verified against `src/vss/`, `src/plugin.ts`, `src/memory-manager.ts`, the current package manifest, and VSS tests during the documentation restructure; DEC-028/B-126 owns silent first-use Memory, while DEC-031 is the dated B-125 amendment for the platform-scoped retrieval shipping default and tracks its current implementation/validation in the [B-125 最终验证](../archive/2026/b125-retrieval-shipping-default-validation.md).
 
@@ -305,6 +305,18 @@ Additional lifecycle rules:
 - Hot reload uses a scope-specific shutdown barrier before a new instance opens the same OPFS scope.
 - Foreground lock recovery is short and non-blocking; it must not trigger embeddings or silently load legacy JSON fallback.
 - Manual prepare/technical diagnostics may use bounded retry.
+- [DEC-080](../product/decisions/dec-080-memory-preparation-lifecycle.md) extends
+  independent preparation ownership to explicitly confirmed Chat preparation.
+  Schema, capability and source admission precede confirmation outside the short
+  retrieval budget; Manager rechecks source/configuration/lifecycle before effects.
+  The accepted operation keeps each real Chat owner until settlement or cancellation,
+  while Chat immediately receives its preparing fact through the normal tool-result
+  projection. The last exclusive consumer aborts the operation; an observer does not
+  gain shared ownership. All Chat entries, including Pagelet context-only handoffs,
+  use this path. Independent Pagelet and legacy synchronous calls retain their old
+  attempt cancellation behavior; ready reads do not require a preparation owner.
+  [B-197 Tracker](../development/active/memory-preparation-lifecycle/tracker.md)
+  owns implementation and validation status.
 - Concurrent first-use Chat/Pagelet calls reuse the same active preparation. The
   detached DEC-028 preparation is owned by a Host-only run signal, not by the
   shorter retrieval-attempt signal：normal Tool completion leaves it running, while

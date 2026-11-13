@@ -1,6 +1,6 @@
 # VSS Embedding 刷新方案说明
 
-> **Status (2026-10-08)**: Current refresh/maintenance contract. DEC-028/B-126 is the approved first-use amendment and its implementation validation is tracked in the [B-126 最终验证](../archive/2026/b126-first-run-memory-validation.md); DEC-054 locally adds marker recovery before first-use classification. Ollama support was removed in v2.0.0; the current provider matrix is Qwen plus supported OpenAI-compatible embedding providers.
+> **Status (2026-11-13)**: Current refresh/maintenance contract. DEC-028/B-126 is the approved first-use amendment and its implementation validation is tracked in the [B-126 最终验证](../archive/2026/b126-first-run-memory-validation.md); DEC-054 locally adds marker recovery before first-use classification. DEC-080/B-197 owns confirmed Chat background preparation and its lifecycle. Ollama support was removed in v2.0.0; the current provider matrix is Qwen plus supported OpenAI-compatible embedding providers.
 ## 目标
 
 在保证 Memory 搜索结果新鲜度的前提下，降低频繁编辑和大 vault 重建时的 embedding 请求数与 Token 消耗，让准备和后台维护过程不阻塞聊天，并在限流或网络抖动时给用户明确反馈。
@@ -24,6 +24,7 @@
 
 - **事件改造**：`vault.create` / `vault.modify` 先观察本地索引 metadata：启动期旧 mtime replay 仍会经过轻量 observation，只有 metadata 已匹配的 replay 被忽略；普通 `vault.modify` 即使 metadata 匹配也会进入 verify queue，metadata drift 进入 verify queue，缺失 indexed record 才标记 dirty；`vault.rename` 删除旧 path 并标记新 path，`vault.delete` 删除本地索引记录；事件本身不直接计算 embedding。
 - **首次准备与自动维护**：[DEC-028](../product/decisions/dec-028-silent-memory-auto-prepare.md) 允许首次 Chat 静默启动一个 whole eligible vault rebuild 并立即 answer-now；其他 recovery/manual/costly prepare 仍需确认。确认路径或 DEC-028 路径只有在 durable usable ready 且未 abort/total-fail 后才把 `memoryApprovalPolicy` 升级为 `auto-refresh-after-prepare`；后续 changed notes 才由后台 reconcile/verify/refresh 维护，Chat 不等待 refresh。
+- **Chat 确认后准备生命周期**：[DEC-080](../product/decisions/dec-080-memory-preparation-lifecycle.md) 将所有 Chat 的准备确认移到短检索预算之外；批准后重验来源、配置与生命周期，再由 Manager 后台执行，当前回答立即收到准确的准备中事实。每个 Chat 消费者绑定真实 caller owner，短 attempt 或正常回答结束不取消已接受工作；最后一个独占消费者 Stop/supersede 才取消。缺 owner 的旧同步调用、独立 Pagelet 与 first-use 例外保持原语义。实际检索仍在原预算内并只读复核 readiness；实现验收见 [B-197 Tracker](../development/active/memory-preparation-lifecycle/tracker.md)。
 - **Destructive rebuild marker truth gate**：在 reset 或 embedding-provider call 前，rebuild 必须 durable 保存 whole-vault retry journal，并以 hydrated known absence 或同一 generation 的 atomic durable invalidation 建立 marker truth。Marker unknown 且无法 durable invalidate 时保留旧 index/marker、reset/provider 为 0；首次 Chat 仍 answer-now，等待 state store 恢复。该规则不改变普通 non-destructive maintenance 的既有 process-local retry 语义。
 - **Destructive rebuild recovery identity**：reset 前与 marker/dirty journal 原子保存原始 `first-use`、`settings-changed` 或 `local-memory-missing` rebuild guard；hydrate 优先 guard，abort/total failure 保留它。Deferred success 返回 opaque prepared-run handle；只有相同 current handle 才能 admit 或 rollback。旧 lifecycle 的 stale handle 为 no-op，不能清除后继 rebuild；只有 durable ready 与 Memory policy/lifecycle admission 都成功才清 guard。
 - **本地静默状态**：后台自动维护只写设备本地 SQLite/WASM OPFS Memory index，并把 marker 与 dirty journal 写入本地 IndexedDB state store；默认不在 vault 中创建 `vss-index-state/`、`manifest.json` 或 `vss-cache/dirty.json`。如果 IndexedDB 暂时打不开，VSS 先把 marker/dirty state 保留在进程内，后续 update/status 路径重试并落盘。
@@ -80,15 +81,11 @@ Qwen v3/v4 当前使用 `900,000 TPM` 作为安全预算。实现上用保守字
 - `retrying`：embedding batch 遇到可重试错误，包含 `retryDelayMs`。
 - `ready`：准备完成。
 
-`MemoryManager.prepareMemory()` 使用同一个长驻 Notice 更新进度，常见文案包括：
+`MemoryManager.prepareMemory()` 的 active run 拥有一个进度展示对象。Notice 可关闭；后台事件只更新快照与仍可见的展示，不自动重弹。Chat 标签以 active snapshot 为先；显式“查看进度”或 Status 从当前阶段重开 Notice，lexical finalizing 阶段仍不可取消。具体 Prepare/Update 复用相容任务；被动查看不获得共享所有权。
 
-- `Scanning notes 120/3000`
-- `Embedding chunks 120/661`
-- `Writing index`
-- `Retrying in 5s`
-- `Ready`
+普通 UI 用阶段和 `filesDone/filesTotal` 表示“已处理笔记”，不将动态片段数当成笔记总数，也不将已处理等同成功。未知文件总数只显示阶段；内部事件仍保留诊断计数。
 
-DOM 更新节流到约 350ms，`retrying` 和 `ready` 会立即显示。
+DOM 更新沿用约 350ms 节流，`retrying`、`finalizing` 和 `ready` 立即显示。Manager 统一发送一次终态通知，并保留当前进程/配置绑定的安全最近结果（completed、partial、failed、cancelled、interrupted）；新 run 替换旧结果，旧配置或生命周期不得发布迟到结果。Status 同时展示当前可用性与最近操作结果，不用历史成功代替当前 Ready。没有持久任务台账或额外轮询。
 
 ## 失败处理
 

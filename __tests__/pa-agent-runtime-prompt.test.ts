@@ -43,8 +43,15 @@ async function runGhostRuntimeTrace(submit: GhostHostBinding["submit"], calls: A
     debugRecorder?: import("../src/ai-services/agent-debug-port").AgentDebugRunRecorder,
     options: { host?: AiServiceHost; precedingRead?: 'vault' | 'memory'; callText?: string; reuseCallId?: boolean;
         readBetweenPreparations?: boolean; onGhostResult?: () => void; composed?: boolean;
-        composedCodePrefix?: string; runtimeOptions?: PaAgentRuntimeOptions } = {}) {
+        composedCodePrefix?: string; preparingMemoryRead?: boolean; runtimeOptions?: PaAgentRuntimeOptions } = {}) {
     const host = options.host ?? createPromptHost();
+    if (options.preparingMemoryRead) {
+        host.memorySearch.ensureReadyForChat = async () => ({
+            decision: "answer-now",
+            message: "Memory is being prepared in the background. It will be used automatically once ready.",
+            preparationState: "running",
+        });
+    }
     const inputLineage = completeInputLineage([{ kind: "user-text", messageId: "ghost-r2b-user" }]);
     const providerTexts: string[] = [];
     const lifecycle: Array<{ type: string; turnId?: string; message?: PaAgentMessage }> = [];
@@ -1048,7 +1055,11 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(secondGroup).not.toContain('first-owned-operation');
     });
 
-    it.each(['prepared', 'needs_attention'] as const)("keeps the submitted Ghost %s receipt while removing excluded Memory ancestry at the next loop", async status => {
+    it.each([
+        { status: 'prepared' as const, preparingMemoryRead: false },
+        { status: 'needs_attention' as const, preparingMemoryRead: false },
+        { status: 'prepared' as const, preparingMemoryRead: true },
+    ])("keeps the submitted Ghost $status receipt while removing excluded Memory ancestry at the next loop", async ({ status, preparingMemoryRead }) => {
         const host = createPromptHost();
         host.settings.memoryEnabled = true;
         host.getTaskSourceConfigurationEpoch = () => `memory-enabled:${host.settings.memoryEnabled}`;
@@ -1060,12 +1071,18 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
             return { status, operationId: "memory-withdrawn-operation", executionState: "succeeded" };
         });
         const trace = await runGhostRuntimeTrace(submit, [{ intent: "prepare", path: "notes/target.md" }], undefined,
-            { host, precedingRead: 'memory', callText: "WITHDRAWN_MEMORY_DERIVED_PROSE" });
+            { host, precedingRead: 'memory', preparingMemoryRead, callText: "WITHDRAWN_MEMORY_DERIVED_PROSE" });
         const memoryResult = trace.lifecycle.flatMap(event => event.type === "message_end" && event.message?.role === "toolResult"
             && event.message.toolName === "search_memory" ? [event.message] : [])[0];
         expect(memoryResult.inputLineage?.dependencies).toEqual(expect.arrayContaining([
             expect.objectContaining({ kind: "run-notes-observation", owner: "memory", memoryEnabled: true }),
         ]));
+        if (preparingMemoryRead) {
+            expect(memoryResult.content.promptText).toContain(
+                "Memory is being prepared in the background. Memory retrieval is currently unavailable; "
+                + "empty results do not establish that no matching notes exist. Do not infer note content.",
+            );
+        }
         expect(submit).toHaveBeenCalledTimes(1);
         expect(trace.providerTexts[2]).not.toContain("WITHDRAWN_MEMORY_DERIVED_PROSE");
         expect(trace.providerTexts[2]).toContain('"operationId": "memory-withdrawn-operation"');

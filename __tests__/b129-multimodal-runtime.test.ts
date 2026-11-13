@@ -759,7 +759,10 @@ describe('B-135 production source handling', () => {
         expect(search).toHaveBeenCalledWith('outline', expect.objectContaining({
             noteScope: { allowedPaths: [file.path], excludedPaths: [] },
         }));
-        expect(ready).toHaveBeenCalledWith('outline', expect.anything(), expect.anything(), undefined);
+        expect(ready).toHaveBeenCalledWith('outline', expect.anything(), expect.anything(), {
+            existingOnly: undefined,
+            beforePreparation: expect.any(Function),
+        });
         expect(f.requests.slice(1).some(request => requestText(request).includes('CURRENT_NOTE_BODY'))).toBe(true);
     });
 

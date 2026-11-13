@@ -24,7 +24,7 @@ import type {
     SourceRecord,
     TurnEndStatus,
 } from '../ai-services/chat-types';
-import type { MemoryMaintenancePlan } from '../memory-manager';
+import type { MemoryMaintenancePlan, MemoryStatusSnapshot } from '../memory-manager';
 import {
     createPageletChatHandoffContext,
     clonePageletChatAttachment,
@@ -367,9 +367,9 @@ type MarkdownRenderOptions = {
 
 type MemoryChipState = {
     label: string;
-    visualState: "ready" | "needs-update" | "needs-setup" | "unavailable";
+    visualState: "ready" | "preparing" | "needs-update" | "needs-setup" | "unavailable";
     actionLabel?: string;
-    actionKind?: "prepare" | "update";
+    actionKind?: "prepare" | "update" | "status";
 };
 
 function createMessageActionButton(
@@ -2866,13 +2866,22 @@ export class LLMView extends ItemView {
             renderSkillTypeahead();
             syncComposerControls();
         };
-        const getMemoryChipState = (plan?: MemoryMaintenancePlan | null): MemoryChipState => {
+        const getMemoryChipState = (
+            plan?: MemoryMaintenancePlan | null,
+            preparation?: MemoryStatusSnapshot['preparation'],
+        ): MemoryChipState => {
             if (this.host.settings?.memoryEnabled === false) {
                 return { label: t("plugin.chat.memory.unavailable"), visualState: 'unavailable' };
             }
-            if (!plan) {
-                return { label: t("plugin.chat.memory"), visualState: 'unavailable' };
+            if (preparation) {
+                return {
+                    label: t("plugin.chat.memory.preparing"),
+                    visualState: 'preparing',
+                    actionLabel: t("plugin.chat.memory.viewProgress"),
+                    actionKind: 'status',
+                };
             }
+            if (!plan) return { label: t("plugin.chat.memory"), visualState: 'unavailable' };
             if (plan.reason === 'ready') {
                 return { label: t("plugin.chat.memory.ready"), visualState: 'ready' };
             }
@@ -2916,18 +2925,48 @@ export class LLMView extends ItemView {
             memoryChip.setAttribute('aria-label', state.label);
             memoryChip.setAttribute('title', state.label);
             memoryChip.classList.remove(...MEMORY_CHIP_STATE_CLASSES);
-            memoryChip.classList.add(`personal-assistant-ai-statusbar-${state.visualState}`);
+            memoryChip.classList.add(
+                state.visualState === 'preparing'
+                    ? 'personal-assistant-ai-statusbar-needs-update'
+                    : `personal-assistant-ai-statusbar-${state.visualState}`,
+            );
         };
-        const readMemoryPlan = async (): Promise<MemoryMaintenancePlan | null> => {
+        const readMemoryDisplayState = async (): Promise<{
+            plan: MemoryMaintenancePlan | null;
+            preparation: MemoryStatusSnapshot['preparation'];
+        }> => {
+            const readPreparation = (): MemoryStatusSnapshot['preparation'] => {
+                try {
+                    return this.host.memoryStatus.getStatusSnapshot().preparation;
+                } catch (error) {
+                    this.host.log?.("Could not read active Memory preparation", error);
+                    return undefined;
+                }
+            };
+            const activeBeforePlanRead = readPreparation();
+            if (activeBeforePlanRead) return { plan: null, preparation: activeBeforePlanRead };
             try {
-                return await this.host.memoryStatus.getMaintenancePlan();
+                const plan = await this.host.memoryStatus.getMaintenancePlan();
+                // A delayed old plan must not overwrite a run that started while it was pending.
+                const currentPreparation = readPreparation();
+                if (currentPreparation) return { plan: null, preparation: currentPreparation };
+                return { plan, preparation: undefined };
             } catch (error) {
                 this.host.log?.("Could not read Memory state for chat chip", error);
-                return { reason: 'unavailable', action: 'none', notesToCheck: 0, requiresApproval: false, canAnswerNow: true };
+                const currentPreparation = readPreparation();
+                if (currentPreparation) return { plan: null, preparation: currentPreparation };
+                return {
+                    plan: { reason: 'unavailable', action: 'none', notesToCheck: 0, requiresApproval: false, canAnswerNow: true },
+                    preparation: undefined,
+                };
             }
         };
+        let memoryChipRequestId = 0;
         const refreshMemoryChipState = async () => {
-            setMemoryChipState(getMemoryChipState(await readMemoryPlan()));
+            const requestId = ++memoryChipRequestId;
+            const display = await readMemoryDisplayState();
+            if (!isCurrentSession() || requestId !== memoryChipRequestId) return;
+            setMemoryChipState(getMemoryChipState(display.plan, display.preparation));
         };
         let memoryMenuRequestId = 0;
         const closeMemoryMenu = () => {
@@ -2938,7 +2977,8 @@ export class LLMView extends ItemView {
             if (composerMenu.hidden) moreButton.setAttribute('aria-expanded', 'false');
         };
         const renderMemoryMenu = async (requestId: number) => {
-            const state = getMemoryChipState(await readMemoryPlan());
+            const display = await readMemoryDisplayState();
+            const state = getMemoryChipState(display.plan, display.preparation);
             if (!isCurrentSession() || requestId !== memoryMenuRequestId) return;
             memoryMenu.empty();
             setMemoryChipState(state);
@@ -2946,12 +2986,15 @@ export class LLMView extends ItemView {
             if (state.actionLabel && state.actionKind) {
                 const actionButton = createChatMenuItem(memoryMenu, {
                     text: state.actionLabel,
-                    icon: state.actionKind === 'update' ? 'refresh-cw' : 'sparkles',
+                    icon: state.actionKind === 'update' ? 'refresh-cw'
+                        : state.actionKind === 'status' ? 'activity' : 'sparkles',
                     cls: 'pa-chat-memory-action',
                 });
                 actionButton.onclick = () => {
                     closeMemoryMenu();
-                    if (state.actionKind === 'update') {
+                    if (state.actionKind === 'status') {
+                        this.host.memoryStatus.showTechnicalStatus();
+                    } else if (state.actionKind === 'update') {
                         void this.host.memoryStatus.updateFromCommand().then(refreshMemoryChipState);
                     } else {
                         void this.host.memoryStatus.prepareFromCommand().then(refreshMemoryChipState);

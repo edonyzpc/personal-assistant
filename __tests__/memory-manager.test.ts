@@ -21,6 +21,11 @@ const mockNoticeMessages: string[] = [];
 const mockProgressSteps: string[] = [];
 const mockProgressButtons: Array<{ disabled: boolean }> = [];
 const mockSettingGroups: Array<Array<{ text?: string; click?: () => void; cta?: boolean }>> = [];
+const mockProgressNotices: Array<{
+    hide: () => void;
+    click: (event?: { target?: unknown }) => void;
+    connected: boolean;
+}> = [];
 
 const mockCreateDomElement = (): any => { // eslint-disable-line @typescript-eslint/no-explicit-any
     const element = {
@@ -60,10 +65,27 @@ const mockCreateDomElement = (): any => { // eslint-disable-line @typescript-esl
 
 jest.mock('obsidian', () => ({
     Notice: class {
+        private readonly noticeHandle: { hide(): void };
+        private readonly clickListeners: Array<(event?: { target?: unknown }) => void> = [];
+
         constructor(message?: unknown) {
             mockNoticeMessages.push(String(message));
+            const manager = this;
+            const notice = {
+                hide: () => {
+                    manager.noticeEl.isConnected = false;
+                },
+                click: (event?: { target?: unknown }) => {
+                    for (const listener of manager.clickListeners) listener(event ?? { target: undefined });
+                },
+                get connected() { return manager.noticeEl.isConnected; },
+            };
+            mockProgressNotices.push(notice);
+            this.noticeHandle = notice;
         }
-        hide() { }
+        hide() {
+            this.noticeHandle.hide();
+        }
         progressBody = {
             empty: jest.fn(),
             createDiv: jest.fn((options?: { text?: string }) => {
@@ -76,8 +98,14 @@ jest.mock('obsidian', () => ({
             parentElement: { addClass: jest.fn() },
             setCssStyles: jest.fn(),
             querySelector: jest.fn((selector: string) => selector === '.pa-notice__body' ? this.progressBody : null),
+            addEventListener: jest.fn((type: string, listener: (event?: { target?: unknown }) => void) => {
+                if (type === 'click') this.clickListeners.push(listener);
+            }),
+            removeEventListener: jest.fn(),
+            isConnected: true,
         };
         messageEl = this.noticeEl;
+        containerEl = this.noticeEl;
     },
     Platform: {
         isMobile: false,
@@ -712,6 +740,243 @@ describe('MemoryManager chat decisions', () => {
         }
     });
 
+    it('keeps an approved settings-changed preparation on its stable owner signal', async () => {
+        const restoreDocument = installMockDocument();
+        const plan = createPlan({
+            reason: 'settings-changed',
+            action: 'rebuild',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        const rebuildStarted = createDeferred<AbortSignal>();
+        const rebuildFinished = createDeferred<ReturnType<typeof createOperationSummary>>();
+        plugin.vss.rebuildLocalIndex.mockImplementation(async (options?: { abortSignal?: AbortSignal }) => {
+            const signal = options?.abortSignal;
+            if (!signal) throw new Error('Missing preparation signal');
+            rebuildStarted.resolve(signal);
+            return rebuildFinished.promise;
+        });
+        const manager = createManager(plugin);
+        const attemptController = new AbortController();
+        const ownerController = new AbortController();
+        let deciding: Promise<unknown> | undefined;
+        let rebuildSettled = false;
+        const settleRebuild = () => {
+            if (rebuildSettled) return;
+            rebuildSettled = true;
+            rebuildFinished.resolve(createOperationSummary({
+                aborted: true,
+                preparedRebuildHandle: undefined,
+            }));
+        };
+
+        try {
+            deciding = manager.ensureReadyForChat(
+                'question',
+                attemptController.signal,
+                ownerController.signal,
+                { backgroundPreparation: true },
+            );
+            await waitForCondition(() => mockSettingGroups.length > 0);
+            mockSettingGroups[0][0].click?.();
+            const preparationSignal = await rebuildStarted.promise;
+
+            await expect(deciding).resolves.toEqual({
+                decision: 'answer-now',
+                message: 'Memory is being prepared in the background. It will be used automatically once ready.',
+                preparationState: 'running',
+            });
+
+            attemptController.abort();
+            expect(attemptController.signal.aborted).toBe(true);
+            expect(ownerController.signal.aborted).toBe(false);
+            expect(preparationSignal.aborted).toBe(false);
+
+            ownerController.abort();
+            expect(preparationSignal.aborted).toBe(true);
+            settleRebuild();
+            await manager.waitForIdle();
+            expect(plugin.vss.admitPreparedRebuild).not.toHaveBeenCalled();
+            expect(mockNoticeMessages).not.toContain('Memory is ready. Your notes were not changed.');
+            expect(mockNoticeMessages.filter(message => message === 'Memory preparation was cancelled.')).toHaveLength(1);
+        } finally {
+            attemptController.abort();
+            ownerController.abort();
+            settleRebuild();
+            if (deciding) await deciding.catch(() => undefined);
+            await manager.waitForIdle();
+            restoreDocument();
+        }
+    });
+
+    it('keeps an approved background preparation alive until every Chat consumer stops', async () => {
+        const restoreDocument = installMockDocument();
+        const plan = createPlan({
+            reason: 'settings-changed',
+            action: 'rebuild',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        const rebuildFinished = createDeferred<ReturnType<typeof createOperationSummary>>();
+        let preparationSignal: AbortSignal | undefined;
+        plugin.vss.rebuildLocalIndex.mockImplementation(async (options?: { abortSignal?: AbortSignal }) => {
+            preparationSignal = options?.abortSignal;
+            return rebuildFinished.promise;
+        });
+        const manager = createManager(plugin);
+        const firstOwner = new AbortController();
+        const secondOwner = new AbortController();
+
+        try {
+            const firstDecision = manager.ensureReadyForChat(
+                'first question',
+                new AbortController().signal,
+                firstOwner.signal,
+                { backgroundPreparation: true },
+            );
+            await waitForCondition(() => mockSettingGroups.length > 0);
+            mockSettingGroups[0][0].click?.();
+            await expect(firstDecision).resolves.toMatchObject({
+                decision: 'answer-now',
+                message: 'Memory is being prepared in the background. It will be used automatically once ready.',
+            });
+            const secondDecision = await manager.ensureReadyForChat(
+                'second question',
+                new AbortController().signal,
+                secondOwner.signal,
+                { backgroundPreparation: true },
+            );
+            expect(secondDecision).toMatchObject({
+                decision: 'answer-now',
+                message: 'Memory is being prepared in the background. It will be used automatically once ready.',
+            });
+            await waitForCondition(() => Boolean(preparationSignal));
+
+            firstOwner.abort();
+            expect(preparationSignal?.aborted).toBe(false);
+
+            secondOwner.abort();
+            expect(preparationSignal?.aborted).toBe(true);
+            rebuildFinished.resolve(createOperationSummary({
+                aborted: true,
+                preparedRebuildHandle: undefined,
+            }));
+            await manager.waitForIdle();
+            expect(plugin.vss.rebuildLocalIndex).toHaveBeenCalledTimes(1);
+            expect(plugin.vss.admitPreparedRebuild).not.toHaveBeenCalled();
+        } finally {
+            firstOwner.abort();
+            secondOwner.abort();
+            rebuildFinished.resolve(createOperationSummary({
+                aborted: true,
+                preparedRebuildHandle: undefined,
+            }));
+            await manager.waitForIdle().catch(() => undefined);
+            restoreDocument();
+        }
+    });
+
+    it.each([
+        {
+            action: 'refresh' as const,
+            reason: 'changed-notes' as const,
+            expectedDecision: 'use-memory' as const,
+        },
+        {
+            action: 'rebuild-lexical' as const,
+            reason: 'lexical-profile-stale' as const,
+            expectedDecision: 'use-memory' as const,
+        },
+        {
+            action: 'rebuild' as const,
+            reason: 'settings-changed' as const,
+            expectedDecision: 'answer-now' as const,
+        },
+    ])('uses existing ready Memory during background %s work only when it remains admissible', async ({
+        action,
+        reason,
+        expectedDecision,
+    }) => {
+        const restoreDocument = installMockDocument();
+        const plan = createPlan({
+            reason,
+            action,
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        plugin.vss.getMemoryStatusSnapshot.mockReturnValue({
+            status: 'ready',
+            dirtyCount: 0,
+            verificationPending: 0,
+        });
+        const operationStarted = createDeferred<void>();
+        const operationFinished = createDeferred<ReturnType<typeof createOperationSummary>>();
+        const lexicalOperationFinished = createDeferred<VSSLexicalRebuildSummary>();
+        if (action === 'refresh') {
+            plugin.vss.refreshLocalIndex.mockImplementation(async () => {
+                operationStarted.resolve();
+                return operationFinished.promise;
+            });
+        } else if (action === 'rebuild-lexical') {
+            plugin.vss.rebuildLexicalIndex.mockImplementation(async () => {
+                operationStarted.resolve();
+                return lexicalOperationFinished.promise;
+            });
+        } else {
+            plugin.vss.rebuildLocalIndex.mockImplementation(async () => {
+                operationStarted.resolve();
+                return operationFinished.promise;
+            });
+        }
+        const manager = createManager(plugin);
+        (manager as any).requestApproval = jest.fn(async () => 'use-memory'); // eslint-disable-line @typescript-eslint/no-explicit-any
+        const owner = new AbortController();
+
+        try {
+            const decision = await manager.ensureReadyForChat(
+                'question',
+                new AbortController().signal,
+                owner.signal,
+                { backgroundPreparation: true },
+            );
+            await operationStarted.promise;
+
+            expect(decision.decision).toBe(expectedDecision);
+            if (expectedDecision === 'use-memory') {
+                expect(decision.message).toBe('Memory is using the last prepared copy while updates continue in the background.');
+            } else {
+                expect(decision.message).toBe('Memory is being prepared in the background. It will be used automatically once ready.');
+            }
+            expect(manager.getStatusSnapshot().status).toBe('preparing');
+
+            const existingOnly = await manager.ensureReadyForChat(
+                'existing question',
+                undefined,
+                new AbortController().signal,
+                { existingOnly: true, backgroundPreparation: true },
+            );
+            expect(existingOnly.decision).toBe(expectedDecision);
+
+            const joining = await manager.ensureReadyForChat(
+                'joining question',
+                new AbortController().signal,
+                new AbortController().signal,
+                { backgroundPreparation: true },
+            );
+            expect(joining.decision).toBe(expectedDecision);
+            expect(plugin.vss.getMemoryStatusSnapshot().status).toBe('ready');
+        } finally {
+            owner.abort();
+            if (action === 'rebuild-lexical') {
+                lexicalOperationFinished.resolve({ aborted: true, rowsProcessed: 0, rowsTotal: 2, reason: 'aborted' });
+            } else {
+                operationFinished.resolve(createOperationSummary({ aborted: true, preparedRebuildHandle: undefined }));
+            }
+            await manager.waitForIdle().catch(() => undefined);
+            restoreDocument();
+        }
+    });
+
     it('does not transfer a first-use plan across an embedding switch during durable admission', async () => {
         const restoreDocument = installMockDocument();
         const plugin = createPlugin(createPlan({ reason: 'first-use', action: 'rebuild', requiresApproval: true }),
@@ -734,6 +999,47 @@ describe('MemoryManager chat decisions', () => {
             expect(plugin.vss.refreshLocalIndex).not.toHaveBeenCalled();
             expect(plugin.vss.recordPreparationAttempt).not.toHaveBeenCalled();
             expect(manager.getActivePreparationStatus()).toBeNull();
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('aborts a legacy first-use preparation from the caller signal', async () => {
+        const restoreDocument = installMockDocument();
+        const plan = createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan, { aiConnections: {} });
+        const rebuildStarted = createDeferred<AbortSignal>();
+        plugin.vss.rebuildLocalIndex.mockImplementation(async (options?: { abortSignal?: AbortSignal }) => {
+            const signal = options?.abortSignal;
+            if (!signal) throw new Error('Missing preparation signal');
+            rebuildStarted.resolve(signal);
+            return await new Promise((resolve) => {
+                const finish = () => resolve(createOperationSummary({ aborted: true, preparedRebuildHandle: undefined }));
+                if (signal.aborted) finish();
+                else signal.addEventListener('abort', finish, { once: true });
+            });
+        });
+        const manager = createManager(plugin);
+        const controller = new AbortController();
+
+        try {
+            await expect(manager.ensureReadyForChat('question', controller.signal)).resolves.toEqual({
+                decision: 'answer-now',
+                message: 'Memory is being prepared in the background. It will be used automatically once ready.',
+                preparationState: 'running',
+            });
+            const preparationSignal = await rebuildStarted.promise;
+
+            controller.abort();
+
+            expect(preparationSignal.aborted).toBe(true);
+            await manager.waitForIdle();
+            expect(plugin.vss.admitPreparedRebuild).not.toHaveBeenCalled();
+            expect(mockNoticeMessages).not.toContain('I could not prepare memory this time, so I answered normally.');
         } finally {
             restoreDocument();
         }
@@ -770,6 +1076,7 @@ describe('MemoryManager chat decisions', () => {
             )).resolves.toEqual({
                 decision: 'answer-now',
                 message: 'Memory is being prepared in the background. It will be used automatically once ready.',
+                preparationState: 'running',
             });
             const preparationSignal = await rebuildStarted.promise;
 
@@ -814,9 +1121,14 @@ describe('MemoryManager chat decisions', () => {
         });
         const manager = createManager(plugin);
         const controller = new AbortController();
+        const ownerController = new AbortController();
 
         try {
-            const deciding = manager.ensureReadyForChat('question', controller.signal);
+            const deciding = manager.ensureReadyForChat(
+                'question',
+                controller.signal,
+                ownerController.signal,
+            );
             await waitForCondition(() => mockSettingGroups.length > 0);
             mockSettingGroups[0][0].click?.();
             const preparationSignal = await lexicalStarted.promise;
@@ -825,6 +1137,7 @@ describe('MemoryManager chat decisions', () => {
 
             await expect(deciding).resolves.toEqual({ decision: 'cancel' });
             expect(preparationSignal.aborted).toBe(true);
+            expect(ownerController.signal.aborted).toBe(false);
             expect(plugin.vss.rebuildLocalIndex).not.toHaveBeenCalled();
             await manager.waitForIdle();
         } finally {
@@ -903,6 +1216,7 @@ describe('MemoryManager chat decisions', () => {
             expect(firstDecision).toEqual({
                 decision: 'answer-now',
                 message: 'Memory is being prepared in the background. It will be used automatically once ready.',
+                preparationState: 'running',
             });
             expect(secondDecision).toEqual(firstDecision);
             expect(thirdDecision).toEqual(firstDecision);
@@ -1271,19 +1585,23 @@ describe('MemoryManager command decisions', () => {
             action: 'rebuild',
             requiresApproval: true,
         }));
+        const restoreDocument = installMockDocument();
         const manager = createManager(plugin);
         (manager as any).requestApproval = jest.fn(async () => 'use-memory'); // eslint-disable-line @typescript-eslint/no-explicit-any
-        (manager as any).prepareMemory = jest.fn(async () => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
-            ok: false,
-            partial: false,
-            message: 'Could not prepare memory because local storage is busy. Close other Obsidian windows for this vault, then try again.',
-        }));
+        plugin.vss.rebuildLocalIndex.mockRejectedValueOnce(Object.assign(
+            new Error('Local memory storage is busy'),
+            { code: 'opfs-sahpool-locked' },
+        ));
 
-        await manager.prepareFromCommand();
+        try {
+            await manager.prepareFromCommand();
 
-        expect(mockNoticeMessages).toEqual([
-            'Could not prepare memory because local storage is busy. Close other Obsidian windows for this vault, then try again.',
-        ]);
+            const failure = 'Could not prepare memory because local storage is busy. Close other Obsidian windows for this vault, then try again.';
+            expect(mockNoticeMessages).toContain(failure);
+            expect(mockNoticeMessages.filter(message => message === failure)).toHaveLength(1);
+        } finally {
+            restoreDocument();
+        }
     });
 
     it('does not publish success or upgrade policy after an all-failed rebuild', async () => {
@@ -1302,8 +1620,40 @@ describe('MemoryManager command decisions', () => {
             expect(result).toMatchObject({ ok: false, partial: false, summary });
             expect(plugin.settings.memoryApprovalPolicy).toBe('always');
             expect(plugin.saveSettings).not.toHaveBeenCalled();
-            expect(plugin.notifyStatusChanged).not.toHaveBeenCalled();
+            expect(manager.getStatusSnapshot().lastPreparation).toMatchObject({
+                outcome: 'failed',
+            });
             expect(mockNoticeMessages).not.toContain('Memory is ready. Your notes were not changed.');
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('does not expose a completed result after the legacy Memory profile identity changes', async () => {
+        const restoreDocument = installMockDocument();
+        const plugin = createPlugin(createPlan({
+            reason: 'lexical-profile-stale',
+            action: 'rebuild-lexical',
+            requiresApproval: true,
+        }));
+        plugin.vss.rebuildLexicalIndex.mockResolvedValue({
+            aborted: false,
+            rowsProcessed: 1,
+            rowsTotal: 1,
+            generation: 1,
+        });
+        const manager = createManager(plugin);
+
+        try {
+            await manager.prepareMemory(createPlan({
+                reason: 'lexical-profile-stale',
+                action: 'rebuild-lexical',
+                requiresApproval: true,
+            }));
+            expect(manager.getStatusSnapshot().lastPreparation?.outcome).toBe('completed');
+
+            plugin.vss.getEmbeddingConfigurationIdentity.mockReturnValue('legacy-identity-next');
+            expect(manager.getStatusSnapshot()).not.toHaveProperty('lastPreparation');
         } finally {
             restoreDocument();
         }
@@ -1356,7 +1706,6 @@ describe('MemoryManager command decisions', () => {
             expect(result.ok).toBe(false);
             expect(plugin.settings.memoryApprovalPolicy).toBe('always');
             expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
-            expect(plugin.notifyStatusChanged).not.toHaveBeenCalled();
             expect(mockNoticeMessages).not.toContain('Memory is ready. Your notes were not changed.');
         } finally {
             restoreDocument();
@@ -1479,9 +1828,9 @@ describe('MemoryManager command decisions', () => {
             expect(secondChat).toEqual({
                 decision: 'answer-now',
                 message: 'Memory is being prepared in the background. It will be used automatically once ready.',
+                preparationState: 'running',
             });
             expect(plugin.vss.admitPreparedRebuild).not.toHaveBeenCalled();
-            expect(plugin.notifyStatusChanged).not.toHaveBeenCalled();
 
             releaseSave.resolve();
             await expect(preparing).resolves.toMatchObject({ ok: true, partial: false });
@@ -1522,7 +1871,6 @@ describe('MemoryManager command decisions', () => {
                 'settings-changed',
             );
             expect(plugin.vss.admitPreparedRebuild).not.toHaveBeenCalled();
-            expect(plugin.notifyStatusChanged).not.toHaveBeenCalled();
         } finally {
             restoreDocument();
         }
@@ -1615,6 +1963,51 @@ describe('MemoryManager command decisions', () => {
         expect(mockNoticeMessages).not.toContain('A Memory action is already running.');
     });
 
+    it('reuses an active preparation for explicit Prepare and Update without re-reading readiness', async () => {
+        const restoreDocument = installMockDocument();
+        const plugin = createPlugin(createPlan({
+            reason: 'unavailable',
+            action: 'none',
+            requiresApproval: false,
+            canAnswerNow: true,
+        }));
+        let resolveRebuild: (summary: ReturnType<typeof createOperationSummary>) => void = () => undefined;
+        plugin.vss.rebuildLocalIndex.mockImplementation(async () => new Promise((resolve) => {
+            resolveRebuild = resolve;
+        }));
+        const manager = createManager(plugin);
+
+        try {
+            const firstShared = manager.prepareMemory(createPlan({
+                reason: 'first-use',
+                action: 'rebuild',
+                requiresApproval: true,
+            }));
+            await Promise.resolve();
+            const explicitPrepare = manager.prepareFromCommand();
+            await Promise.resolve();
+            resolveRebuild(createOperationSummary({ updated: 1 }));
+            await Promise.all([firstShared, explicitPrepare]);
+
+            const secondShared = manager.prepareMemory(createPlan({
+                reason: 'first-use',
+                action: 'rebuild',
+                requiresApproval: true,
+            }));
+            await Promise.resolve();
+            expect(manager.getStatusSnapshot()).not.toHaveProperty('lastPreparation');
+            const explicitUpdate = manager.updateFromCommand();
+            await Promise.resolve();
+            resolveRebuild(createOperationSummary({ updated: 1 }));
+            await Promise.all([secondShared, explicitUpdate]);
+
+            expect(plugin.vss.getMemoryReadiness).not.toHaveBeenCalled();
+            expect(plugin.vss.rebuildLocalIndex).toHaveBeenCalledTimes(2);
+        } finally {
+            restoreDocument();
+        }
+    });
+
     it('updates one progress notice from rebuild progress events', async () => {
         let now = 0;
         const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => {
@@ -1666,9 +2059,9 @@ describe('MemoryManager command decisions', () => {
             expect(mockProgressSteps).toEqual(expect.arrayContaining([
                 'Checking notes',
                 'Checking notes 1/3: one.md',
-                'Preparing notes 2/10',
+                'Processing notes',
                 'Retrying in 5s',
-                'Saving memory 2/3',
+                'Processing notes 2/3',
                 'Ready',
             ]));
         } finally {
@@ -1720,6 +2113,131 @@ describe('MemoryManager command decisions', () => {
                 'Ready',
             ]));
             expect(mockProgressButtons.at(-1)?.disabled).toBe(true);
+            expect(manager.getStatusSnapshot().lastPreparation).toMatchObject({
+                action: 'rebuild-lexical',
+                outcome: 'completed',
+                message: 'Memory search is ready. Your notes were not changed.',
+                lexicalRowsDone: 2,
+                lexicalRowsTotal: 2,
+            });
+            expect(mockNoticeMessages.filter(message => message === 'Memory search is ready. Your notes were not changed.'))
+                .toHaveLength(1);
+        } finally {
+            if (originalDocument) {
+                Object.defineProperty(globalThis, 'document', originalDocument);
+            } else {
+                delete (globalThis as { document?: Document }).document;
+            }
+        }
+    });
+
+    it('reports lexical interruption separately from a later partial rebuild', async () => {
+        const restoreDocument = installMockDocument();
+        const plugin = createPlugin(createPlan({
+            reason: 'lexical-profile-stale',
+            action: 'rebuild-lexical',
+            requiresApproval: true,
+        }));
+        plugin.vss.rebuildLexicalIndex.mockImplementation(async options => {
+            options?.onProgress?.({ phase: 'lexical-rebuilding', lexicalRowsDone: 1, lexicalRowsTotal: 2 });
+            return {
+                aborted: true,
+                rowsProcessed: 1,
+                rowsTotal: 2,
+                reason: 'feature_disabled',
+            };
+        });
+        const manager = createManager(plugin);
+
+        try {
+            await expect(manager.prepareMemory(createPlan({
+                reason: 'lexical-profile-stale',
+                action: 'rebuild-lexical',
+            }))).resolves.toMatchObject({
+                ok: false,
+                partial: false,
+                aborted: true,
+            });
+            expect(manager.getStatusSnapshot().lastPreparation).toMatchObject({
+                action: 'rebuild-lexical',
+                outcome: 'interrupted',
+                lexicalRowsDone: 1,
+                lexicalRowsTotal: 2,
+            });
+
+            plugin.vss.rebuildLocalIndex.mockResolvedValue(createOperationSummary({
+                updated: 2,
+                failed: 1,
+            }));
+            await expect(manager.prepareMemory(createPlan({
+                reason: 'settings-changed',
+                action: 'rebuild',
+            }))).resolves.toMatchObject({
+                ok: true,
+                partial: true,
+            });
+            expect(manager.getStatusSnapshot().lastPreparation).toMatchObject({
+                action: 'rebuild',
+                outcome: 'partial',
+                failed: 1,
+            });
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('restores the current progress Notice on explicit viewing without passive resurrection', async () => {
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: installObsidianDocumentHelpers({
+                createDocumentFragment: jest.fn(() => createMockDomElement()),
+            }),
+        });
+        const plugin = createPlugin(createPlan({
+            reason: 'lexical-profile-stale',
+            action: 'rebuild-lexical',
+            requiresApproval: true,
+        }));
+        let onProgress: ((event: {
+            phase: 'lexical-rebuilding' | 'finalizing' | 'ready';
+            lexicalRowsDone?: number;
+            lexicalRowsTotal?: number;
+        }) => void) | undefined;
+        let resolveRebuild: (summary: Awaited<ReturnType<typeof plugin.vss.rebuildLexicalIndex>>) => void = () => undefined;
+        plugin.vss.rebuildLexicalIndex.mockImplementation(async (options) => {
+            onProgress = options?.onProgress;
+            return new Promise((resolve) => {
+                resolveRebuild = resolve;
+            });
+        });
+        const manager = createManager(plugin);
+
+        try {
+            const preparing = manager.prepareMemory(createPlan({
+                reason: 'lexical-profile-stale',
+                action: 'rebuild-lexical',
+                requiresApproval: true,
+            }));
+            await Promise.resolve();
+            const noticeCount = mockProgressNotices.length;
+            const activeNotice = mockProgressNotices.at(-1)!;
+
+            onProgress?.({ phase: 'lexical-rebuilding', lexicalRowsDone: 1, lexicalRowsTotal: 2 });
+            onProgress?.({ phase: 'finalizing', lexicalRowsDone: 2, lexicalRowsTotal: 2 });
+            expect(mockProgressButtons.at(-1)?.disabled).toBe(true);
+
+            activeNotice.hide();
+            onProgress?.({ phase: 'finalizing', lexicalRowsDone: 2, lexicalRowsTotal: 2 });
+            expect(mockProgressNotices).toHaveLength(noticeCount);
+
+            expect(manager.showPreparationProgress()).toBe(true);
+            expect(mockProgressNotices).toHaveLength(noticeCount + 1);
+            expect(mockProgressButtons.at(-1)?.disabled).toBe(true);
+
+            resolveRebuild({ aborted: false, rowsProcessed: 2, rowsTotal: 2, generation: 1 });
+            await preparing;
+            expect(manager.showPreparationProgress()).toBe(false);
         } finally {
             if (originalDocument) {
                 Object.defineProperty(globalThis, 'document', originalDocument);
@@ -1831,7 +2349,7 @@ describe('MemoryManager command decisions', () => {
             expect(manager.getActivePreparationStatus()).toMatchObject({
                 action: 'rebuild',
                 phase: 'writing',
-                message: 'Saving memory 25/1846',
+                message: 'Processing notes 25/1846',
                 filesDone: 25,
                 filesTotal: 1846,
                 failed: 0,
@@ -1908,7 +2426,7 @@ describe('MemoryManager command decisions', () => {
             expect(manager.getActivePreparationStatus()).toMatchObject({
                 action: 'rebuild',
                 phase: 'writing',
-                message: 'Saving memory 1/2',
+                message: 'Processing notes 1/2',
             });
 
             resolveRebuild(summary);
@@ -2071,7 +2589,6 @@ describe('MemoryManager command decisions', () => {
             const result = await preparing;
 
             expect(result.ok).toBe(false);
-            expect(plugin.notifyStatusChanged).not.toHaveBeenCalled();
             expect(mockNoticeMessages).not.toContain('Memory is ready. Your notes were not changed.');
         } finally {
             if (originalDocument) {

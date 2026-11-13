@@ -10523,6 +10523,7 @@ describe('manual Memory action guard', () => {
                 await chatActionDone;
             }),
             prepareFromCommand: jest.fn(async () => undefined),
+            showPreparationProgress: jest.fn(() => false),
         };
 
         const host = plugin.createChatHost();
@@ -11218,6 +11219,7 @@ describe('VSS status performance notices', () => {
                 filesTotal: 1846,
                 startedAt: 123,
             })),
+            showPreparationProgress: jest.fn(() => true),
         };
         plugin.vss = {
             getStats: jest.fn(async () => {
@@ -11239,5 +11241,57 @@ describe('VSS status performance notices', () => {
                 { label: 'Progress', value: 'Saving memory 25/1846', tone: 'warning' },
             ]),
         }), 5000);
+    });
+
+    it('shows current Memory availability and the safe last preparation outcome together', async () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        installPluginShellOwners(plugin);
+        plugin.memoryManager = {
+            getActivePreparationStatus: jest.fn(() => null),
+            getStatusSnapshot: jest.fn(() => ({
+                enabled: true,
+                status: 'stale',
+                dirtyCount: 2,
+                verificationPending: 0,
+                lastPreparation: {
+                    action: 'rebuild',
+                    outcome: 'completed',
+                    message: 'Memory is ready. Your notes were not changed.',
+                    filesDone: 25,
+                    filesTotal: 1846,
+                    startedAt: 123,
+                    finishedAt: 456,
+                },
+            })),
+            showPreparationProgress: jest.fn(() => false),
+        };
+        plugin.vss = {
+            getStats: jest.fn(async () => ({
+                status: 'stale',
+                backend: 'sqlite-wasm-opfs-sahpool',
+                chunkCount: 100,
+                fileCount: 25,
+                storagePersisted: true,
+                fallbackMode: false,
+            })),
+            getMaintenanceState: jest.fn(() => ({
+                dirtyCount: 2,
+                verificationPending: 0,
+            })),
+        };
+        plugin.showTechnicalMemoryNotice = jest.fn();
+
+        await plugin.showTechnicalMemoryStatus();
+
+        expect(plugin.showTechnicalMemoryNotice).toHaveBeenCalledWith(expect.objectContaining({
+            summary: 'Index stale',
+            details: expect.arrayContaining([
+                { label: 'Indexed', value: '100 chunks across 25 files' },
+                { label: 'Last operation', value: 'Prepare memory' },
+                { label: 'Last result', value: 'Completed' },
+                { label: 'Processed notes', value: '25 of 1846' },
+                { label: 'Progress', value: 'Memory is ready. Your notes were not changed.' },
+            ]),
+        }), 7000);
     });
 });

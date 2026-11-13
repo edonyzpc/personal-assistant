@@ -87,6 +87,10 @@ defined as repeated confirmation work for every low-risk update.
 
 ## 3. Surface Contract
 
+Chat 准备的已批准补充见 [DEC-080](../decisions/dec-080-memory-preparation-lifecycle.md)
+与 [B-197 Product Spec](./pa-memory-preparation-lifecycle-product-spec.md)：确认后后台准备、
+运行中状态及进度重看。实现和验收状态由该切片 Tracker 负责，不由本批准声明推定完成。
+
 ### 3.1 Settings
 
 Settings is the canonical complete governance surface in the current runtime.

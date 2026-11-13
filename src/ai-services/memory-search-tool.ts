@@ -9,6 +9,7 @@ import { agentDebugError, agentDebugNow, createAgentDebugCall, observeAgentDebug
 import { assertProviderCompletion, readProviderText } from "./provider-result";
 import { createAbortError, throwIfAborted } from "./chat-utils";
 import { truncate } from "./chat-tool-execution-helpers";
+import type { MemoryDecisionResult } from "../memory-manager";
 import { normalizeVaultPath } from "../pa/helpers";
 import { assertTaskSourceMemoryReadCurrent, type TaskSourceReadGuard } from './task-source-read-guard';
 import { createTaskSourceMemoryHost } from './task-source-memory-host';
@@ -195,6 +196,10 @@ export type MemorySearchInvocationOptions =
         readonly debugScope?: MemorySearchDebugScope;
         /** Run-owned lifetime for detached DEC-028 preparation; never an attempt deadline signal. */
         readonly memoryPreparationOwnerSignal?: AbortSignal;
+        /** Host-only output of the pre-coordinator readiness preflight. */
+        readonly memoryReadinessPreflighted?: boolean;
+        /** Host-only preflight decision; never part of the model tool schema. */
+        readonly memoryReadinessDecision?: MemoryDecisionResult;
     }
     | {
         readonly [MEMORY_SEARCH_INVOCATION_BRAND]: true;
@@ -208,6 +213,10 @@ export type MemorySearchInvocationOptions =
         readonly debugScope?: MemorySearchDebugScope;
         /** Run-owned lifetime for detached DEC-028 preparation; never an attempt deadline signal. */
         readonly memoryPreparationOwnerSignal?: AbortSignal;
+        /** Host-only output of the pre-coordinator readiness preflight. */
+        readonly memoryReadinessPreflighted?: boolean;
+        /** Host-only preflight decision; never part of the model tool schema. */
+        readonly memoryReadinessDecision?: MemoryDecisionResult;
     };
 
 const MEMORY_SEARCH_INVOCATIONS = new WeakMap<AbortSignal, MemorySearchInvocationOptions>();
@@ -250,6 +259,8 @@ export function createStandardMemorySearchInvocation(options: {
     providerRequestDiagnostic?: MemorySearchRequestDiagnostic;
     debugScope?: MemorySearchDebugScope;
     memoryPreparationOwnerSignal?: AbortSignal;
+    memoryReadinessPreflighted?: boolean;
+    memoryReadinessDecision?: MemoryDecisionResult;
 }): MemorySearchInvocationOptions {
     const invocation: MemorySearchInvocationOptions = Object.freeze({
         [MEMORY_SEARCH_INVOCATION_BRAND]: true as const,
@@ -269,6 +280,12 @@ export function createStandardMemorySearchInvocation(options: {
         ...(options.memoryPreparationOwnerSignal
             ? { memoryPreparationOwnerSignal: options.memoryPreparationOwnerSignal }
             : {}),
+        ...(options.memoryReadinessPreflighted
+            ? { memoryReadinessPreflighted: true }
+            : {}),
+        ...(options.memoryReadinessDecision
+            ? { memoryReadinessDecision: options.memoryReadinessDecision }
+            : {}),
     });
     if (options.temporalFilterCapture) {
         MEMORY_SEARCH_TEMPORAL_FILTER_CAPTURES.set(invocation, options.temporalFilterCapture);
@@ -285,7 +302,9 @@ export function createRelaxedMemorySearchInvocation(
         providerRequestScope?: ProviderRequestOptions["providerRequestScope"];
         providerRequestDiagnostic?: MemorySearchRequestDiagnostic;
         debugScope?: MemorySearchDebugScope;
-        memoryPreparationOwnerSignal?: AbortSignal;
+    memoryPreparationOwnerSignal?: AbortSignal;
+    memoryReadinessPreflighted?: boolean;
+    memoryReadinessDecision?: MemoryDecisionResult;
     } = {},
 ): MemorySearchInvocationOptions {
     return Object.freeze({
@@ -304,6 +323,12 @@ export function createRelaxedMemorySearchInvocation(
         ...(control.debugScope ? { debugScope: control.debugScope } : {}),
         ...(control.memoryPreparationOwnerSignal
             ? { memoryPreparationOwnerSignal: control.memoryPreparationOwnerSignal }
+            : {}),
+        ...(control.memoryReadinessPreflighted
+            ? { memoryReadinessPreflighted: true }
+            : {}),
+        ...(control.memoryReadinessDecision
+            ? { memoryReadinessDecision: control.memoryReadinessDecision }
             : {}),
     });
 }
@@ -370,6 +395,42 @@ export class MemorySearchTool {
         }
     }
 
+    /** Chat-only readiness/consent preflight; it runs before the retrieval coordinator budget. */
+    async prepareForChat(
+        query: string,
+        signal?: AbortSignal,
+        preparationOwnerSignal?: AbortSignal,
+        guard?: TaskSourceReadGuard,
+    ): Promise<MemoryDecisionResult> {
+        throwIfAborted(signal);
+        if (!guard) {
+            throw new Error("Chat Memory preparation requires an admitted task source.");
+        }
+        const scoped = this.forTaskSource(guard);
+        try {
+            const result = await scoped.prepareForChatInScope(query, signal, preparationOwnerSignal);
+            assertTaskSourceMemoryReadCurrent(scoped.taskSourceReadGuard);
+            assertTaskSourceMemoryReadCurrent(guard);
+            return result;
+        } catch {
+            if (signal?.aborted || preparationOwnerSignal?.aborted) throw createAbortError();
+            return { decision: "answer-now" };
+        } finally {
+            this.scopedSearches.delete(scoped);
+            scoped.dispose();
+        }
+    }
+
+    private async prepareForChatInScope(
+        query: string,
+        signal?: AbortSignal,
+        preparationOwnerSignal?: AbortSignal,
+    ): Promise<MemoryDecisionResult> {
+        return this.host.memorySearch.ensureReadyForChat(query, signal, preparationOwnerSignal, {
+            backgroundPreparation: true,
+        });
+    }
+
     async search(query: string, signal?: AbortSignal, onBeforeVssSearch?: () => void, guard?: TaskSourceReadGuard): Promise<MemorySearchResult> {
         if (guard) {
             const scoped = this.forTaskSource(guard);
@@ -390,11 +451,16 @@ export class MemorySearchTool {
             onBeforeVssSearch?.();
             return this.searchVss(query, signal, invocation);
         }
-        const decision = await this.host.memorySearch.ensureReadyForChat(
-            query,
-            signal,
-            invocation?.memoryPreparationOwnerSignal ?? signal,
-        );
+        const decision = invocation?.memoryReadinessDecision
+            ? invocation.memoryReadinessDecision
+            : await this.host.memorySearch.ensureReadyForChat(
+                query,
+                signal,
+                invocation?.memoryPreparationOwnerSignal ?? signal,
+                invocation?.memoryReadinessPreflighted
+                    ? { existingOnly: true }
+                    : undefined,
+            );
         throwIfAborted(signal);
 
         if (decision.decision === "cancel") {
@@ -414,6 +480,9 @@ export class MemorySearchTool {
                 rerankVerdict: "none_relevant",
                 needsMoreEvidence: false,
                 operationalReason: "memory_not_used",
+                ...(decision.preparationState === "running"
+                    ? { preparationState: decision.preparationState }
+                    : {}),
             };
         }
 

@@ -68,8 +68,10 @@ import { EXECUTE_OBSIDIAN_CODE_TOOL_NAME } from "./independent-computation/obsid
 const MAX_PREVIEW_CHARS = 1200;
 const MAX_EXECUTION_RECOVERY_PARTS = 8;
 const MAX_EXECUTION_RECOVERY_PART_CHARS = 48;
-const UNAVAILABLE_MEMORY_RETRIEVAL_GUIDANCE =
+export const UNAVAILABLE_MEMORY_RETRIEVAL_GUIDANCE =
     "Memory retrieval is currently unavailable; empty results do not establish that no matching notes exist. Do not infer note content.";
+export const PREPARING_MEMORY_RETRIEVAL_GUIDANCE =
+    "Memory is being prepared in the background. Memory retrieval is currently unavailable; empty results do not establish that no matching notes exist. Do not infer note content.";
 
 export interface PaAgentCapabilityToolExecutorOptions {
     /** Actual execution result, before prompt/context projection. */
@@ -96,6 +98,9 @@ export interface PaAgentCapabilityToolExecutorOptions {
     getMemoryDebugScope?: (turnId: string, toolCallId: string) => import("./memory-search-tool").MemorySearchDebugScope | undefined;
     /** Run-owned lifetime for detached DEC-028 Memory preparation. */
     memoryPreparationOwnerSignal?: AbortSignal;
+    /** Chat-only preflight/background mode; never exposed in model tool schemas. */
+    backgroundMemoryPreparation?: boolean;
+    memorySearchTool?: Pick<import("./memory-search-tool").MemorySearchTool, "prepareForChat">;
     currentMemoryUsage?: () => MemoryManagementCurrentUsageInput | undefined;
     memoryActionRequest?: MemoryActionHostBinding;
     getImageRequestLineage?: (turnId?: string) => import("./input-lineage").InputLineage | undefined;
@@ -747,7 +752,39 @@ export function createPaAgentCapabilityToolExecutor(
                 ? (preparedResult.input as { temporal: import("./query-rewriter").QueryTemporalIntent }).temporal
                 : undefined;
             const temporalFilterCapture: MemorySearchTemporalFilterCapture = {};
-            const result = memoryQuery
+            let preflightedMemoryReadiness = false;
+            let preflightDecision: import("../memory-manager").MemoryDecisionResult | undefined;
+            if (memoryQuery
+                && options.backgroundMemoryPreparation
+                && input.taskSourceReadGuard
+                && options.memorySearchTool
+                && options.memoryPreparationOwnerSignal) {
+                const decision = await options.memorySearchTool.prepareForChat(
+                    memoryQuery,
+                    input.signal,
+                    options.memoryPreparationOwnerSignal,
+                    input.taskSourceReadGuard,
+                );
+                preflightedMemoryReadiness = true;
+                if (decision.decision === "cancel") throw createAbortError();
+                if (decision.decision === "answer-now") preflightDecision = decision;
+            }
+            const result = preflightDecision
+                ? await runWithMemorySearchInvocation(
+                    createStandardMemorySearchInvocation({
+                        temporalIntent: memoryTemporal,
+                        captureRecoverySeed: false,
+                        providerRequestScope: options.providerRequestScope,
+                        providerRequestDiagnostic: options.getMemoryRequestDiagnostic?.(input.turnId),
+                        debugScope: options.getMemoryDebugScope?.(input.turnId, toolCall.id),
+                        memoryPreparationOwnerSignal: options.memoryPreparationOwnerSignal,
+                        memoryReadinessPreflighted: true,
+                        memoryReadinessDecision: preflightDecision,
+                    }),
+                    input.signal,
+                    () => executeCapability(input.signal),
+                )
+                : memoryQuery
                 && options.memoryRecoveryCoordinator
                 && options.revalidateMemorySearch
                 ? await options.memoryRecoveryCoordinator.execute({
@@ -770,6 +807,9 @@ export function createPaAgentCapabilityToolExecutor(
                                 providerRequestDiagnostic: options.getMemoryRequestDiagnostic?.(input.turnId),
                                 debugScope: options.getMemoryDebugScope?.(input.turnId, toolCall.id),
                                 memoryPreparationOwnerSignal: options.memoryPreparationOwnerSignal,
+                                ...(preflightedMemoryReadiness
+                                    ? { memoryReadinessPreflighted: true }
+                                    : {}),
                             })
                             : createRelaxedMemorySearchInvocation(attempt.seed, {
                                 invocationOrdinal: attempt.invocationOrdinal,
@@ -779,6 +819,9 @@ export function createPaAgentCapabilityToolExecutor(
                                 providerRequestDiagnostic: options.getMemoryRequestDiagnostic?.(input.turnId),
                                 debugScope: options.getMemoryDebugScope?.(input.turnId, toolCall.id),
                                 memoryPreparationOwnerSignal: options.memoryPreparationOwnerSignal,
+                                ...(preflightedMemoryReadiness
+                                    ? { memoryReadinessPreflighted: true }
+                                    : {}),
                             });
                         return runWithMemorySearchInvocation(
                             invocation,
@@ -1076,7 +1119,7 @@ export function projectMemorySearchObservation(result: MemorySearchResult): Memo
         ? null
         : deriveCoherentMemoryEvidenceState(result, projection.documents.length > 0);
     if (!memoryEvidenceState || memoryEvidenceState === "unavailable") {
-        return createUnavailableMemoryObservation(result.query);
+        return createUnavailableMemoryObservationFromResult(result);
     }
     const documents = projection.documents;
     const sources = sourcesFromProjectedDocuments(documents);
@@ -1146,16 +1189,24 @@ function defaultRerankVerdict(
     return "relevant";
 }
 
-function createUnavailableMemoryObservation(query: string): MemorySearchObservation {
+function createUnavailableMemoryObservationFromResult(result: MemorySearchResult): MemorySearchObservation {
     return {
-        query,
+        query: result.query,
         documents: [],
         sources: [],
         hasAnswerableContent: false,
         memoryEvidenceState: "unavailable",
         rerankVerdict: "relevant",
-        retrievalGuidance: UNAVAILABLE_MEMORY_RETRIEVAL_GUIDANCE,
+        retrievalGuidance: result.preparationState === "running"
+            ? PREPARING_MEMORY_RETRIEVAL_GUIDANCE
+            : UNAVAILABLE_MEMORY_RETRIEVAL_GUIDANCE,
     };
+}
+
+function createUnavailableMemoryObservation(query: string): MemorySearchObservation {
+    return createUnavailableMemoryObservationFromResult(
+        createUnavailableMemoryObservationResult(query),
+    );
 }
 
 function projectMemoryDocuments(documents: readonly MemorySearchDocument[]): MemorySearchDocument[] {

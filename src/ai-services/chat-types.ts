@@ -225,6 +225,8 @@ export interface MemorySearchResult {
     recoveryReason?: "recovery_skipped_deadline" | "recovery_disabled";
     /** Content-free Host diagnostic; never spread into a model observation. */
     operationalReason?: "memory_not_used" | "current_source_unavailable" | "final_source_changed";
+    /** Host-only literal distinguishing an actual background preparation from generic unavailability. */
+    preparationState?: "running";
 }
 
 /** Explicit provider-visible allowlist for search_memory observations. */

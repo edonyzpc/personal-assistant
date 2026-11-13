@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-11-01
+Updated: 2026-11-13
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-080 | Chat 确认后后台准备 Memory | 准备与检索期限分离、真实取消和进度恢复；不扩展Pagelet/任务框架 | [Decision](./decisions/dec-080-memory-preparation-lifecycle.md), [Spec](./specs/pa-memory-preparation-lifecycle-product-spec.md) | 必须改变来源/成本/生命周期边界 |
 | DEC-079 | Settings AI 配置分层与一致导航 | 总览与详情分工、直接模型编辑、去快速跳转、统一图标和六项补充；Owner 已授权实施与本地验证，提交／推送另行授权 | [Decision](./decisions/dec-079-settings-ai-configuration-ux.md), [Spec](./specs/pa-settings-ai-configuration-ux-product-spec.md) | 现有 owner 无法实现路径，或必须改变有效能力／数据／成本／权限边界 |
 | DEC-078 | SDK协议复用与Agent边界 | OpenAI统一Responses、Custom固定Chat Completions、其它服务复用SDK；PA拥有结果与harness，无存量模型迁移 | [Decision](./decisions/dec-078-sdk-protocol-and-agent-boundary.md), [Spec](./specs/pa-sdk-protocol-agent-boundary-product-spec.md) | SDK无法兑现已选协议／数据契约，或需要新的provider、Custom Responses及远端会话 |
 | DEC-077 | 多服务连接与Memory保留 | 一项默认、三用途可独立；按需准备、各profile保留；OpenAI三类图片，禁止隐式fallback | [Decision](./decisions/dec-077-multi-provider-connections.md), [Spec](./specs/pa-multi-provider-connections-product-spec.md) | 实际接口迫使能力/数据/费用偏差，或新增自动清理/设备独立选择需求 |
