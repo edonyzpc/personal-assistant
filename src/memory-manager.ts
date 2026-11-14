@@ -2083,13 +2083,17 @@ function formatMemoryProgressEvent(event: VSSProgressEvent): string {
     }
     if (event.phase === "writing") {
         return formatCountProgress(
-            memoryT("plugin.memory.progress.processingNotes"),
+            "Saving memory",
             event.filesDone,
             event.filesTotal,
         );
     }
     if (event.phase === "embedding") {
-        return memoryT("plugin.memory.progress.processingNotes");
+        return formatCountProgress(
+            "Preparing notes",
+            event.filesDone,
+            event.filesTotal,
+        );
     }
     if (event.phase === "scanning") {
         return formatCountProgress("Checking notes", event.filesDone, event.filesTotal, event.currentFile);

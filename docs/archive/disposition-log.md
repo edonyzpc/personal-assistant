@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-11-05
+Updated: 2026-11-14
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-11-14 | `docs/development/active/memory-preparation-lifecycle/**` | deleted-after-absorption | [DEC-080](../product/decisions/dec-080-memory-preparation-lifecycle.md)、[Spec](../product/specs/pa-memory-preparation-lifecycle-product-spec.md)、[Architecture](../architecture/vss-embedding-refresh.md)、[最终验证](./2026/b197-memory-preparation-lifecycle-validation.md)、[T-014](../backlog.md#触发型评估) | Owner明确授权B-197收尾、提交及推送master。AC-01–06与F01–17闭环，独立复核无阻塞；稳定设计与测试已吸收，保留紧凑跨设备/真实Prepare/正式包对照证据，删除Home/Tracker/SDD并移出Active。未提交过程原文及终态Tracker留本机副本，不声称旧Git保存全部Mac过程。既有诊断卡裁切转T-014；无tag或发布。 |
 | 2026-11-05 | `docs/development/active/pa-test-audit/**`、`docs/development/discovery/pa-test-audit-design.md` | deleted-after-absorption | [GOV-008](../development/governance/gov-008-pa-test-audit.md)、[Skill](../../.agents/skills/pa-test-audit/SKILL.md)、[优化流程](../development/workflows/test-optimization-workflow.md)、[最终验收与来源理由](./2026/b196-pa-test-audit-validation.md)、[T-013](../backlog.md#触发型评估) | Owner 授权确认完成后收尾、master 提交与推送。必需交付完成，工具有据跳过；过程原文及终态 Tracker 留本机副本，不声称此前 Git 已保存。独有证据压缩保留，F-01 保持 Contained、服务端留存未知，敏感原始日志不入 Git。移除 Active/Discovery/已完成 Backlog 入口，可选 PA 清理另按 T-013 启动。 |
 | 2026-11-04 | `docs/development/active/settings-ai-configuration-ux/**` | deleted-after-absorption | [DEC-079](../product/decisions/dec-079-settings-ai-configuration-ux.md)、[规格](../product/specs/pa-settings-ai-configuration-ux-product-spec.md)、[最终验收](./2026/b195-settings-ai-configuration-ux-validation.md)、[确认预览](./2026/b195-settings-ai-configuration-ux-preview.html) | Owner 授权收尾及 master 提交和推送。九项需求／验收及六项跟进修复完成。稳定设计由规格、架构和测试承接，确认预览原样迁移。Home、SDD、Tracker 移出 Active，原文留本机副本。无待处理实现项。 |
 | 2026-11-01 | `docs/development/active/sdk-protocol-agent-boundary/**` | deleted-after-absorption | [DEC-078](../product/decisions/dec-078-sdk-protocol-and-agent-boundary.md)、[Product Spec](../product/specs/pa-sdk-protocol-agent-boundary-product-spec.md)、[当前架构](../architecture/settings-status.md#sdk-接缝与恢复职责)、[最终验收](./2026/b194-sdk-protocol-validation.md) | Owner授权B-194收尾及本地master提交；AC-01–08与F-14/F-15完成，无未完成项转Backlog。Home/SDD/Tracker吸收后删除，移出Active Registry；未提交过程原文保留本机副本，不声称旧Git保存。保留分段测试、真实服务／模拟器与恢复证据边界；不含push或发布。 |

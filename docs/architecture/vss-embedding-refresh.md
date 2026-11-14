@@ -24,7 +24,7 @@
 
 - **事件改造**：`vault.create` / `vault.modify` 先观察本地索引 metadata：启动期旧 mtime replay 仍会经过轻量 observation，只有 metadata 已匹配的 replay 被忽略；普通 `vault.modify` 即使 metadata 匹配也会进入 verify queue，metadata drift 进入 verify queue，缺失 indexed record 才标记 dirty；`vault.rename` 删除旧 path 并标记新 path，`vault.delete` 删除本地索引记录；事件本身不直接计算 embedding。
 - **首次准备与自动维护**：[DEC-028](../product/decisions/dec-028-silent-memory-auto-prepare.md) 允许首次 Chat 静默启动一个 whole eligible vault rebuild 并立即 answer-now；其他 recovery/manual/costly prepare 仍需确认。确认路径或 DEC-028 路径只有在 durable usable ready 且未 abort/total-fail 后才把 `memoryApprovalPolicy` 升级为 `auto-refresh-after-prepare`；后续 changed notes 才由后台 reconcile/verify/refresh 维护，Chat 不等待 refresh。
-- **Chat 确认后准备生命周期**：[DEC-080](../product/decisions/dec-080-memory-preparation-lifecycle.md) 将所有 Chat 的准备确认移到短检索预算之外；批准后重验来源、配置与生命周期，再由 Manager 后台执行，当前回答立即收到准确的准备中事实。每个 Chat 消费者绑定真实 caller owner，短 attempt 或正常回答结束不取消已接受工作；最后一个独占消费者 Stop/supersede 才取消。缺 owner 的旧同步调用、独立 Pagelet 与 first-use 例外保持原语义。实际检索仍在原预算内并只读复核 readiness；实现验收见 [B-197 Tracker](../development/active/memory-preparation-lifecycle/tracker.md)。
+- **Chat 确认后准备生命周期**：[DEC-080](../product/decisions/dec-080-memory-preparation-lifecycle.md) 将所有 Chat 的准备确认移到短检索预算之外；批准后重验来源、配置与生命周期，再由 Manager 后台执行，当前回答立即收到准确的准备中事实。每个 Chat 消费者绑定真实 caller owner，短 attempt 或正常回答结束不取消已接受工作；最后一个独占消费者 Stop/supersede 才取消。缺 owner 的旧同步调用、独立 Pagelet 与 first-use 例外保持原语义。实际检索仍在原预算内并只读复核 readiness；历史验收见 [B-197 最终验证](../archive/2026/b197-memory-preparation-lifecycle-validation.md)。
 - **Destructive rebuild marker truth gate**：在 reset 或 embedding-provider call 前，rebuild 必须 durable 保存 whole-vault retry journal，并以 hydrated known absence 或同一 generation 的 atomic durable invalidation 建立 marker truth。Marker unknown 且无法 durable invalidate 时保留旧 index/marker、reset/provider 为 0；首次 Chat 仍 answer-now，等待 state store 恢复。该规则不改变普通 non-destructive maintenance 的既有 process-local retry 语义。
 - **Destructive rebuild recovery identity**：reset 前与 marker/dirty journal 原子保存原始 `first-use`、`settings-changed` 或 `local-memory-missing` rebuild guard；hydrate 优先 guard，abort/total failure 保留它。Deferred success 返回 opaque prepared-run handle；只有相同 current handle 才能 admit 或 rollback。旧 lifecycle 的 stale handle 为 no-op，不能清除后继 rebuild；只有 durable ready 与 Memory policy/lifecycle admission 都成功才清 guard。
 - **本地静默状态**：后台自动维护只写设备本地 SQLite/WASM OPFS Memory index，并把 marker 与 dirty journal 写入本地 IndexedDB state store；默认不在 vault 中创建 `vss-index-state/`、`manifest.json` 或 `vss-cache/dirty.json`。如果 IndexedDB 暂时打不开，VSS 先把 marker/dirty state 保留在进程内，后续 update/status 路径重试并落盘。
@@ -85,7 +85,11 @@ Qwen v3/v4 当前使用 `900,000 TPM` 作为安全预算。实现上用保守字
 
 普通 UI 用阶段和 `filesDone/filesTotal` 表示“已处理笔记”，不将动态片段数当成笔记总数，也不将已处理等同成功。未知文件总数只显示阶段；内部事件仍保留诊断计数。
 
+本切片保留原`pa-notice`卡片、三点动画、标题和单行正文；阶段显示`Preparing notes` / `Saving memory`，均取文件计数。与正式3.0.6核对的外观和计数差异见上述最终验证；不把阶段文字恢复称为卡片布局回滚。
+
 DOM 更新沿用约 350ms 节流，`retrying`、`finalizing` 和 `ready` 立即显示。Manager 统一发送一次终态通知，并保留当前进程/配置绑定的安全最近结果（completed、partial、failed、cancelled、interrupted）；新 run 替换旧结果，旧配置或生命周期不得发布迟到结果。Status 同时展示当前可用性与最近操作结果，不用历史成功代替当前 Ready。没有持久任务台账或额外轮询。
+
+结果只保存安全消息与必要计数，不暴露完整VSS summary或prepared handle。回退前按既有取消/补偿等待当前准备结束，再reload已验证旧包；不得手动删除索引或marker来回退。
 
 ## 失败处理
 
@@ -100,7 +104,7 @@ DOM 更新沿用约 350ms 节流，`retrying`、`finalizing` 和 `ready` 立即�
 ## 当前限制与后续优化
 
 - Manual Update/refresh 仍使用逐文件 refresh 路径，没有共享 Rebuild 的跨文件全局 batch pipeline；大量 changed 小文件时仍可能有较多 embedding 请求。
-- 当前不支持暂停、取消、断点续建或临时 index 原子替换。
+- 当前不支持暂停、断点续建或临时 index 原子替换；真实Chat Stop、lexical取消与关闭/卸载按上述生命周期处理，不新增全量准备独立停止按钮。
 - 当前限速估算不使用模型 tokenizer；如果真实用户仍撞 TPM，再考虑接入 tokenizer 或暴露用户可配置速率。
 - 如果未来允许 embedding 并发，`nextEmbeddingRequestAt` 的限速预约逻辑需要升级为并发安全的队列或同步预订发送时间。
 

@@ -315,8 +315,13 @@ Additional lifecycle rules:
   gain shared ownership. All Chat entries, including Pagelet context-only handoffs,
   use this path. Independent Pagelet and legacy synchronous calls retain their old
   attempt cancellation behavior; ready reads do not require a preparation owner.
-  [B-197 Tracker](../development/active/memory-preparation-lifecycle/tracker.md)
-  owns implementation and validation status.
+  Host-only preflight facts make timed retrieval recheck existing Memory without
+  starting another preparation. Restricted sources cannot override this read-only
+  boundary; preparing facts use the existing canonical result projection, never
+  arbitrary localized skip text. The new confirmed Chat background path requires
+  a stable owner; the existing first-use exception remains unchanged.
+  Historical implementation and local acceptance evidence is retained in
+  [B-197 validation](../archive/2026/b197-memory-preparation-lifecycle-validation.md).
 - Concurrent first-use Chat/Pagelet calls reuse the same active preparation. The
   detached DEC-028 preparation is owned by a Host-only run signal, not by the
   shorter retrieval-attempt signal：normal Tool completion leaves it running, while

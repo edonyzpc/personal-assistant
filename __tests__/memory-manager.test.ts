@@ -2039,7 +2039,13 @@ describe('MemoryManager command decisions', () => {
             }) => void;
         }) => {
             options?.onProgress?.({ phase: 'scanning', filesDone: 1, filesTotal: 3, currentFile: 'one.md' });
-            options?.onProgress?.({ phase: 'embedding', chunksEmbedded: 2, chunksTotal: 10 });
+            options?.onProgress?.({
+                phase: 'embedding',
+                filesDone: 1,
+                filesTotal: 3,
+                chunksEmbedded: 2,
+                chunksTotal: 10,
+            });
             options?.onProgress?.({ phase: 'retrying', retryDelayMs: 5000 });
             options?.onProgress?.({ phase: 'writing', filesDone: 2, filesTotal: 3 });
             options?.onProgress?.({ phase: 'ready' });
@@ -2059,9 +2065,9 @@ describe('MemoryManager command decisions', () => {
             expect(mockProgressSteps).toEqual(expect.arrayContaining([
                 'Checking notes',
                 'Checking notes 1/3: one.md',
-                'Processing notes',
+                'Preparing notes 1/3',
                 'Retrying in 5s',
-                'Processing notes 2/3',
+                'Saving memory 2/3',
                 'Ready',
             ]));
         } finally {
@@ -2349,7 +2355,7 @@ describe('MemoryManager command decisions', () => {
             expect(manager.getActivePreparationStatus()).toMatchObject({
                 action: 'rebuild',
                 phase: 'writing',
-                message: 'Processing notes 25/1846',
+                message: 'Saving memory 25/1846',
                 filesDone: 25,
                 filesTotal: 1846,
                 failed: 0,
@@ -2426,7 +2432,7 @@ describe('MemoryManager command decisions', () => {
             expect(manager.getActivePreparationStatus()).toMatchObject({
                 action: 'rebuild',
                 phase: 'writing',
-                message: 'Processing notes 1/2',
+                message: 'Saving memory 1/2',
             });
 
             resolveRebuild(summary);

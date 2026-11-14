@@ -2,7 +2,7 @@
 
 Decision ID: DEC-080
 Status: Accepted
-Updated: 2026-11-13
+Updated: 2026-11-14
 Authority: Owner 于 2026-11-13 明确选择 A，并要求按项目规范和 SDD 完成文档、开发跟踪与全部必要测试，避免过度设计和测试。
 Work item: B-197
 
@@ -28,12 +28,13 @@ Chat 的获确认恢复准备使用检索 attempt 的取消信号，默认短预
 5. Chat 优先显示正在准备并提供查看进度；通知关闭后仅在用户要求时重开。计数单位准确，当前进程/配置的最近终态可重看；不将未知中断推断为用户取消。
 6. 使用现有 Manager、端口、通知与 VSS 队列；不新增任务框架、持久任务历史、ETA、暂停恢复、全量准备独立停止按钮或自动跨重启续建。
 7. 新的前置检查及确认后后台交互限定 Chat。共享调用保持 Pagelet、旧同步调用及手动 shared 操作兼容；不扩大来源、provider 或权限范围。
+8. Owner 于 2026-11-13 在 MacBook 续接时明确要求恢复原 Prepare Memory 通知显示。保留原卡片与阶段/单行计数样式，使用真实文件计数；本次生命周期修复不授权重设计通知。
 
 ## Consequences
 
 无 Markdown 修改、存储迁移或索引 schema 变化；保留 durable guard、prepared handle 和失败补偿。准备失败不会强设 Ready。聊天结束后，不再提供该聊天的 Stop；已有 Memory 关闭/卸载等生命周期入口仍有效。
 
-最初授权为开发及必要本地验证；用户于2026-11-13随后明确授权将当前进展提交并推送master供MacBook续接。不包含tag/release或文档closeout。验收状态只见Tracker。
+最初授权为开发及必要本地验证，2026-11-13提交检查点供MacBook续接。Owner于2026-11-14明确授权收尾、提交并推送远程master；本切片实施与必要验收完成，历史证据见下方最终验证。不包含tag或版本发布。
 
 ## Revisit Trigger
 
@@ -42,6 +43,6 @@ Chat 的获确认恢复准备使用检索 attempt 的取消信号，默认短预
 ## Traceability
 
 - Product Spec: [Memory preparation lifecycle](../specs/pa-memory-preparation-lifecycle-product-spec.md)
-- SDD / evidence: [B-197](../../development/active/memory-preparation-lifecycle/README.md)
+- Historical evidence: [B-197 最终验证](../../archive/2026/b197-memory-preparation-lifecycle-validation.md)
 - Inherited: [DEC-028](./dec-028-silent-memory-auto-prepare.md)、[Memory 产品契约](../specs/pa-memory-control-center-product-spec.md)
 - Source: 本会话 Owner 的“A，我建议按照项目规范和SDD标准……完成所有的开发测试，不过度设计，不过度测试”。此前讨论草案已吸收到本决定、Spec 和 SDD。

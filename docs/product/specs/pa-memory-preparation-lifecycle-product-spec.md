@@ -1,7 +1,7 @@
 # Memory Preparation Lifecycle Product Spec
 
 Document status: Approved
-Updated: 2026-11-13
+Updated: 2026-11-14
 Work item: B-197
 Decision: [DEC-080](../decisions/dec-080-memory-preparation-lifecycle.md)
 Authority: 本切片的 Chat 准备、进度恢复、状态和终态契约；延续 Memory Control Center 与 DEC-028，其余行为不变。
@@ -29,6 +29,8 @@ Chat 需要 Memory → 检查本次允许来源和当前状态 → 必要时确�
 
 Chat Memory 标签在 preparing 时显示准备中，菜单主项为查看进度；原 Status 入口保留。关闭通知只隐藏；再次查看重新展示最新阶段。终态通知只发一次，结果可从状态入口重看。桌面与移动窄屏共享语义，不增加特殊动画。
 
+按 Owner 于 2026-11-13 的续接要求，Prepare Memory 通知保留原卡片、三点动画、标题和单行阶段计数展示，恢复 `Preparing notes` / `Saving memory` 阶段标签；计数使用真实文件数，不把片段数当作笔记数。关闭/重看仅扩展展示生命周期，不重新设计通知。
+
 活跃 Chat Stop 取消独占准备；正常回答结束不取消；共享工作保留现有消费者规则。观察不改变共享状态。重启后仅据已有 guard 说明上次未完成，不伪造历史原因。
 
 ## Trust, Data And Authority
@@ -50,8 +52,8 @@ Data / AI provider / Cost 确认保持，DEC-028 唯一首次例外不扩大。�
 
 无。Owner 已选择 A 并授权实施；新增产品范围另行决定。
 
-## Delivery Handoff
+## Implementation And Validation
 
-- [Active Package](../../development/active/memory-preparation-lifecycle/README.md)
+- [B-197 最终验证](../../archive/2026/b197-memory-preparation-lifecycle-validation.md)
 - [SQLite architecture](../../architecture/vss-sqlite-wasm-architecture.md)、[Refresh](../../architecture/vss-embedding-refresh.md)
-- 本地开发/测试已授权；用户于2026-11-13另行授权当前进展提交并推送master供MacBook续接，发布仍需单独授权。
+- 本地实施及必要验收已完成；Owner于2026-11-14明确授权收尾、提交并推送远程master，不包含版本发布。原卡片外观已用GitHub实际3.0.6附件核对，计数改为真实文件数；诊断卡裁切观察另见[T-014](../../backlog.md#触发型评估)。
