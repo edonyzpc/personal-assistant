@@ -16,7 +16,7 @@
   <a href="./README.md">English</a>
 </p>
 
-> **版本说明**：本文面向当前 `master`，准备随下一次正式版交付；商店中的已发布版本可能尚无相同界面或能力。需要 Obsidian **1.11.4+**。提前体验请见[源码构建](#开发与贡献)。
+> **版本说明**：本指南以社区发布版 **Personal Assistant 3.0.6** 为准，需要 Obsidian **1.11.4 或更新版本**。
 
 ## 产品演示
 
@@ -128,13 +128,15 @@ Chat 也支持用图片提问；**图片理解与图片生成是两项不同能�
 
 **先了解数据与费用：** Chat 会按任务将问题及允许的笔记、图片或工具上下文发送给所选服务商。Memory 默认开启，配置后的首次 Chat 可能后台准备允许范围内的笔记；后续更新和拾页自动发现也可能使用 AI 额度。首次请求前检查 **“笔记与隐私 → PA 可以使用的笔记”**；范围规则不会自动识别敏感信息，本地索引也不代表全部本地处理。只想先试 Chat 时，可以关闭“使用来自笔记的 Memory”和拾页后台发现。
 
-1. **安装 PA。** 在 Obsidian 的 **设置 → 第三方插件 → 浏览** 搜索 **Personal Assistant**，作者为 **edonyzpc**。[打开插件目录](https://obsidian.md/plugins?id=personal-assistant) · [查看发布记录](https://github.com/edonyzpc/personal-assistant/releases)。发布准备期的新增能力需使用上方版本说明中的对应构建。
-2. **连接 AI。** 打开 **PA 设置 → AI 连接 → 添加默认服务**，选择服务、填写 API Key 并保存。先配置“聊天”即可；要检索旧笔记或生成图片时，再配置对应能力。
+1. **安装 PA。** 在 Obsidian 的 **设置 → 第三方插件 → 浏览** 搜索 **Personal Assistant**，作者为 **edonyzpc**，安装后启用。[打开插件目录](https://obsidian.md/plugins?id=personal-assistant) · [查看发布记录](https://github.com/edonyzpc/personal-assistant/releases)。
+2. **连接 AI。** 试用 Chat 或拾页前，打开 **PA 设置 → AI 连接 → 添加默认服务**，选择服务、填写 API Key 并保存。拾页需要聊天模型支持工具调用；要检索旧笔记或生成图片时，再配置对应能力。
 3. **打开一篇笔记开始。** 点击 PA 侧栏图标，或运行 **“打开PA智能体”**；选择 **“我的笔记”**，输入下面的问题。
 
 > 这篇笔记最值得继续展开的想法是什么？给我一个今天能做的小尝试，说明依据。先讨论，不修改笔记。
 
-没有合适的笔记，可以使用[虚构示例](./docs/guides/reading-to-sharing-demo.md)。核对回答是否用到了原文，再决定继续追问、启用 Memory，或试试拾页和创作任务。
+体验拾页时，打开一篇笔记，先运行 **“拾页：发现关联”**，不必等待主动提示。主动提示默认关闭；后台发现有独立开关，默认开启。
+
+没有合适的笔记，可以使用[虚构示例](./docs/guides/reading-to-sharing-demo.md)。核对回答是否用到了原文，再决定继续追问、使用 Memory，或试试创作任务。
 
 [配置与排错](./Manual-CN.md#ai-chat) · [数据、网络与依赖说明](./docs/operations/network-and-dependencies.md)
 

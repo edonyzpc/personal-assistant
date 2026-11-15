@@ -1,6 +1,6 @@
 # 从阅读积累到短文与分享 / From reading notes to a shareable article
 
-Updated: 2026-11-01
+Updated: 2026-11-14
 
 [中文](#中文) · [English](#english) · [README 中文版](../../README-CN.md#开始使用) · [README](../../README.md#get-started)
 
@@ -26,6 +26,13 @@ older installed releases may have different controls. See the
 
 核对回答是否来自这篇笔记，以及原文是否保持不变。这个单笔记练习不需要准备 Memory 或配置图片生成；
 Chat 仍可能将问题和允许的笔记上下文发送给配置的服务商并使用额度。
+
+### 先手动体验一次拾页
+
+配置支持工具调用的聊天服务，检查允许使用的笔记范围，复制下面四篇虚构笔记。
+打开《写作提纲：让阅读用起来》，运行 **“拾页：发现关联”**，再核对结果与来源跳转。
+这个练习不要求先准备 Memory 或开启主动提示；主动提示默认关闭，后台发现有独立开关。
+手动发现也可能将允许的笔记正文发送给配置的服务商并使用额度。
 
 ### 准备完整的阅读到分享流程
 
@@ -226,6 +233,13 @@ Reading notes - After the last page, keep it open, select My notes in Chat, and 
 Check that the answer uses this note and that the original remains unchanged. This single-note exercise needs
 neither prepared Memory nor an image service. Chat may still send your question and allowed note context to
 your configured provider and use API credits.
+
+### Try Pagelet manually first
+
+Configure a Chat service that supports tool calls, check the allowed note scope, and copy the four fictional notes below.
+Open Writing outline - Put reading to use and run **Pagelet: Discover connections**, then check the result and open its sources.
+This exercise does not require prepared Memory or proactive hints. Proactive hints are off by default; background discovery has its own switch.
+Manual discovery may send allowed note text to your configured provider and use API credits.
 
 ### Prepare the full reading-to-sharing workflow
 

@@ -1643,19 +1643,47 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         }
     });
 
-    it("explains the daily limit only for an explicit trigger", async () => {
+    it.each([
+        ["unavailable", "Deep Discover is unavailable. Check the Chat provider and model in Settings."],
+        ["limit", "Automatic background discovery has reached its usage limit. You can still run Discover connections manually."],
+    ] as const)("distinguishes service availability from the automatic limit on the public command: %s", async (reason, message) => {
         jest.mocked(Notice).mockClear();
         const host = makeHost({
-            runDeepDiscover: async () => ({ status: "limit", reason: "limit" }),
+            runDeepDiscover: async () => ({ status: "limit", reason }),
         });
         const orchestrator = new PageletOrchestrator(host);
 
         await Promise.resolve(orchestrator.getCommandCallbacks().onDiscoverConnections());
 
-        expect(Notice).toHaveBeenCalledWith(
-            "Deep Discover has reached today's 36-run limit. It will resume tomorrow.",
-            5000,
-        );
+        expect(Notice).toHaveBeenCalledWith(message, 5000);
+    });
+
+    it.each([
+        [{ phase: "queued", requestId: "request-queued" }, "Discovery is queued."],
+        [{ phase: "preparing", requestId: "request-preparing" }, "Preparing discovery…"],
+        [{ phase: "running", requestId: "request-running" }, "Analyzing this note…"],
+        [{ phase: "idle", requestId: "request-unavailable", terminal: { status: "limit", reason: "unavailable" } }, "Deep Discover is unavailable. Check the Chat provider and model in Settings."],
+        [{ phase: "idle", requestId: "request-limit", terminal: { status: "limit", reason: "limit" } }, "Automatic background discovery has reached its usage limit. You can still run Discover connections manually."],
+        [{ phase: "idle", requestId: "request-error", terminal: { status: "error", reason: "provider" } }, "pagelet.panel.status.error"],
+    ] as const)("renders Pagelet reading state distinctly for %s", async (activity, expectedLabel) => {
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>();
+        const host = makeHost({
+            readDeepDiscover: async () => ({ status: "empty" }),
+            getDeepDiscoverActivity: () => activity,
+            runDeepDiscover,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = { open: jest.fn<PanelOpen>(), close: jest.fn(), isOpen: true };
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+        await orchestrator.openPanel();
+
+        const reading = panelView.open.mock.calls.at(-1)?.[2]?.reading;
+        if (!reading) throw new Error("Expected a Pagelet reading payload");
+        expect(reading.label).toBe(expectedLabel);
+        expect(reading.label).not.toContain("36-run");
+        expect(reading.actions?.map(action => action.label)).toEqual(["Start discovery"]);
+        expect(runDeepDiscover).not.toHaveBeenCalled();
     });
 
     it("explains a provider-confirmed Function Calling rejection on explicit Review", async () => {

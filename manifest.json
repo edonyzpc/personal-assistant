@@ -3,7 +3,7 @@
 	"name": "Personal Assistant",
 	"version": "3.0.6",
 	"minAppVersion": "1.11.4",
-	"description": "AI-powered workflows to streamline the automated management of records, callouts, frontmatter, graph views, themes, and plugins.",
+	"description": "Rediscover useful notes, find connections, and turn your reading into writing.",
 	"author": "edony",
 	"authorUrl": "https://github.com/edonyzpc",
 	"isDesktopOnly": false

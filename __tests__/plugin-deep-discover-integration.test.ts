@@ -600,14 +600,18 @@ describe("DeepDiscoverPluginIntegration ownership", () => {
         );
     });
 
-    it("keeps the automatic daily pool at 36 while explicit work remains available", async () => {
+    it.each([
+        ["hourly", Array.from({ length: 12 }, () => Date.now()), 12],
+        ["daily", [Date.now() - 3_600_001], 36],
+        ["hourly-and-daily", Array.from({ length: 12 }, () => Date.now()), 36],
+    ] as const)("keeps the automatic %s pool full while explicit work remains available", async (_kind, hourlyTimestamps, dailyCount) => {
         const dependencies = createDependencies();
         const now = Date.now();
         const values = new Map<string, string>( [[
             "state",
             JSON.stringify({
-                hourlyTimestamps: [now - 3_600_001],
-                dailyCount: 36,
+                hourlyTimestamps,
+                dailyCount,
                 dailyResetAt: now + 3_600_000,
             }),
         ]]);
@@ -621,6 +625,7 @@ describe("DeepDiscoverPluginIntegration ownership", () => {
         dependencies.getProviderCallAdmission = () => ({ admitStandardCall } as never);
         const owner = new DeepDiscoverPluginIntegration(dependencies);
         const policy = owner.getPolicyIdentityKey();
+        const before = await owner.getRateLimiter().getStateSnapshot();
 
         await expect(owner.admitRun(policy, {
             path: "notes/current.md",
@@ -632,9 +637,8 @@ describe("DeepDiscoverPluginIntegration ownership", () => {
             triggerReason: "explicit",
             force: true,
         })).resolves.toEqual({ ok: true });
-        await expect(owner.getRateLimiter().getStateSnapshot()).resolves.toEqual(
-            expect.objectContaining({ dailyCount: 36 }),
-        );
+        await expect(owner.getRateLimiter().getStateSnapshot()).resolves.toEqual(before);
+        expect(admitStandardCall).toHaveBeenCalledTimes(1);
     });
 
     it("uses one captured vault scope for limiter storage and coordination key", () => {

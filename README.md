@@ -16,7 +16,7 @@
   <a href="./README-CN.md">中文</a>
 </p>
 
-> **Version note:** This README follows current `master`, prepared for the next stable release. The released version in the community directory may not yet include the same interface or capabilities. Requires Obsidian **1.11.4+**. To try these changes early, see [building from source](#development-and-contributing).
+> **Version note:** This guide covers the community release **Personal Assistant 3.0.6** and requires Obsidian **1.11.4 or later**.
 
 ## See PA in action
 
@@ -128,13 +128,15 @@ Publish on Ghost? The desktop **`@blog2ghost`** workflow can prepare article dra
 
 **Before you connect: data and costs.** Depending on the task, Chat sends your question and permitted note, image, or tool context to your chosen provider. Memory is enabled by default: after configuration, your first Chat may prepare eligible notes in the background. Later updates and Pagelet automatic discovery may also use AI credits. Before your first request, review **Notes & privacy → Notes PA can use**. These scope rules do not automatically identify sensitive content, and a local index does not mean all processing is local. To try Chat alone first, you can turn off **Use memory from my notes** and Pagelet background discovery.
 
-1. **Install PA.** In Obsidian, open **Settings → Community plugins → Browse** and search for **Personal Assistant** by **edonyzpc**. [Open the plugin directory](https://obsidian.md/plugins?id=personal-assistant) · [View releases](https://github.com/edonyzpc/personal-assistant/releases). Features being prepared for release require the matching build described in the version note above.
-2. **Connect an AI service.** Open **PA settings → AI connection → Add default service**, choose a service, enter its API Key, and save. Start with Chat; configure note retrieval or image generation when you want those capabilities.
+1. **Install PA.** In Obsidian, open **Settings → Community plugins → Browse** and search for **Personal Assistant** by **edonyzpc**, then install and enable it. [Open the plugin directory](https://obsidian.md/plugins?id=personal-assistant) · [View releases](https://github.com/edonyzpc/personal-assistant/releases).
+2. **Connect an AI service.** Before trying Chat or Pagelet, open **PA settings → AI connection → Add default service**, choose a service, enter its API Key, and save. Pagelet needs a Chat model that supports tool calls; configure note retrieval or image generation when you want those capabilities.
 3. **Open a note and start.** Click PA's ribbon icon or run **Open PA Agent**. Select **My notes**, then ask the question below.
 
 > Which idea in this note is most worth developing? Suggest one small experiment I can try today and explain what in the note supports it. Discuss first; do not edit the note.
 
-Need something to try? Use the [fictional example notes](./docs/guides/reading-to-sharing-demo.md#english). Check that the answer draws on the original, then decide whether to follow up, enable Memory, or explore Pagelet and creative tasks.
+To try Pagelet, open a note and run **Pagelet: Discover connections**. Start with this manual action; proactive hints are off by default. Background discovery has its own switch and is on by default.
+
+Need something to try? Use the [fictional example notes](./docs/guides/reading-to-sharing-demo.md#english). Check that the answer draws on the original, then decide whether to follow up, use Memory, or explore creative tasks.
 
 [Setup and troubleshooting](./Manual.md#ai-chat) · [Data, network, and dependencies](./docs/operations/network-and-dependencies.md)
 

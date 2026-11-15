@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-11-14
+Updated: 2026-11-15
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -48,6 +48,9 @@ Updated: 2026-11-14
 
 | ID | 评估项 | 触发条件 | 触发后入口 |
 | --- | --- | --- | --- |
+| T-017 | 社区 README 与独立文案呈现核验 | 本次安装说明获准线上交付后再核对实际呈现；短描述及 About 编辑另需授权。网页后台 README 刷新时限未公开，不承诺立即同步，不为核验触发发布或强制刷新 | [README](../README.md)、[目录管理说明](https://docs.obsidian.md/community-directory/manage-entry) |
+| T-016 | Pagelet 既有错误兜底文案 | 首次体验额外演练显示字面 key `pagelet.panel.status.error`；用户明确要求或维护该错误反馈时补齐文案，不与未知 admission 原因混为同一故障，不阻塞本次首开提示修复收尾 | [展示入口](../src/pagelet/orchestrator.ts)、[英文文案](../src/locales/pagelet/en.json)、[中文文案](../src/locales/pagelet/zh.json) |
+| T-015 | Pagelet 新库本地 admission 拒绝定位 | 2026-11-15 额外新库演练在 7 轮／7 次工具调用后被本地准入拒绝，未生成结果；子原因及与本次 diff 的关系未知。再次自然复现或用户明确要求时先取得真实 cause，不归因为自动额度耗尽，不为本次收尾重复采样、改额度或放宽保护 | [准入错误合同](../src/ai-services/provider-admission-error.ts)、[运行摘要](../src/pagelet/agent/pagelet-agent-runtime.ts) |
 | T-014 | Memory diagnostics通知右缘裁切 | B-197验收观察到既有诊断卡右缘可裁切，准备进度卡及结果辨认未被阻断；Owner单独要求优化、相关布局变化或裁切妨碍辨认/操作时启动。先用真实通知复现并限定布局/换行修复，不重开已验收的准备生命周期 | [B-197残余观察](./archive/2026/b197-memory-preparation-lifecycle-validation.md#residual-observation) |
 | T-013 | Context Pager 公开 summary 导出评估 | 只有提出删除公开 summary 导出时，才核实宿主、动态和兼容消费者；仓内没有普通调用者不足以证明可删，不自动启动生产清理或重开 B-196 能力验收 | [B-196 试审与限制](./archive/2026/b196-pa-test-audit-validation.md#真实-pa-试审与后续边界)、[GOV-008](./development/governance/gov-008-pa-test-audit.md) |
 | T-012 | B-181 物理移动设备补验 | Owner 明确启动 iPhone/iPad 验证、相关移动能力改变或出现可复现设备故障时补验；iPhone 后置、iPad 未验证。按实际设备覆盖输入/IME、软键盘/后台及分屏旋转的受影响路径，不重复桌面矩阵或把349px窄容器当硬件证据 | [B-181 验证](./archive/2026/b181-ui-state-rendering-validation.md)、[Product Spec](./product/specs/pa-ui-state-rendering-product-spec.md) |

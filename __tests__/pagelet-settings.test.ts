@@ -1330,12 +1330,12 @@ describe("Pagelet settings renderers", () => {
         renderPageletPreferences(parent as unknown as HTMLElement, host, factory, "en");
         const usage = findDescendant(
             parent,
-            (node) => node.text === "Pagelet keeps discovery within a daily limit.",
+            (node) => node.text === "Pagelet limits automatic background discovery only.",
         )!;
         if (closed) parent.isConnected = false;
         complete({ runs: 3, dailyCap: 36, modelTurns: 12, toolCalls: 40 });
         await Promise.resolve();
-        expect(usage.textContent).toBe(closed ? undefined : "Discoveries today: 3 of 36.");
+        expect(usage.textContent).toBe(closed ? undefined : "Automatic discoveries today: 3 of 36.");
     });
 
     it("persists toggle changes through saveSettings", async () => {

@@ -735,9 +735,14 @@ export class PageletOrchestrator {
                     : terminal.reason === "duplicate" || terminal.reason === "seen" ? "pagelet.deepDiscover.noNewResults"
                         : "pagelet.deepDiscover.incomplete");
         }
+        if (terminal.status === "limit") {
+            return this.t(terminal.reason === "unavailable"
+                ? "pagelet.deepDiscover.unavailable"
+                : "pagelet.deepDiscover.limitReached");
+        }
         return this.t(terminal.status === "stale" ? "pagelet.deepDiscover.stale"
             : terminal.status === "denied" ? "pagelet.deepDiscover.boundaryDenied"
-                : terminal.status === "limit" ? "pagelet.deepDiscover.limitReached" : "pagelet.panel.status.error");
+                : "pagelet.panel.status.error");
     }
 
     private readingControls(reading: PageletRecentReading, surface: "panel" | "detail" = "panel"): PageletReadingControls {
