@@ -1,7 +1,7 @@
 {
 	"id": "personal-assistant",
 	"name": "Personal Assistant",
-	"version": "3.0.6",
+	"version": "3.0.7",
 	"minAppVersion": "1.11.4",
 	"description": "Rediscover useful notes, find connections, and turn your reading into writing.",
 	"author": "edony",

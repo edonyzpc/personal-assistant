@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [3.0.7](https://github.com/edonyzpc/personal-assistant/compare/3.0.6...3.0.7) (2026-11-16)
+
+### Fix
+- memory: preserve background preparation lifecycle
+- memory: restore preparation progress and close B-197
+- pagelet: correct availability state and first-run guidance
+- pagelet: ignore metadata key order during admission
+
 ## [3.0.6](https://github.com/edonyzpc/personal-assistant/compare/3.0.5...3.0.6) (2026-11-08)
 
 ### Features
