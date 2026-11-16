@@ -33,7 +33,7 @@ import type { PaAgentMessage, SourceRecord } from "../../ai-services/chat-types"
 import { cloneSourceRecord } from "../../ai-services/source-store";
 import { completeInputLineage, sourceRecordsInputLineage, unionInputLineages, unknownInputLineage } from "../../ai-services/input-lineage";
 import { clonePageletInputEvidence, type PageletInputEvidence } from "../../ai-services/pagelet-handoff";
-import { parseVaultObservationEvidence } from "../../ai-services/vault-observation-evidence";
+import { parseVaultObservationEvidence, stableJson } from "../../ai-services/vault-observation-evidence";
 import { isSafeSourceFreeToolObservation } from "../../ai-services/pa-agent-runtime";
 import { captureRunNotesObservationLineage } from "../../ai-services/task-source-run";
 import {
@@ -121,12 +121,14 @@ function bindVaultObservationProjection(
     transcript: readonly PaAgentMessage[],
     dependencies: PageletAgentRuntimeDependencies,
 ): VaultObservationPhysicalBinding {
-    const fixedTranscriptJson = JSON.stringify(transcript);
+    // Native compaction may add metadata in a different object-key order. Keep
+    // the synchronous bind-time snapshot, but compare it order-independently.
+    const fixedTranscriptJson = stableJson(transcript);
     let current: VaultObservationPhysicalBinding | undefined;
     return {
         prepare: async signal => {
             const projection = await preparePageletVaultProjection(transcript, dependencies, signal ?? undefined);
-            if (JSON.stringify(projection.transcript) !== fixedTranscriptJson) {
+            if (stableJson(projection.transcript) !== fixedTranscriptJson) {
                 throw new Error("Pagelet vault observation projection changed before dispatch");
             }
             await projection.binding.prepare(signal ?? undefined);

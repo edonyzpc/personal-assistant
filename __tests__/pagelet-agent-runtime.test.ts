@@ -3405,6 +3405,154 @@ describe('Pagelet agent runtime', () => {
             .content.promptText).toBe(laterAnchorObservation);
     });
 
+    it.each([
+        { caseName: 'unchanged' },
+        { caseName: 'source-changed' },
+        { caseName: 'permission-revoked' },
+    ] as const)(
+        'keeps Pagelet admission tied to physical evidence when native compaction reorders metadata ($caseName)',
+        async ({ caseName }) => {
+            const body = [
+                'UNCHANGED_PAGELET_EVIDENCE',
+                'stable synthetic observation '.repeat(80),
+            ].join('\n');
+            const admissionAnchor: PageletAnchorSnapshot = {
+                path: 'notes/admission-reproduction.md',
+                content: body,
+                mtime: 777,
+                size: body.length,
+                contentHash: 'd'.repeat(64),
+                capturedAt: 777,
+            };
+            const host = createHost({ [admissionAnchor.path]: admissionAnchor.content });
+            const originalCachedRead = host.app.vault.cachedRead.bind(host.app.vault);
+            let sourceChanged = false;
+            host.app.vault.cachedRead = async file => {
+                const content = await originalCachedRead(file);
+                if (file.path === admissionAnchor.path && sourceChanged) {
+                    return content + '\nCHANGED_AFTER_FIRST_BINDING';
+                }
+                return content;
+            };
+
+            let pathAllowed = true;
+            let dispatchCount = 0;
+            let projectedReadObservations: Array<Extract<PaAgentMessage, {
+                role: 'toolResult';
+            }>> = [];
+            const runtime = createPageletAgentRuntimeBase({
+                host,
+                isPathAllowed: path => (
+                    path === admissionAnchor.path ? pathAllowed : path.startsWith('notes/')
+                ),
+                executeMemorySearch: async input => ({
+                    usedMemory: false,
+                    query: input.query,
+                    documents: [],
+                    sources: [],
+                }),
+                captureSourceMaterial: async path => (
+                    path === admissionAnchor.path ? { ...admissionAnchor } : null
+                ),
+                createModel: context => {
+                    const originalRecordPromptProjection = context.recordPromptProjection;
+                    return createPageletNativeModel({
+                        registry: context.registry,
+                        allowedToolNames: context.allowedToolNames,
+                        schemas: context.schemas,
+                        toolDefinitions: context.toolDefinitions,
+                        providerRequestScope: context.providerRequestScope,
+                        bindVaultObservationProjection: context.bindVaultObservationProjection,
+                        recordPromptProjection: transcript => {
+                            originalRecordPromptProjection(transcript);
+                            projectedReadObservations = transcript.filter((
+                                message,
+                            ): message is Extract<PaAgentMessage, { role: 'toolResult' }> => (
+                                message.role === 'toolResult'
+                                && message.toolName === 'read_note'
+                                && message.content.includeInNextPrompt
+                            ));
+                        },
+                        createPrompt: createDefaultPageletPrompt,
+                        maxObservationChars: 2_600,
+                        createChatModel: async (_temperature, modelOptions) => {
+                            const runnable = new RunnableLambda({
+                                func: async (input: unknown, config?: { signal?: AbortSignal }) => {
+                                    if (dispatchCount === 1) {
+                                        if (caseName === 'source-changed') sourceChanged = true;
+                                        if (caseName === 'permission-revoked') pathAllowed = false;
+                                    }
+                                    return context.providerRequestScope.startRequest(async () => {
+                                        dispatchCount += 1;
+                                        if (dispatchCount === 1) {
+                                            return {
+                                                content: '',
+                                                response_metadata: { finish_reason: 'tool_calls' },
+                                                tool_calls: [
+                                                    {
+                                                        id: 'admission-regression-read-1',
+                                                        name: 'read_note',
+                                                        args: {
+                                                            path: admissionAnchor.path,
+                                                            maxChars: 600,
+                                                        },
+                                                        index: 0,
+                                                    },
+                                                    {
+                                                        id: 'admission-regression-read-2',
+                                                        name: 'read_note',
+                                                        args: {
+                                                            path: admissionAnchor.path,
+                                                            maxChars: 601,
+                                                        },
+                                                        index: 1,
+                                                    },
+                                                ],
+                                            };
+                                        }
+                                        return {
+                                            content: 'NO_INSIGHT',
+                                            response_metadata: { finish_reason: 'stop' },
+                                        };
+                                    }, config?.signal, modelOptions.onProviderRequestStart as () => void, modelOptions.prepareProviderRequest as (
+                                        signal?: AbortSignal | null,
+                                    ) => Promise<void>);
+                                },
+                            });
+                            return Object.assign(runnable, { bindTools: () => runnable });
+                        },
+                    });
+                },
+            });
+
+            const result = await runtime.run({
+                anchor: admissionAnchor,
+                triggerReason: 'explicit',
+                runId: 'pagelet-admission-' + caseName,
+            });
+            const diagnostics = result.loopResult.turns.flatMap(turn => turn.diagnostics);
+
+            if (caseName === 'unchanged') {
+                expect(result.loopResult.status).toBe('completed');
+                expect(dispatchCount).toBe(2);
+                expect(diagnostics).not.toContainEqual({ type: 'provider_admission_rejected' });
+                expect(projectedReadObservations).toHaveLength(1);
+                expect(projectedReadObservations[0]?.content.metadata).toMatchObject({
+                    pageletPromptProjectionHidden: false,
+                });
+                expect(projectedReadObservations[0]?.content.metadata).toHaveProperty(
+                    'originalPromptTextLength',
+                    expect.any(Number),
+                );
+                return;
+            }
+
+            expect(result.loopResult.status).toBe('error');
+            expect(dispatchCount).toBe(1);
+            expect(diagnostics).toContainEqual({ type: 'provider_admission_rejected' });
+        },
+    );
+
     it('binds WebSearch natively only after the control snapshot unlocks it', async () => {
         const registry = new CapabilityRegistry();
         const web = createFakeWebCapability();
