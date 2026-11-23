@@ -2,7 +2,7 @@
 
 Document status: Current
 Governance ID: GOV-001
-Updated: 2026-11-08
+Updated: 2026-11-23
 Work item: B-115
 Authority: PA 仓库的 repo-only idea intake、docs authority、Agent 自动维护、工程授权与信息连续性规则；不定义 PA runtime 或用户产品行为。
 
@@ -224,8 +224,8 @@ smoke 按复杂度与既有验证规则选择；模板不能自行声明所有�
 
 ## Acceptance Criteria
 
-- B-115/AC-01: 前向 contract test 同时证明 REQ-01 与 REQ-02：casual idea 零 repo 写入；明确记录或 promotion 场景只创建/复用最小 repo Backlog ID；项目内不存在 Linear Skill 路由。
-- B-115/AC-02: review-only/no-file-changes 路由测试证明 repo、Archive 与外部系统均为零写入。
+- B-115/AC-01: 随口提出的 idea 留在对话中；明确要求记录或达到 promotion 条件时，创建或复用一个最小 Backlog ID。项目内的旧 Linear Skill 路由保持退役。静态检查覆盖文档管理 skill 的规则文本和下表所列两个旧入口。要报告某次任务的实际记录数，须观察该任务及其写入目标。
+- B-115/AC-02: 显式只读请求对 repo、Archive 与外部系统均要求零写入。静态检查覆盖文档管理与 SDD 两个 skill 的只读声明。判断某次 Agent 是否遵守该要求，须核对该次工具调用（含被拒绝的写入尝试）与可观察目标的前后状态；宿主能否阻止写入，则取决于相应目标与操作的权限证据。
 - B-115/AC-03: plan-and-implement、缺失 Plan/SDD bootstrap、零/多 Active Package continue 场景都有唯一模式与 stop point；archive collision fail closed。
 - B-115/AC-04: 完整 lifecycle checker 对失效当前链接、无关 basename、外部 disposition、无 current
   入链 Archive、超出 `1 Now + 1 Next`、Feature Home 状态镜像、Active
@@ -248,8 +248,8 @@ smoke 按复杂度与既有验证规则选择；模板不能自行声明所有�
 
 | Requirement / AC | Design | Delivery evidence |
 | --- | --- | --- |
-| B-115/REQ-01 + B-115/REQ-02 / B-115/AC-01 | [Documentation Workflow — Capture](../documentation-workflow.md#1-capture-与-backlog) | [`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
-| B-115/REQ-03 / B-115/AC-02 | [Documentation Workflow — authorization](../documentation-workflow.md#自然语言入口与授权) | [`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
+| B-115/REQ-01 + B-115/REQ-02 / B-115/AC-01 | [Documentation Workflow — Capture](../documentation-workflow.md#1-capture-与-backlog) | [生命周期测试](../../../__tests__/pa-docs-lifecycle-skills.test.ts)核对文档管理 skill 中的记录与外部路由文字，并检查旧入口 `.agents/skills/pa-linear-product-manager/SKILL.md`、`.claude/skills/pa-linear-product-manager` 均缺失。 |
+| B-115/REQ-03 / B-115/AC-02 | [Documentation Workflow — authorization](../documentation-workflow.md#自然语言入口与授权) | [生命周期测试](../../../__tests__/pa-docs-lifecycle-skills.test.ts)匹配 `pa-docs-lifecycle-manager` 的只读关键词与 `sdd-lifecycle` 的零写入声明，证明这两个入口保留了受检文字。 |
 | B-115/REQ-04 / B-115/AC-03 | [Documentation Workflow — Active Package](../documentation-workflow.md#3-active-package) | [`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
 | B-115/REQ-05 / B-115/AC-04 | [Documentation Workflow — validation](../documentation-workflow.md#验证门) | [`check-docs-script.test.ts`](../../../__tests__/check-docs-script.test.ts)、[`check-release-docs-script.test.ts`](../../../__tests__/check-release-docs-script.test.ts)、[`release-script.test.ts`](../../../__tests__/release-script.test.ts)、[`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
 | Engineering bootstrap / B-115/AC-05 | [Documentation Workflow](../documentation-workflow.md) | Current Governance index + focused contract tests |
@@ -262,6 +262,14 @@ smoke 按复杂度与既有验证规则选择；模板不能自行声明所有�
 限制及最终治理验证保留于 [Astra workflow evidence](../../archive/2026/astra-feature-workflow-optimization-validation.md)。
 原治理 Active Package 吸收后删除，本 GOV 保持 Current；历史证据不代替当前
 执行授权，也不证明后续 Git 交付、量化提速、模型效果或发布。
+
+2026-11-23，B-115 的 Astra 6.2 流程适配收尾。GLM 仅修改一项生命周期测试的名称，
+GPT 在接收工作树运行该套件，13/13 项通过。派工与交回用设置提示措辞、旧设置兼容两例走查；
+交付表达、访谈与 UI 审计入口按现有记录和请求示例走查。复核后，新界面设计沿用 SDD，
+已有界面需要视觉或交互评估时进入审计；纯样式验证优先用已验证的 CLI 或深链接准备状态，
+再观察渲染并实际操作。方案、SDD、Feature Home 与 Tracker 的结论已吸收。
+下一件合适的已授权窄修可从现有交付记录观察提前交回、遗漏约束造成的返工和重复验证；
+实际效率仍待观察。[6.2 指南](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6.2-astra) · [派工模板](../templates/glm-worker-task.md) · [需求分析路由](../../../.agents/skills/pm-needs-analysis/SKILL.md#related-skills)
 
 ## Authority And Change Boundary
 

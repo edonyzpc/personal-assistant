@@ -9,7 +9,7 @@ const governanceContract = read("docs/development/governance/gov-001-agent-manag
 const documentationWorkflow = read("docs/development/documentation-workflow.md");
 
 describe("PA lifecycle skill forward contracts", () => {
-    it("keeps explicit read-only requests globally zero-write", () => {
+    it("declares explicit read-only requests as zero-write in both lifecycle skills", () => {
         for (const phrase of ["`review-only`", "`analysis-only`", "`read-only`", "`no-file-changes`", "不要改文件", "**zero writes**"]) {
             expect(docsSkill).toContain(phrase);
         }

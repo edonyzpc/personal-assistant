@@ -1,6 +1,6 @@
 ---
 name: ui-ux-design-audit
-description: Audit multi-surface UI/UX in the personal-assistant Obsidian plugin with the current PA framework, real interface evidence, structured scoring, adversarial finding verification, and product-decision routing. Use for design retrospectives, visual quality baselines, cross-surface consistency audits, accessibility/mobile evaluations, or requests such as "帮我看看设计" and "audit the UI". Default to audit-only; implement findings only when explicitly requested, and require separate authorization for commit or archive actions. For review of a current code diff or PR, use `personal-assistant-review` instead.
+description: Evaluate the visuals or interactions of existing Personal Assistant interfaces. Use for requests such as "检查 Chat 输入区窄屏布局", visual quality baselines, cross-surface consistency audits, and accessibility or mobile evaluations. Use the PA framework and evidence from the rendered interface. Default to audit-only; implement findings only when explicitly requested, and require separate authorization for commit or archive actions. For review of a current code diff or PR, use `personal-assistant-review` instead.
 ---
 
 # UI/UX Design Audit
@@ -16,7 +16,7 @@ Default to `audit-only`:
   otherwise report in chat.
 - Do not commit or archive artifacts without separate explicit authorization.
 
-Use this skill for cross-surface design quality. Route a current diff/PR review
+Use this skill to evaluate an existing PA screen or a flow across surfaces. Route a current diff/PR review
 to `personal-assistant-review`, even when the diff is UI-heavy.
 
 Read:
